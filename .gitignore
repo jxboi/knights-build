@@ -2,3 +2,7 @@ node_modules/
 dist/
 .DS_Store
 *.blend1
+.env*
+!.env.example
+.vercel
+.playwright-cli/

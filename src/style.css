@@ -17,6 +17,23 @@
 body {
   margin: 0;
 }
+.noscript-message {
+  min-height: 100dvh;
+  padding: 32px;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  background: #f4efdf;
+  color: #534a37;
+  text-align: center;
+}
+.noscript-message h1 {
+  font: 500 33px "Lora", Georgia, serif;
+}
+.noscript-message p {
+  margin: 0;
+  color: #8d7957;
+}
 button {
   font: inherit;
   color: inherit;
@@ -30,7 +47,7 @@ button:focus-visible {
 }
 button:disabled {
   opacity: 0.5;
-  cursor: wait;
+  cursor: not-allowed;
 }
 h1,
 h2,
@@ -60,6 +77,7 @@ svg {
   height: 100%;
   display: block;
   outline: none;
+  filter: saturate(1.035) contrast(1.015);
 }
 .world.is-building {
   cursor: crosshair;
@@ -143,11 +161,41 @@ h1 span {
   font-weight: 550;
   font-variant-numeric: tabular-nums;
 }
+.resource > div:last-child {
+  min-width: 48px;
+}
+.resource-trend {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 10px;
+  color: #a49a84;
+  font-size: 7px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.resource-trend.positive {
+  color: #758955;
+}
+.resource-trend.negative {
+  color: #b16d4e;
+}
+.resource-trend.steady {
+  color: #b4a58d;
+}
+.resource-value {
+  display: inline-block;
+  animation: resource-bump 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
 .resource em {
   font-size: 12px;
   font-style: normal;
   color: #9d927d;
   font-weight: 400;
+}
+.resource.population.at-capacity strong,
+.resource.population.at-capacity .resource-icon {
+  color: #b16d4e;
 }
 .day {
   border-left: 1px solid var(--line);
@@ -158,6 +206,26 @@ h1 span {
 }
 .day svg {
   color: #b59249;
+  transition:
+    color 1.2s ease,
+    transform 1.2s ease;
+}
+.day-icon.dawn,
+.day-icon.dusk {
+  color: #c27d5f;
+  transform: rotate(-18deg);
+}
+.day-icon.afternoon {
+  color: #c49d43;
+}
+.day-icon.night {
+  color: #71889a;
+  transform: rotate(-12deg);
+}
+.day-period::before {
+  content: "·";
+  margin: 0 5px;
+  color: #b4a58c;
 }
 .day strong {
   font:
@@ -183,17 +251,24 @@ h1 span {
 }
 .menu-button {
   width: 26px;
+  transition: transform 0.2s ease;
+}
+.menu-button.open {
+  transform: rotate(180deg);
 }
 .icon-button:hover {
   background: #eee4d0;
 }
 .parchment {
-  background: linear-gradient(135deg, #faf5e9f7, #f0e8d7f5);
+  background:
+    linear-gradient(135deg, #fbf7ebf8, #f0e8d7f5),
+    repeating-linear-gradient(0deg, #ffffff09 0 1px, transparent 1px 4px);
   border: 1px solid #e0d5ba;
   box-shadow:
     0 4px 16px #34351a13,
     0 1px 2px #34351a10;
   border-radius: 7px;
+  backdrop-filter: blur(3px);
 }
 .left-stack {
   position: absolute;
@@ -254,6 +329,13 @@ h1 span {
 .objectives {
   padding: 17px 17px 0;
 }
+.objectives.complete {
+  border-color: #c6c79e;
+  box-shadow:
+    0 4px 16px #34351a13,
+    0 0 0 1px #d7d8af66,
+    0 1px 2px #34351a10;
+}
 .objective-heading {
   width: 100%;
   display: flex;
@@ -282,6 +364,48 @@ h1 span {
   color: #9b8c74;
   margin: 12px 0 15px;
   max-width: 180px;
+}
+.goal-next {
+  display: grid;
+  gap: 4px;
+  margin: 0 -3px 15px;
+  padding: 10px 11px 11px;
+  border: 1px solid #d8c8a8;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #eee3cdd9, #f7efddcc);
+  box-shadow: inset 0 1px 0 #fff9e5aa;
+}
+.goal-next-kicker {
+  color: #a08b64;
+  font-size: 6px;
+  letter-spacing: 1.2px;
+}
+.goal-next strong {
+  color: #6c5a3f;
+  font: 500 13px/1.2 "Lora", Georgia, serif;
+}
+.goal-next > span:not(.goal-next-kicker) {
+  color: #9b8c74;
+  font-size: 8px;
+  line-height: 1.35;
+}
+.goal-next button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: fit-content;
+  margin-top: 3px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #96704b;
+  color: #fff8e8;
+  font-size: 8px;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.goal-next button:hover {
+  background: #805d3d;
+  transform: translateY(-1px);
 }
 .goal {
   display: flex;
@@ -323,7 +447,8 @@ h1 span {
   display: block;
   height: 100%;
   background: #8f9d70;
-  transition: width 1s;
+  transition: width 1s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 0 8px #9baa6d88;
 }
 .objective-footer {
   display: flex;
@@ -346,6 +471,10 @@ h1 span {
   font-size: 9px;
   text-shadow: 0 1px 3px #324d2b70;
   margin: 13px 3px;
+  transition: color 0.25s ease;
+}
+.settlement-status.activity {
+  color: #fff2bf;
 }
 .settlement-status .live-dot {
   background: #e0e7a8;
@@ -396,6 +525,213 @@ h1 span {
 .season-caption .live-dot {
   background: #e3e8b6;
 }
+.advisor-launch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  margin: 14px 0 0 auto;
+  padding: 8px 11px;
+  color: #796b54;
+  font-size: 9px;
+  box-shadow: 0 3px 12px #35422318;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+.advisor-launch:hover,
+.advisor-launch.active {
+  color: #695239;
+  background: #e7dcc4;
+  transform: translateY(-1px);
+}
+.advisor-panel {
+  position: absolute;
+  top: 205px;
+  right: 27px;
+  z-index: 25;
+  width: min(330px, calc(100% - 54px));
+  max-height: calc(100dvh - 230px);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(135deg, #fbf7eb, #f0e8d7),
+    repeating-linear-gradient(0deg, #ffffff09 0 1px, transparent 1px 4px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 12px 34px #30331c30;
+  animation: advisor-enter 0.2s ease both;
+}
+.advisor-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.advisor-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #9a8768;
+  font-size: 7px;
+  letter-spacing: 1.4px;
+}
+.advisor-kicker svg {
+  color: #8a9a66;
+}
+.advisor-heading h2 {
+  margin-top: 6px;
+  font: 500 20px/1.25 "Lora", Georgia, serif;
+  letter-spacing: -0.45px;
+}
+.advisor-heading .bare {
+  margin-top: -2px;
+}
+.advisor-intro {
+  margin-top: 9px;
+  color: #998a72;
+  font-size: 10px;
+  line-height: 1.55;
+}
+.advisor-messages {
+  min-height: 120px;
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 15px -5px 12px 0;
+  padding: 2px 7px 2px 0;
+  scrollbar-color: #c7b999 transparent;
+  scrollbar-width: thin;
+}
+.advisor-message {
+  max-width: 91%;
+  padding: 9px 11px;
+  border: 1px solid #ded3bc;
+  border-radius: 5px;
+  background: #f0e8d8aa;
+}
+.advisor-message.user {
+  align-self: flex-end;
+  border-color: #d2bea0;
+  background: #e7dac3;
+}
+.advisor-message > span {
+  display: block;
+  margin-bottom: 5px;
+  color: #a2947b;
+  font-size: 6px;
+  letter-spacing: 1.2px;
+}
+.advisor-message.user > span {
+  color: #947758;
+}
+.advisor-message p {
+  color: #76694f;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.advisor-message p strong {
+  color: #665b45;
+  font-weight: 650;
+}
+.advisor-thinking p {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: #9b8c73;
+}
+.advisor-thinking p i {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #8b9a68;
+  animation: advisor-breathe 1s ease-in-out infinite;
+}
+.advisor-thinking p i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.advisor-thinking p i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+.advisor-error {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid #dfb9a3;
+  border-radius: 4px;
+  color: #a35f49;
+  background: #f4e1d6aa;
+  font-size: 9px;
+  line-height: 1.45;
+}
+.advisor-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 11px;
+}
+.advisor-prompts button {
+  padding: 6px 8px;
+  border: 1px solid #d6c8ad;
+  border-radius: 4px;
+  color: #8b7759;
+  font-size: 8px;
+  text-align: left;
+}
+.advisor-prompts button:hover {
+  border-color: #b9a47d;
+  background: #eee3d0;
+}
+.advisor-form {
+  display: flex;
+  gap: 7px;
+  align-items: stretch;
+}
+.advisor-form textarea {
+  min-width: 0;
+  flex: 1;
+  resize: none;
+  border: 1px solid #cfc2a8;
+  border-radius: 4px;
+  background: #fffaf0;
+  color: #554a36;
+  font: 10px/1.45 "DM Sans", sans-serif;
+  padding: 9px 10px;
+  outline: none;
+}
+.advisor-form textarea::placeholder {
+  color: #afa28b;
+}
+.advisor-form textarea:focus {
+  border-color: #9a8b62;
+  box-shadow: 0 0 0 3px #b7bd8650;
+}
+.advisor-send {
+  align-self: stretch;
+  width: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: #96704b;
+  color: #fff8e8;
+}
+.advisor-send:hover:not(:disabled) {
+  background: #805d3d;
+}
+.advisor-send:disabled {
+  background: #c9bda8;
+}
+.advisor-note {
+  margin-top: 9px;
+  color: #aa9c83;
+  font-size: 7px;
+  line-height: 1.4;
+  text-align: center;
+}
 .build-area {
   position: absolute;
   bottom: 16px;
@@ -423,12 +759,16 @@ h1 span {
   margin: 0 4px;
 }
 .build-palette {
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   padding: 7px;
   gap: 4px;
   background: linear-gradient(135deg, #fbf7ebef, #eee4cef7);
   box-shadow: 0 7px 30px #30331c28;
+}
+.palette-scroll-hint {
+  display: none;
 }
 .build-card {
   position: relative;
@@ -443,11 +783,15 @@ h1 span {
   border-radius: 5px;
   transition:
     background 0.15s,
-    border 0.15s;
+    border 0.15s,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
 }
 .build-card:hover {
   background: #e9dfc9;
   border-color: #d7c7a6;
+  transform: translateY(-3px);
+  box-shadow: 0 5px 12px #6a552b17;
 }
 .build-card.selected {
   background: #b17f58;
@@ -462,6 +806,24 @@ h1 span {
   font-size: 7px;
   color: #b4a58d;
 }
+.build-card-warning {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #b16d4e;
+  color: #fff5df;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+.build-card.low-resources:not(.selected) .building-name {
+  color: #a67962;
+}
 .selected .building-number {
   color: #e4cfb7;
 }
@@ -470,6 +832,10 @@ h1 span {
   height: 76px;
   object-fit: contain;
   pointer-events: none;
+  transition: transform 0.18s ease;
+}
+.build-card:hover img {
+  transform: scale(1.045) translateY(-2px);
 }
 .building-name {
   font-size: 10px;
@@ -482,6 +848,7 @@ h1 span {
   border-radius: 50%;
   bottom: 4px;
   background: #f9ebd7;
+  animation: selection-pip 1.6s ease-in-out infinite;
 }
 .bottom-caption {
   display: flex;
@@ -507,6 +874,28 @@ h1 span {
 }
 .autosave .live-dot {
   background: #e7ebba;
+}
+.autosave.unavailable {
+  color: #ffd0b5;
+}
+.autosave.unavailable .live-dot {
+  background: #d97560;
+  animation: none;
+}
+.autosave.conflict {
+  padding: 0;
+  color: #ffd0b5;
+  text-decoration: underline;
+  text-decoration-color: #ffd0b580;
+  text-underline-offset: 2px;
+}
+.autosave.conflict:hover {
+  color: #fff0cf;
+}
+.autosave.conflict:focus-visible {
+  outline: 2px solid #fff0cf;
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 .bottom-left {
   position: absolute;
@@ -539,6 +928,7 @@ h1 span {
 }
 .compass:hover {
   background: #f4eed832;
+  transform: rotate(-4deg);
 }
 .help-button {
   display: flex;
@@ -589,6 +979,13 @@ h1 span {
   display: flex;
   gap: 24px;
   pointer-events: none;
+  z-index: 20;
+}
+
+/* Placement guidance owns the build-area lane. Keep the detail card above it
+   so its copy never sits on top of the rotate/place/cancel controls. */
+.game-shell:has(.world.is-building) .build-tooltip {
+  bottom: calc(100% + 12px);
 }
 .tooltip-category,
 .tooltip-cost > span {
@@ -634,6 +1031,12 @@ h1 span {
   font-size: 9px;
   color: #9b8b71;
 }
+.tooltip-cost .cost-gap {
+  margin: 0 0 0 auto;
+  font-size: 7px;
+  color: #bd5d47;
+  white-space: nowrap;
+}
 .tooltip-cost svg {
   color: #9a825e;
 }
@@ -643,6 +1046,13 @@ h1 span {
   color: #a1937c;
   margin-top: 13px;
   white-space: nowrap;
+}
+.relocation-note {
+  display: block;
+  margin-top: 12px;
+  color: #78855c;
+  font-size: 11px;
+  font-weight: 600;
 }
 .tooltip-cost .unaffordable,
 .tooltip-cost .unaffordable > span {
@@ -663,6 +1073,8 @@ h1 span {
   width: fit-content;
   max-width: 100%;
   box-shadow: 0 3px 9px #35422315;
+  position: relative;
+  z-index: 21;
 }
 .placement-hint.invalid {
   color: #b06349;
@@ -695,7 +1107,7 @@ h1 span {
   font-size: 11px;
   z-index: 20;
   max-width: 90%;
-  animation: appear 0.25s ease;
+  animation: appear 0.25s ease, toast-glow 2.8s ease-in-out 0.25s infinite;
 }
 .toast svg {
   color: #7c8a5d;
@@ -726,6 +1138,23 @@ h1 span {
   width: 100%;
   object-fit: contain;
 }
+.worker-portrait {
+  height: 120px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  color: #8d805f;
+  background:
+    linear-gradient(135deg, #e8ddc5 25%, transparent 25%) 0 0 / 18px 18px,
+    linear-gradient(315deg, #e8ddc5 25%, #f1e8d5 25%) 0 0 / 18px 18px;
+  border: 1px solid #dfd2b8;
+}
+.worker-portrait span {
+  font-size: 8px;
+  letter-spacing: 1.2px;
+  color: #a28f6c;
+}
 .inspector h3 {
   font:
     500 22px "Lora",
@@ -743,6 +1172,21 @@ h1 span {
   margin-top: 17px;
   padding-top: 4px;
 }
+.inspector-progress {
+  height: 4px;
+  margin-top: 17px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2d8c4;
+}
+.inspector-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #b47b50, #849761);
+  box-shadow: 0 0 8px #9baa6d88;
+  transition: width 0.5s ease;
+}
 .detail-stats > span {
   display: flex;
   justify-content: space-between;
@@ -753,6 +1197,75 @@ h1 span {
 .detail-stats strong {
   font-weight: 500;
   color: #665b45;
+}
+.inspector-state.building strong,
+.inspector-state.on-the-way strong,
+.inspector-state.working strong,
+.inspector-state.delivering strong {
+  color: #708255;
+}
+.inspector-state.waiting-for-food strong {
+  color: #b16d4e;
+}
+.inspector-state.paused strong {
+  color: #b16d4e;
+}
+.inspector-actions {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid #ded4be;
+  margin-top: 15px;
+  padding-top: 12px;
+}
+.inspector-action-label {
+  color: #9a8b73;
+  font-size: 8px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.segmented-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.segmented-actions button,
+.inspector-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 7px 6px;
+  border: 1px solid #d8cbb2;
+  border-radius: 4px;
+  color: #85775f;
+  font-size: 8px;
+  line-height: 1.2;
+}
+.segmented-actions button.active,
+.segmented-actions button:hover,
+.inspector-control:hover {
+  background: #e8ddc7;
+  border-color: #bca27b;
+  color: #5f563f;
+}
+.inspector-control.danger {
+  color: #aa624b;
+}
+.inspector-control.upgrade {
+  background: #eadcb5;
+  color: #806431;
+}
+.upgrade-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #897249;
+  font-size: 8px;
+}
+.inspector-state.idle strong,
+.inspector-state.complete strong {
+  color: #817661;
 }
 .menu {
   position: absolute;
@@ -774,6 +1287,15 @@ h1 span {
 .menu button:hover {
   background: #e8dfcb;
 }
+.feast-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 7px 10px;
+  color: #806431;
+  font-size: 8px;
+}
 .modal-backdrop {
   position: absolute;
   inset: 0;
@@ -785,7 +1307,8 @@ h1 span {
   padding: 24px;
 }
 .modal {
-  width: 440px;
+  width: min(440px, 100%);
+  min-width: 0;
   max-width: 100%;
   padding: 34px;
   position: relative;
@@ -812,6 +1335,554 @@ h1 span {
   line-height: 1.8;
   margin-top: 12px;
   margin-bottom: 20px;
+}
+.overview-kicker {
+  display: block;
+  color: #a2967f;
+  font-size: 8px;
+  letter-spacing: 1.5px;
+  margin-bottom: 7px;
+}
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  min-width: 0;
+  gap: 8px;
+  margin: 22px 0 19px;
+}
+.overview-stat {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  min-width: 0;
+  column-gap: 9px;
+  align-items: center;
+  padding: 12px 11px;
+  border: 1px solid #ded3bb;
+  border-radius: 5px;
+  background: #f0e8d8aa;
+}
+.overview-stat > svg {
+  grid-row: span 2;
+  color: #9a8058;
+}
+.overview-stat strong {
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 550;
+  line-height: 1;
+}
+.overview-stat strong small {
+  color: #a09580;
+  font-size: 10px;
+  font-weight: 400;
+}
+.overview-stat span {
+  color: #9b8c74;
+  font-size: 8px;
+  margin-top: 4px;
+}
+.overview-progress {
+  margin: 0 0 20px;
+}
+.overview-progress > div {
+  display: flex;
+  justify-content: space-between;
+  color: #8e8068;
+  font-size: 9px;
+  margin-bottom: 7px;
+}
+.overview-progress strong {
+  color: #665b45;
+  font-weight: 550;
+}
+.overview-progress > i {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #ded5c3;
+}
+.overview-progress b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #8f9d70;
+  transition: width 0.4s ease;
+}
+.overview-activity {
+  min-width: 0;
+  margin: -2px 0 20px;
+  padding-top: 13px;
+  border-top: 1px solid #ded5c3;
+}
+.overview-activity-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #8e8068;
+  font-size: 9px;
+}
+.overview-activity-heading small {
+  color: #a2967f;
+  font-size: 7px;
+  letter-spacing: 1.2px;
+}
+.overview-activity ul {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.overview-activity li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  color: #877960;
+  font-size: 9px;
+  line-height: 1.3;
+}
+.overview-activity li i {
+  flex: 0 0 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #9aab73;
+  box-shadow: 0 0 0 3px #9aab7330;
+}
+.overview-activity li span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-activity > p {
+  margin: 9px 0 0;
+  color: #a09580;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.economy-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+  margin: -4px 0 17px;
+}
+.economy-strip > div {
+  display: grid;
+  gap: 4px;
+  padding: 8px 6px;
+  border: 1px solid #ded3bb;
+  border-radius: 4px;
+  background: #f0e8d866;
+}
+.economy-strip span {
+  color: #9b8c74;
+  font-size: 7px;
+  line-height: 1.2;
+}
+.economy-strip strong {
+  color: #718255;
+  font-size: 11px;
+  font-weight: 600;
+}
+.economy-strip strong.negative {
+  color: #b16d4e;
+}
+.feast-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #ded5c3;
+  border-bottom: 1px solid #ded5c3;
+  padding: 13px 0;
+  margin-bottom: 16px;
+}
+.feast-panel > div {
+  min-width: 0;
+}
+.feast-panel .overview-kicker {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+.feast-panel strong {
+  display: block;
+  color: #665b45;
+  font-size: 12px;
+}
+.feast-panel p {
+  margin-top: 4px;
+  color: #9b8c74;
+  font-size: 8px;
+  line-height: 1.45;
+}
+.feast-panel .primary {
+  flex: 0 0 auto;
+  padding: 9px 10px;
+  font-size: 8px;
+}
+.chapter-goals {
+  display: grid;
+  gap: 9px;
+  border-top: 1px solid #ded5c3;
+  padding-top: 13px;
+  margin-bottom: 20px;
+}
+.chapter-goal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+}
+.chapter-goal > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.chapter-goal strong {
+  color: #766a54;
+  font-size: 9px;
+  font-weight: 600;
+}
+.chapter-goal span {
+  color: #a09580;
+  font-size: 8px;
+  line-height: 1.35;
+}
+.chapter-goal em {
+  flex: 0 0 auto;
+  color: #9c875b;
+  font-size: 7px;
+  font-style: normal;
+  text-align: right;
+}
+.chapter-goal.done strong,
+.chapter-goal.done em {
+  color: #718255;
+}
+.overview-sites {
+  border-top: 1px solid #ded5c3;
+  padding-top: 13px;
+  margin-bottom: 18px;
+}
+.graphics-panel {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #ded5c3;
+  padding-top: 13px;
+  margin-bottom: 18px;
+}
+.graphics-panel > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.graphics-panel .overview-activity-heading {
+  color: #8e8068;
+  font-size: 9px;
+}
+.graphics-panel small {
+  color: #a09580;
+  font-size: 7px;
+}
+.graphics-panel .segmented-actions button {
+  text-transform: capitalize;
+}
+.graphics-panel .segmented-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.audio-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  border-top: 1px solid #ded5c3;
+  padding-top: 12px;
+  margin-bottom: 18px;
+}
+.audio-panel > div {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.audio-panel > div small {
+  color: #a09580;
+  font-size: 7px;
+}
+.audio-panel label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #82745d;
+  font-size: 8px;
+}
+.audio-panel input {
+  accent-color: #8f9d70;
+}
+.focus-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 9px;
+}
+.focus-list button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 7px;
+  border-radius: 3px;
+  color: #82745d;
+  font-size: 8px;
+  text-align: left;
+}
+.focus-list button:hover {
+  background: #e8dfcb;
+}
+.focus-list em {
+  color: #a29781;
+  font-size: 7px;
+  font-style: normal;
+}
+.workers-list {
+  grid-template-columns: 1fr 1fr;
+  margin-top: 5px;
+}
+.chapter-mini {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid #ded5c3;
+  padding: 10px 0 12px;
+}
+.chapter-mini strong {
+  color: #897249;
+  font-size: 8px;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+}
+.chapter-mini span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #8d8069;
+  font-size: 8px;
+}
+.chapter-mini span.done {
+  color: #718255;
+}
+.chapter-mini span i {
+  width: 5px;
+  height: 5px;
+  border: 1px solid #bba985;
+  border-radius: 50%;
+}
+.import-preview {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 22px;
+  padding: 13px;
+  border: 1px solid #ded3bb;
+  border-radius: 5px;
+  background: #f0e8d8aa;
+}
+.import-preview > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #998a72;
+  font-size: 9px;
+}
+.import-preview strong {
+  color: #665b45;
+  font-weight: 600;
+  text-align: right;
+}
+.tutorial-card {
+  position: absolute;
+  top: 118px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(360px, calc(100% - 32px));
+  padding: 15px 17px;
+  z-index: 18;
+  box-shadow: 0 8px 25px #3542231f;
+}
+.tutorial-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #796b54;
+  font-size: 7px;
+  letter-spacing: 1.1px;
+}
+.tutorial-card h3 {
+  margin-top: 10px;
+  color: #665b45;
+  font: 500 17px/1.25 "Lora", Georgia, serif;
+}
+.tutorial-card p {
+  margin-top: 7px;
+  color: #796b54;
+  font-size: 9px;
+  line-height: 1.55;
+}
+.tutorial-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: #96704b;
+  color: #fff8e8;
+  font-size: 8px;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.tutorial-action:hover {
+  background: #805d3d;
+  transform: translateY(-1px);
+}
+.tutorial-progress {
+  height: 3px;
+  overflow: hidden;
+  margin-top: 13px;
+  border-radius: 99px;
+  background: #ded5c3;
+}
+.tutorial-progress i {
+  display: block;
+  height: 100%;
+  background: #8f9d70;
+  transition: width .3s ease;
+}
+.tutorial-skip {
+  margin-top: 11px;
+  color: #756447;
+  font-size: 8px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.event-card {
+  position: absolute;
+  top: 168px;
+  right: 82px;
+  width: min(260px, calc(100% - 32px));
+  padding: 15px 17px;
+  z-index: 18;
+  box-shadow: 0 8px 25px #3542231f;
+}
+.event-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.event-card-top .overview-kicker {
+  margin-bottom: 0;
+}
+.event-peek {
+  position: absolute;
+  top: 168px;
+  right: 27px;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(230px, calc(100% - 32px));
+  padding: 10px 12px;
+  text-align: left;
+  color: #756447;
+  box-shadow: 0 8px 25px #3542231f;
+}
+.event-peek > svg:first-child {
+  color: #b18b43;
+}
+.event-peek > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.event-peek small {
+  color: #a08b64;
+  font-size: 6px;
+  letter-spacing: 1.1px;
+}
+.event-peek strong {
+  overflow: hidden;
+  color: #6c5a3f;
+  font: 500 11px/1.2 "Lora", Georgia, serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.event-peek:hover {
+  background: #f5ecd9;
+  transform: translateY(-1px);
+}
+.event-card h3 {
+  margin-top: 5px;
+  color: #665b45;
+  font: 500 17px/1.25 "Lora", Georgia, serif;
+}
+.event-card p {
+  margin-top: 7px;
+  color: #998a72;
+  font-size: 9px;
+  line-height: 1.55;
+}
+.event-choices {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+}
+.event-choices button {
+  padding: 8px 9px;
+  border: 1px solid #d1c3a8;
+  border-radius: 4px;
+  color: #806b4c;
+  font-size: 8px;
+  text-align: left;
+}
+.event-choices button:hover:not(:disabled) {
+  background: #eadfc8;
+  border-color: #bca27b;
+}
+.event-choices button.event-choice-primary {
+  background: #96704b;
+  border-color: #96704b;
+  color: #fff8e8;
+  font-weight: 550;
+}
+.event-choices button.event-choice-primary:hover:not(:disabled) {
+  background: #805d3d;
+  border-color: #805d3d;
+}
+.event-choices button.event-choice-primary:focus-visible {
+  outline-color: #fff4d8;
+}
+.event-choices button:disabled {
+  color: #b9aa90;
+  cursor: not-allowed;
+}
+.placement-confirm {
+  color: #718255;
+}
+.utility-card {
+  color: #887454;
+}
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
 }
 .help-row {
   display: flex;
@@ -852,6 +1923,23 @@ h1 span {
 .primary:hover {
   background: #805d3d;
 }
+.secondary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #d1c3a8;
+  border-radius: 4px;
+  color: #87765b;
+  padding: 10px 13px;
+  font-size: 10px;
+}
+.secondary:hover {
+  background: #eee5d3;
+}
+.tutorial-replay {
+  margin-bottom: 10px;
+}
 .full {
   width: 100%;
   display: flex;
@@ -863,6 +1951,34 @@ h1 span {
   gap: 12px;
   justify-content: flex-end;
   font-size: 11px;
+}
+.rename-form {
+  margin-top: 20px;
+}
+.rename-form label {
+  display: block;
+  margin-bottom: 7px;
+  color: #8e8067;
+  font-size: 9px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+.rename-form input {
+  width: 100%;
+  border: 1px solid #cfc2a8;
+  border-radius: 4px;
+  background: #fffaf0;
+  color: #554a36;
+  font: 500 18px "Lora", Georgia, serif;
+  padding: 10px 12px;
+  outline: none;
+}
+.rename-form input:focus {
+  border-color: #9a8b62;
+  box-shadow: 0 0 0 3px #b7bd8650;
+}
+.rename-form .modal-actions {
+  margin-top: 18px;
 }
 .loading-screen {
   position: absolute;
@@ -907,6 +2023,59 @@ h1 span {
     opacity: 1;
     translate: 0 0;
   }
+}
+@keyframes advisor-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes advisor-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+@keyframes selection-pip {
+  50% {
+    transform: scale(1.8);
+    opacity: 0.55;
+  }
+}
+@keyframes resource-bump {
+  0% {
+    opacity: 0.45;
+    transform: translateY(4px) scale(0.94);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.06);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes toast-glow {
+  50% {
+    box-shadow: 0 5px 26px #26381c2d, 0 0 0 3px #ead9b333;
+  }
+}
+@keyframes live-pulse {
+  50% {
+    box-shadow: 0 0 0 4px #d8e8aa28;
+  }
+}
+.live-dot {
+  animation: live-pulse 2.2s ease-in-out infinite;
 }
 @media (min-width: 1600px) {
   .topbar {
@@ -1023,10 +2192,176 @@ h1 span {
   .build-tooltip {
     bottom: 155px;
   }
+  .advisor-panel {
+    right: 18px;
+    width: min(330px, calc(100% - 36px));
+  }
   .bottom-left .help-button {
     padding: 8px;
   }
   .help-button span {
+    display: none;
+  }
+}
+@media (min-width: 761px) and (max-width: 900px) {
+  .topbar {
+    gap: 8px;
+    padding: 0 12px;
+  }
+  .brand {
+    min-width: 210px;
+    gap: 8px;
+  }
+  .brand-mark svg {
+    width: 24px;
+  }
+  h1 {
+    font-size: 20px;
+  }
+  h1 span {
+    font-size: 18px;
+  }
+  .brand p {
+    font-size: 7px;
+    letter-spacing: 1.6px;
+    margin-top: 5px;
+  }
+  .resources {
+    gap: 8px;
+  }
+  .resource {
+    min-width: 58px;
+    gap: 5px;
+  }
+  .resource-icon svg {
+    width: 18px;
+  }
+  .resource small {
+    font-size: 7px;
+    letter-spacing: 1.2px;
+  }
+  .resource strong {
+    font-size: 16px;
+  }
+  .resource > div:last-child {
+    min-width: 38px;
+  }
+  .resource-trend {
+    font-size: 6px;
+  }
+  .day {
+    padding-left: 10px;
+    gap: 7px;
+  }
+  .day svg {
+    width: 20px;
+  }
+  .day strong {
+    font-size: 15px;
+  }
+  .day small {
+    font-size: 8px;
+  }
+  .tutorial-card {
+    left: 14px;
+    transform: none;
+    width: min(340px, calc(100% - 28px));
+  }
+  .event-peek {
+    right: 14px;
+    width: min(205px, calc(100% - 28px));
+  }
+  .event-card {
+    right: 14px;
+    width: min(240px, calc(100% - 28px));
+  }
+}
+@media (min-width: 761px) and (max-width: 900px) and (max-height: 620px) {
+  /* Landscape tablets keep the wide header but need the same vertical budget
+     discipline as compact phones. */
+  .game-shell {
+    min-height: 100dvh;
+  }
+  .objectives {
+    max-height: calc(100dvh - 353px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #b7a27d transparent;
+  }
+  .settlement-status {
+    display: none;
+  }
+  .build-area {
+    bottom: calc(6px + env(safe-area-inset-bottom));
+    width: calc(100% - 180px);
+  }
+  .build-card {
+    height: 68px;
+  }
+  .build-card img {
+    height: 44px;
+  }
+  .build-title {
+    margin-bottom: 5px;
+  }
+  .bottom-caption {
+    padding-top: 5px;
+  }
+  .bottom-left {
+    left: max(17px, env(safe-area-inset-left));
+    right: auto;
+    bottom: calc(6px + env(safe-area-inset-bottom));
+  }
+  .bottom-right {
+    right: max(17px, env(safe-area-inset-right));
+    bottom: calc(130px + env(safe-area-inset-bottom));
+  }
+  .event-card {
+    right: calc(138px + env(safe-area-inset-right));
+    width: min(240px, calc(100% - 32px));
+  }
+  .event-peek {
+    right: calc(138px + env(safe-area-inset-right));
+  }
+  .game-shell:has(.world.is-building) .build-tooltip {
+    visibility: hidden;
+  }
+  .toast {
+    bottom: calc(190px + env(safe-area-inset-bottom));
+  }
+}
+@media (min-width: 901px) and (max-height: 760px) {
+  /* Short desktop/tablet viewports still need to reserve the
+     lower palette lane; keep the goals card useful without letting it slide
+     behind the palette or compass. */
+  .objectives {
+    max-height: calc(100dvh - 410px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: #b7a27d transparent;
+  }
+  .objectives::-webkit-scrollbar {
+    width: 8px;
+  }
+  .objectives::-webkit-scrollbar-track {
+    background: #e7dcc7aa;
+    border-radius: 8px;
+  }
+  .objectives::-webkit-scrollbar-thumb {
+    background: #b7a27d;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 8px;
+  }
+  .event-card {
+    right: calc(138px + env(safe-area-inset-right));
+  }
+  .event-peek {
+    right: calc(138px + env(safe-area-inset-right));
+  }
+  .settlement-status {
     display: none;
   }
 }
@@ -1035,14 +2370,15 @@ h1 span {
     min-height: 500px;
   }
   .topbar {
-    height: 99px;
+    height: calc(99px + env(safe-area-inset-top));
     display: grid;
     grid-template-columns: 1fr auto auto;
     gap: 0 12px;
-    padding: 10px 16px;
+    padding: max(10px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+      10px max(16px, env(safe-area-inset-left));
   }
   .world {
-    top: 94px;
+    top: calc(94px + env(safe-area-inset-top));
   }
   .brand {
     min-width: 0;
@@ -1086,6 +2422,27 @@ h1 span {
   .resource-icon svg {
     width: 19px;
   }
+  .resource > div:last-child {
+    min-width: 40px;
+  }
+  .resource-trend {
+    display: none;
+  }
+  .game-shell:has(.tutorial-card) .objectives,
+  .game-shell:has(.tutorial-card) .settlement-status {
+    visibility: hidden;
+  }
+  .game-shell:has(.tutorial-card) .left-stack {
+    pointer-events: none;
+  }
+  .game-shell:has(.tutorial-card) .left-stack .village-heading,
+  .game-shell:has(.tutorial-card) .left-stack .village-label {
+    visibility: visible;
+  }
+  .game-shell:has(.tutorial-card) .left-stack .village-heading,
+  .game-shell:has(.tutorial-card) .left-stack .village-label {
+    pointer-events: none;
+  }
   .day {
     border: 0;
     padding: 0;
@@ -1100,13 +2457,19 @@ h1 span {
   .day small {
     font-size: 7px;
   }
+  .season-name {
+    display: none;
+  }
+  .day-period::before {
+    display: none;
+  }
   .menu-button {
     width: 17px;
     height: 25px;
   }
   .left-stack {
-    top: 119px;
-    left: 16px;
+    top: calc(119px + env(safe-area-inset-top));
+    left: max(16px, env(safe-area-inset-left));
     width: 185px;
   }
   .village-label {
@@ -1164,8 +2527,8 @@ h1 span {
     max-width: 190px;
   }
   .top-right {
-    top: 116px;
-    right: 14px;
+    top: calc(116px + env(safe-area-inset-top));
+    right: max(14px, env(safe-area-inset-right));
   }
   .time-controls button {
     height: 26px;
@@ -1176,7 +2539,7 @@ h1 span {
     font-size: 6px;
   }
   .build-area {
-    bottom: 11px;
+    bottom: calc(11px + env(safe-area-inset-bottom));
     width: calc(100% - 24px);
   }
   .build-palette {
@@ -1224,8 +2587,8 @@ h1 span {
     margin-left: 9px;
   }
   .bottom-left {
-    left: 15px;
-    bottom: 142px;
+    left: max(15px, env(safe-area-inset-left));
+    bottom: calc(145px + env(safe-area-inset-bottom));
     gap: 10px;
   }
   .compass {
@@ -1244,8 +2607,8 @@ h1 span {
     justify-content: center;
   }
   .bottom-right {
-    bottom: 146px;
-    right: 16px;
+    bottom: calc(146px + env(safe-area-inset-bottom));
+    right: max(16px, env(safe-area-inset-right));
     gap: 8px;
   }
   .icon-button {
@@ -1257,7 +2620,7 @@ h1 span {
     height: 26px;
   }
   .build-tooltip {
-    bottom: 130px;
+    bottom: calc(130px + env(safe-area-inset-bottom));
     width: min(340px, calc(100vw - 100px));
     padding: 13px;
     gap: 10px;
@@ -1280,6 +2643,13 @@ h1 span {
   }
   .tooltip-cost > div {
     font-size: 10px;
+    flex-wrap: wrap;
+    row-gap: 1px;
+  }
+  .tooltip-cost .cost-gap {
+    flex-basis: 100%;
+    margin: -2px 0 0 22px;
+    font-size: 6px;
   }
   .tooltip-cost small {
     font-size: 6px;
@@ -1341,6 +2711,314 @@ h1 span {
   .season-caption {
     display: none;
   }
+  .advisor-launch {
+    width: 31px;
+    height: 31px;
+    justify-content: center;
+    margin-top: 10px;
+    padding: 0;
+  }
+  .advisor-launch span {
+    display: none;
+  }
+  .advisor-panel {
+    top: calc(161px + env(safe-area-inset-top));
+    right: max(14px, env(safe-area-inset-right));
+    width: min(340px, calc(100% - 28px));
+    max-height: calc(100dvh - 180px - env(safe-area-inset-top));
+    padding: 14px;
+  }
+  .advisor-heading h2 {
+    font-size: 18px;
+  }
+  .advisor-intro {
+    font-size: 9px;
+  }
+  .advisor-messages {
+    min-height: 92px;
+    max-height: 220px;
+    margin-top: 12px;
+  }
+  .advisor-message p {
+    font-size: 9px;
+  }
+  .advisor-prompts button {
+    font-size: 7px;
+  }
+  .tutorial-card {
+    top: calc(163px + env(safe-area-inset-top));
+    left: max(14px, env(safe-area-inset-left));
+    transform: none;
+    width: min(245px, calc(100% - 28px));
+    padding: 12px 13px;
+  }
+  .tutorial-action {
+    margin-top: 9px;
+    padding: 7px 8px;
+  }
+  .goal-next {
+    margin-bottom: 10px;
+    padding: 8px 9px 9px;
+  }
+  .goal-next strong {
+    font-size: 11px;
+  }
+  .goal-next > span:not(.goal-next-kicker) {
+    font-size: 7px;
+  }
+  .goal-next button {
+    padding: 6px 7px;
+    font-size: 7px;
+  }
+  .event-peek {
+    top: calc(322px + env(safe-area-inset-top));
+    right: max(14px, env(safe-area-inset-right));
+    width: min(170px, calc(100% - 230px));
+    min-width: 150px;
+    padding: 8px 9px;
+  }
+  .event-peek strong {
+    font-size: 9px;
+  }
+  .event-peek small {
+    font-size: 5px;
+  }
+  .event-peek > svg {
+    width: 12px;
+  }
+  .event-card {
+    top: calc(163px + env(safe-area-inset-top));
+    right: max(14px, env(safe-area-inset-right));
+    width: min(230px, calc(100% - 28px));
+    padding: 12px 13px;
+  }
+  .tutorial-card h3 {
+    font-size: 15px;
+  }
+  .tutorial-card p {
+    font-size: 8px;
+  }
+  .economy-strip {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .economy-strip > div:nth-child(4),
+  .economy-strip > div:nth-child(5) {
+    grid-column: span 1;
+  }
+  .chapter-goal em {
+    max-width: 72px;
+  }
+}
+@media (min-width: 481px) and (max-width: 760px) {
+  .bottom-caption > span:first-child {
+    display: flex;
+  }
+  .bottom-caption > i:first-of-type {
+    display: inline;
+  }
+}
+@media (max-width: 480px) {
+  .build-palette {
+    display: flex;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    padding-top: 13px;
+    scrollbar-color: #b7a27d transparent;
+  }
+  .build-card {
+    flex: 0 0 48px;
+    width: 48px;
+    scroll-snap-align: start;
+  }
+  .palette-scroll-hint {
+    position: absolute;
+    z-index: 2;
+    top: 2px;
+    right: 7px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: #f8f1e4e8;
+    color: #8c7858;
+    font-size: 6px;
+    letter-spacing: 0.3px;
+    pointer-events: none;
+  }
+  /* The story card occupies the right-hand reading lane on narrow phones;
+     hide the competing goal card while it is open instead of letting the two
+     surfaces overlap. */
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .objectives,
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .settlement-status {
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+@media (max-width: 360px) {
+  /* Keep grouped five-digit storage values fully visible on the narrowest
+     phones; the HUD has four counters sharing one compact row. */
+  .resource strong {
+    font-size: 12px;
+    letter-spacing: -0.15px;
+    white-space: nowrap;
+  }
+  .resource > div:last-child {
+    min-width: 0;
+  }
+  .brand {
+    gap: 5px;
+  }
+  .brand-mark svg {
+    width: 21px;
+  }
+  .brand h1 {
+    font-size: 17px;
+    white-space: nowrap;
+  }
+  .brand p {
+    letter-spacing: 1.1px;
+  }
+  .settlement-status {
+    display: none;
+  }
+  .building-name {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 6px;
+    letter-spacing: -0.2px;
+  }
+  .settlement-status {
+    max-width: 150px;
+    margin-top: 8px;
+    font-size: 6px;
+  }
+  /* Give the story card a clean reading lane on the smallest phones instead
+     of letting it collide with the persistent settlement goals. */
+  .event-card {
+    top: calc(195px + env(safe-area-inset-top));
+    left: max(14px, env(safe-area-inset-left));
+    right: max(14px, env(safe-area-inset-right));
+    width: auto;
+  }
+}
+@media (max-width: 760px) and (max-height: 620px) {
+  .game-shell {
+    min-height: 100dvh;
+  }
+  /* The tutorial owns the compact-height guidance space; keep the secondary
+     build detail card from rising into it during placement. */
+  .game-shell:has(.world.is-building) .build-tooltip {
+    visibility: hidden;
+  }
+  .settlement-status {
+    display: none;
+  }
+  .build-area {
+    bottom: calc(6px + env(safe-area-inset-bottom));
+  }
+  .build-card {
+    height: 68px;
+  }
+  .build-card img {
+    height: 44px;
+  }
+  .build-title {
+    margin-bottom: 5px;
+  }
+  .bottom-caption {
+    padding-top: 5px;
+  }
+  .bottom-left {
+    left: auto;
+    right: calc(72px + env(safe-area-inset-right));
+    bottom: calc(126px + env(safe-area-inset-bottom));
+  }
+  .bottom-right {
+    bottom: calc(130px + env(safe-area-inset-bottom));
+  }
+  .build-tooltip {
+    bottom: calc(116px + env(safe-area-inset-bottom));
+  }
+  .objectives {
+    max-height: calc(100dvh - 353px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #b7a27d transparent;
+  }
+  .toast {
+    bottom: calc(190px + env(safe-area-inset-bottom));
+  }
+  /* Keep the advisor above the palette on short phones without making its
+     input or suggested questions scroll out of the first view. */
+  .advisor-panel {
+    padding: 12px;
+  }
+  .advisor-messages {
+    min-height: 86px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  .advisor-prompts {
+    margin-bottom: 8px;
+  }
+  .advisor-note {
+    margin-top: 6px;
+  }
+}
+@media (max-width: 760px) and (max-height: 420px) {
+  .top-right .advisor-launch {
+    position: absolute;
+    top: 46px;
+    right: calc(100% + 11px);
+    margin: 0;
+  }
+  .event-peek {
+    top: calc(198px + env(safe-area-inset-top));
+    right: calc(53px + env(safe-area-inset-right));
+    width: min(120px, calc(100% - 106px));
+    min-width: 0;
+    padding: 7px 8px;
+  }
+  .event-peek strong {
+    font-size: 8px;
+  }
+  .game-shell:has(.event-peek) .objectives,
+  .game-shell:has(.event-peek) .settlement-status,
+  .game-shell:has(.event-peek) .bottom-left,
+  .game-shell:has(.event-peek) .bottom-right {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  /* On very short landscape screens, let an active story choice own the
+     reading lane instead of leaving the palette and navigation rails behind
+     the card. They return as soon as the choice is resolved. */
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .event-card {
+    top: calc(112px + env(safe-area-inset-top));
+  }
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .build-area,
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .bottom-left,
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .bottom-right,
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .advisor-launch {
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+@media (max-width: 760px) {
+  /* Keep the placement guidance above the build detail card instead of
+     allowing the two surfaces to share the same bottom edge. */
+  .game-shell:has(.world.is-building) .build-tooltip {
+    bottom: calc(100% + 12px);
+  }
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .advisor-launch {
+    visibility: hidden;
+    pointer-events: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -1353,13 +3031,89 @@ h1 span {
   top: 100px;
   bottom: auto;
 }
+.game-shell:has(.tutorial-card) .toast {
+  top: 290px;
+}
+.game-shell:has(.advisor-panel) .event-peek {
+  visibility: hidden;
+  pointer-events: none;
+}
+.game-shell:has(.event-card:not([aria-hidden="true"])) .advisor-launch {
+  visibility: hidden;
+  pointer-events: none;
+}
+.game-shell:has(.menu) .event-peek,
+.game-shell:has(.menu) .event-card,
+.game-shell:has(.world.is-building) .event-card,
+.game-shell:has(.advisor-panel) .event-card {
+  visibility: hidden;
+  pointer-events: none;
+}
+.game-shell:has(.inspector) .event-peek,
+.game-shell:has(.inspector) .event-card {
+  visibility: hidden;
+  pointer-events: none;
+}
+.game-shell:has(.modal) .event-peek,
+.game-shell:has(.modal) .event-card {
+  visibility: hidden;
+  pointer-events: none;
+}
+.game-shell:has(.inspector) .build-tooltip,
+.game-shell:has(.modal) .build-tooltip,
+.game-shell:has(.advisor-panel) .build-tooltip {
+  visibility: hidden;
+}
 @media (max-width: 760px) {
   .toast {
     top: 160px;
     bottom: auto;
   }
+  .game-shell:has(.tutorial-card) .toast {
+    top: calc(370px + env(safe-area-inset-top));
+    left: auto;
+    right: max(14px, env(safe-area-inset-right));
+    width: min(230px, calc(100% - 28px));
+    max-width: calc(100% - 28px);
+    transform: none;
+  }
   .game-shell:has(.inspector) .objectives,
   .game-shell:has(.inspector) .settlement-status {
     visibility: hidden;
+  }
+}
+/* On narrow phones the advisor needs the full stage; keeping the tutorial
+   visible underneath it makes the two cards compete for the same space. */
+@media (max-width: 620px) {
+  .advisor-panel {
+    left: max(14px, env(safe-area-inset-left));
+    right: max(14px, env(safe-area-inset-right));
+    width: auto;
+    background:
+      linear-gradient(135deg, #fbf7eb, #f0e8d7),
+      repeating-linear-gradient(0deg, #ffffff09 0 1px, transparent 1px 4px);
+    backdrop-filter: blur(10px);
+  }
+  .game-shell:has(.advisor-panel) .tutorial-card {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .game-shell:has(.event-card:not([aria-hidden="true"])) .tutorial-card {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .game-shell:has(.inspector) .tutorial-card {
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
+/* Keep the inspector clear of the persistent zoom rail. */
+.game-shell:has(.inspector) .inspector {
+  right: 82px;
+}
+@media (max-width: 760px) {
+  .game-shell:has(.inspector) .inspector {
+    right: 54px;
   }
 }

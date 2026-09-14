@@ -1,82 +1,9 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-
-export const CATALOG = {
-  house: {
-    name: "Cottage",
-    size: 3,
-    cost: { wood: 30, stone: 10 },
-    description: "A warm hearth and room for four more villagers.",
-    effect: "+4 population capacity",
-    seconds: 12,
-  },
-  well: {
-    name: "Well",
-    size: 2,
-    cost: { wood: 15, stone: 25 },
-    description: "Fresh water at the heart of your growing settlement.",
-    effect: "A gathering place for your village",
-    seconds: 10,
-  },
-  farm: {
-    name: "Farm",
-    size: 4,
-    cost: { wood: 25, stone: 5 },
-    description: "Golden fields that keep your villagers well fed.",
-    effect: "+8 food per harvest",
-    resource: "food",
-    amount: 8,
-    seconds: 14,
-  },
-  lumberyard: {
-    name: "Lumberyard",
-    size: 3,
-    cost: { wood: 20, stone: 10 },
-    description: "Turns the surrounding forest into building timber.",
-    effect: "+8 wood per delivery",
-    resource: "wood",
-    amount: 8,
-    seconds: 12,
-  },
-  mine: {
-    name: "Stone mine",
-    size: 4,
-    cost: { wood: 35, stone: 15 },
-    description: "A steady source of stone from beneath the hills.",
-    effect: "+6 stone per delivery",
-    resource: "stone",
-    amount: 6,
-    seconds: 18,
-  },
-  windmill: {
-    name: "Windmill",
-    size: 4,
-    cost: { wood: 50, stone: 35 },
-    description: "Grinds the harvest into flour. Requires food to work.",
-    effect: "2 food → 8 food per cycle",
-    resource: "food",
-    amount: 8,
-    input: 2,
-    seconds: 20,
-  },
-  watchtower: {
-    name: "Watchtower",
-    size: 3,
-    cost: { wood: 45, stone: 20 },
-    description: "A lookout above the trees. Expands your building boundary.",
-    effect: "+3 tiles of buildable land",
-    seconds: 16,
-  },
-  road: {
-    name: "Path",
-    size: 1,
-    cost: { stone: 1 },
-    description: "Connect your hamlet. Villagers move faster on paths.",
-    effect: "+50% walking speed",
-    seconds: 0,
-  },
-};
+import { CATALOG } from "./catalog.js";
+import { chapterGoalState } from "./progression.js";
+export { CATALOG } from "./catalog.js";
 const initial = [
   ["townhall", -3, -3],
   ["house", -9, 2],
@@ -95,6 +22,192 @@ const rand = () => {
   return seed / 4294967296;
 };
 const riverX = (z) => 16 + Math.sin(z * 0.13) * 1.6;
+const VILLAGE_EVENTS = [
+  {
+    id: "peddler",
+    title: "A peddler at the gate",
+    text: "A cheerful trader offers provisions for your next building push.",
+    choices: [
+      { label: "Trade 12 wood", cost: { wood: 12 }, reward: { food: 20 }, result: "The peddler leaves a sack of grain by the hall." },
+      { label: "Wave goodbye", result: "The peddler tips their hat and continues down the road." },
+    ],
+  },
+  {
+    id: "harvest",
+    title: "A harvest celebration",
+    text: "Your villagers have enough to share. A small celebration could lift every hammer.",
+    choices: [
+      { label: "Share 20 food", cost: { food: 20 }, reward: { wood: 20 }, result: "The celebration brings a bundle of timber from a nearby grove." },
+      { label: "Save the stores", result: "The village keeps its pantry ready for tomorrow." },
+    ],
+  },
+  {
+    id: "stonemason",
+    title: "A passing stonemason",
+    text: "A traveling craftsperson can swap spare stone for useful timber before moving on.",
+    choices: [
+      { label: "Trade 10 stone", cost: { stone: 10 }, reward: { wood: 16 }, result: "Fresh-cut timber arrives at the town hall." },
+      { label: "Let them pass", result: "The stonemason wishes your village well." },
+    ],
+  },
+];
+function pushPriority(heap, item) {
+  let index = heap.length;
+  heap.push(item);
+  while (index > 0) {
+    const parent = Math.floor((index - 1) / 2);
+    if (heap[parent][0] <= item[0]) break;
+    heap[index] = heap[parent];
+    index = parent;
+  }
+  heap[index] = item;
+}
+function popPriority(heap) {
+  const first = heap[0];
+  const last = heap.pop();
+  if (heap.length && last) {
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      if (left >= heap.length) break;
+      const right = left + 1;
+      const child =
+        right < heap.length && heap[right][0] < heap[left][0] ? right : left;
+      if (heap[child][0] >= last[0]) break;
+      heap[index] = heap[child];
+      index = child;
+    }
+    heap[index] = last;
+  }
+  return first;
+}
+export const DEFAULT_VILLAGE_NAME = "Willowbrook";
+export const MAX_POPULATION = 24;
+export const SAVE_VERSION = 2;
+export const sanitizeVillageName = (value, fallback = DEFAULT_VILLAGE_NAME) => {
+  if (typeof value !== "string") return fallback;
+  const name = value.trim().replace(/\s+/g, " ").slice(0, 24);
+  return name || fallback;
+};
+export const finiteNumber = (value, fallback) => {
+  if (value === null || value === "" || typeof value === "boolean")
+    return fallback;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+export const sanitizeCameraView = (view) => {
+  if (!view || typeof view !== "object") return null;
+  const position = Array.isArray(view.position) ? view.position.map(Number) : null;
+  const target = Array.isArray(view.target) ? view.target.map(Number) : null;
+  if (
+    !position ||
+    !target ||
+    position.length !== 3 ||
+    target.length !== 3 ||
+    [...position, ...target].some((value) => !Number.isFinite(value))
+  )
+    return null;
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  return {
+    position: [
+      clamp(position[0], -80, 80),
+      clamp(position[1], 1, 100),
+      clamp(position[2], -80, 80),
+    ],
+    target: [
+      clamp(target[0], -20, 18),
+      clamp(target[1], -4, 4),
+      clamp(target[2], -24, 24),
+    ],
+    zoom: clamp(finiteNumber(view.zoom, 1), 0.65, 2.4),
+  };
+};
+export const housingCapacity = (buildings = []) =>
+  4 +
+  buildings.filter(
+    (building) => building?.type === "house" && building.progress === 1,
+  ).length *
+    4;
+export const safePopulation = (value, capacity, fallback = 8) =>
+  Math.min(
+    MAX_POPULATION,
+    Math.max(0, Math.floor(finiteNumber(value, fallback))),
+    Math.max(0, Math.floor(finiteNumber(capacity, 0))),
+  );
+export const restoredPopulation = (value, capacity) => {
+  const safeCapacity = Math.max(0, Math.floor(finiteNumber(capacity, 0)));
+  const population = safePopulation(value, safeCapacity);
+  return safeCapacity > 0 ? Math.max(1, population) : 0;
+};
+export const normalizedBuildingProgress = (type, value) =>
+  type === "townhall"
+    ? 1
+    : Math.min(1, Math.max(0, finiteNumber(value, 1)));
+export const reconcileRoadCount = (created = {}, roads = new Set()) => ({
+  ...created,
+  road: roads instanceof Set ? roads.size : 0,
+});
+export const saveCycleMarker = (elapsed) =>
+  Math.floor(Math.max(0, finiteNumber(elapsed, 0)));
+
+export const summarizeVillageSave = (record = {}) => {
+  const buildings = Array.isArray(record.buildings) ? record.buildings : [];
+  return {
+    name: sanitizeVillageName(record.name),
+    population: Math.min(
+      MAX_POPULATION,
+      Math.max(0, Math.floor(finiteNumber(record.population, 0))),
+    ),
+    buildings: buildings.filter((building) => building?.type !== "road").length,
+    paths: Array.isArray(record.roads) ? record.roads.length : 0,
+  };
+};
+
+export const parseVillageImport = (value) => {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.buildings))
+      return { ok: false, reason: "This file is not a Hearth & Hamlet village save." };
+    const summary = summarizeVillageSave(parsed);
+    return { ok: true, value: parsed, summary };
+  } catch {
+    return { ok: false, reason: "That village file could not be read." };
+  }
+};
+export const savedBuildingFits = (building, existing = []) => {
+  if (!building || building.type === "road") return false;
+  if (building.type !== "townhall" && !CATALOG[building.type]) return false;
+  if (
+    building.type === "townhall" &&
+    existing.some((candidate) => candidate.type === "townhall")
+  )
+    return false;
+  const x = Number(building.x);
+  const z = Number(building.z);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+  const size = (CATALOG[building.type]?.size || 4) / 2;
+  const boundary =
+    18 +
+    existing.filter(
+      (candidate) =>
+        candidate.type === "watchtower" && candidate.progress === 1,
+    ).length *
+      3;
+  if (
+    x - size < -boundary ||
+    z - size < -boundary ||
+    z + size > boundary ||
+    x + size > riverX(z) - 0.7
+  )
+    return false;
+  return !existing.some(
+    (candidate) =>
+      Math.abs(x - candidate.x) <
+        (CATALOG[candidate.type]?.size || 4) / 2 + size - 0.1 &&
+      Math.abs(z - candidate.z) <
+        (CATALOG[candidate.type]?.size || 4) / 2 + size - 0.1,
+  );
+};
 export class Village {
   constructor(container, onUpdate, onNotify, onSelect, onLoaded) {
     this.container = container;
@@ -104,28 +217,107 @@ export class Village {
     this.onLoaded = onLoaded;
     this.buildings = [];
     this.workers = [];
+    this.nextWorkerId = 0;
+    this.nextBuildingId = 0;
     this.decor = [];
+    this.swayers = [];
+    this.motes = null;
+    this.moteSeeds = [];
+    this.deliveryBursts = [];
+    this.birds = [];
     this.roads = new Set();
+    this.baseRoads = new Set();
     this.resources = { wood: 140, stone: 95, food: 80 };
+    this.name = DEFAULT_VILLAGE_NAME;
     this.elapsed = 0;
     this.speed = 1;
     this.selected = null;
     this.rotation = 0;
+    this.pathStart = null;
+    this.ghostGeometryOwned = false;
     this.lastUI = 0;
+    this.lastSave = -1;
+    this.lastSavedAt = 0;
+    this.saveFingerprint = null;
+    this.storageAvailable = true;
+    this.storageConflict = false;
     this.gathered = 0;
+    this.delivered = { wood: 0, stone: 0, food: 0 };
+    this.chapterRewards = {};
+    this.tutorialStep = 0;
+    this.tutorialDismissed = false;
+    this.feast = null;
+    this.event = null;
+    this.nextEventAt = 70;
+    this.trendSample = { elapsed: 0, resources: { ...this.resources } };
+    this.trends = { wood: 0, stone: 0, food: 0 };
+    this.activity = "";
+    this.activityTime = 0;
+    this.activityLog = [];
+    this.nextActivityId = 0;
     this.created = {};
     this.dead = false;
+    this.reduceMotion = Boolean(
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches,
+    );
+    this.graphicsPreset = "balanced";
+    this.audioSettings = { effects: true, ambience: false };
+    try {
+      const settings = JSON.parse(localStorage.getItem("hearth-settings") || "{}");
+      if (["low", "balanced", "high"].includes(settings.graphicsPreset))
+        this.graphicsPreset = settings.graphicsPreset;
+      this.audioSettings = {
+        effects: settings.effects !== false,
+        ambience: settings.ambience === true,
+      };
+    } catch {}
+    this.audioContext = null;
+    this.ambientOscillator = null;
     this.models = {};
     this.thumbnails = {};
     try {
-      this.saved = JSON.parse(localStorage.getItem("hearth-v1"));
-    } catch {}
+      const rawSave = localStorage.getItem("hearth-v1");
+      try {
+        this.saved = rawSave ? JSON.parse(rawSave) : null;
+        if (this.saved && typeof this.saved === "object") {
+          this.lastSavedAt = Date.now();
+          this.saveFingerprint = rawSave;
+        }
+      } catch {
+        this.saved = null;
+      }
+    } catch {
+      this.storageAvailable = false;
+    }
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#a7b673");
     this.scene.fog = new THREE.Fog("#a7b673", 65, 120);
+    this.atmosphere = {
+      day: new THREE.Color("#a7b673"),
+      dusk: new THREE.Color("#c98d6a"),
+      night: new THREE.Color("#516878"),
+      fog: new THREE.Color(),
+      sky: new THREE.Color(),
+      sunDay: new THREE.Color("#fff0cd"),
+      sunWarm: new THREE.Color("#ffc083"),
+      sun: new THREE.Color(),
+    };
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+    this.pixelRatio = () =>
+      Math.min(
+        devicePixelRatio,
+        this.graphicsPreset === "low"
+          ? 1
+          : window.innerWidth <= 720
+            ? this.graphicsPreset === "high"
+              ? 1.65
+              : 1.35
+            : this.graphicsPreset === "high"
+              ? 2.2
+              : 2,
+      );
+    this.renderer.setPixelRatio(this.pixelRatio());
+    this.renderer.shadowMap.enabled = this.graphicsPreset !== "low";
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -163,34 +355,69 @@ export class Village {
       this.camera.top = view / 2;
       this.camera.bottom = -view / 2;
       this.camera.updateProjectionMatrix();
+      this.renderer.setPixelRatio(this.pixelRatio());
       this.renderer.setSize(w, h);
     };
     this.resize();
+    this.restoreView();
     window.addEventListener("resize", this.resize);
     this.move = (e) => this.pointerMove(e);
     this.down = (e) => {
       this.startPointer = [e.clientX, e.clientY];
+      this.pathStart = null;
+      if (e.button === 0 && this.selected) {
+        this.container.setPointerCapture?.(e.pointerId);
+      }
+      if (e.button === 0 && this.selected === "road") {
+        this.pointerMove(e);
+        if (this.placement)
+          this.pathStart = { x: this.placement.x, z: this.placement.z };
+      }
     };
     this.up = (e) => {
-      if (
-        e.button === 0 &&
-        this.startPointer &&
-        Math.hypot(
-          e.clientX - this.startPointer[0],
-          e.clientY - this.startPointer[1],
-        ) < 6
-      )
-        this.click(e);
+      if (e.button !== 0 || !this.startPointer) return;
+      const distance = Math.hypot(
+        e.clientX - this.startPointer[0],
+        e.clientY - this.startPointer[1],
+      );
+      if (this.selected === "road" && this.pathStart && distance >= 6) {
+        this.pointerMove(e);
+        this.paintRoad(this.pathStart, this.placement);
+      } else if (distance < 6) this.click(e);
+      this.pathStart = null;
+      this.startPointer = null;
+      if (this.container.hasPointerCapture?.(e.pointerId))
+        this.container.releasePointerCapture(e.pointerId);
+    };
+    this.cancelPointer = (e) => {
+      this.pathStart = null;
+      this.startPointer = null;
+      if (this.container.hasPointerCapture?.(e.pointerId))
+        this.container.releasePointerCapture(e.pointerId);
     };
     container.addEventListener("pointermove", this.move);
     container.addEventListener("pointerdown", this.down);
     container.addEventListener("pointerup", this.up);
+    container.addEventListener("pointercancel", this.cancelPointer);
     container.addEventListener(
       "contextmenu",
       (this.context = (e) => e.preventDefault()),
     );
     this.beforeUnload = () => this.save();
+    this.storageChange = (event) => {
+      if (event.key !== "hearth-v1" && event.key !== null) return;
+      if (this.storageConflict) return;
+      this.storageConflict = true;
+      this.speed = 0;
+      if (this.ready) {
+        this.notify(
+          "This village changed in another tab. Reload to continue from the latest save.",
+        );
+        this.emit();
+      }
+    };
     window.addEventListener("pagehide", this.beforeUnload);
+    window.addEventListener("storage", this.storageChange);
     this.clock = new THREE.Clock();
     this.animate();
     this.load();
@@ -210,12 +437,13 @@ export class Village {
     return mesh;
   }
   makeWorld() {
-    this.scene.add(new THREE.HemisphereLight("#fff5df", "#6a7842", 1.65));
-    const sun = new THREE.DirectionalLight("#fff0cd", 2.7);
-    sun.position.set(-18, 35, 15);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, {
+    this.hemi = new THREE.HemisphereLight("#fff5df", "#6a7842", 1.65);
+    this.scene.add(this.hemi);
+    this.sun = new THREE.DirectionalLight("#fff0cd", 2.7);
+    this.sun.position.set(-18, 35, 15);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(this.sun.shadow.camera, {
       left: -36,
       right: 36,
       top: 36,
@@ -223,10 +451,10 @@ export class Village {
       near: 1,
       far: 90,
     });
-    sun.shadow.normalBias = 0.04;
-    sun.shadow.bias = -0.0002;
-    sun.shadow.radius = 3;
-    this.scene.add(sun);
+    this.sun.shadow.normalBias = 0.04;
+    this.sun.shadow.bias = -0.0002;
+    this.sun.shadow.radius = 3;
+    this.scene.add(this.sun);
     const geo = new THREE.PlaneGeometry(150, 150, 65, 65);
     geo.rotateX(-Math.PI / 2);
     const cols = [];
@@ -248,6 +476,26 @@ export class Village {
     land.position.y = -0.045;
     land.receiveShadow = true;
     this.scene.add(land);
+    this.groundPatches = [];
+    for (let i = 0; i < 34; i++) {
+      const x = rand() * 58 - 29;
+      const z = rand() * 53 - 27;
+      if (x > riverX(z) - 1.4 || Math.hypot(x, z) < 3.5) continue;
+      const patch = new THREE.Mesh(
+        new THREE.CircleGeometry(0.7 + rand() * 1.4, 7),
+        new THREE.MeshBasicMaterial({
+          color: rand() > 0.5 ? "#d0d680" : "#829d50",
+          transparent: true,
+          opacity: 0.08 + rand() * 0.06,
+          depthWrite: false,
+        }),
+      );
+      patch.position.set(x, 0.002, z);
+      patch.rotation.x = -Math.PI / 2;
+      patch.rotation.z = rand() * Math.PI;
+      this.scene.add(patch);
+      this.groundPatches.push(patch);
+    }
     this.grid = new THREE.GridHelper(42, 42, "#eee4b3", "#dde1b6");
     this.grid.position.set(0, 0.025, 0);
     this.grid.material.transparent = true;
@@ -307,12 +555,12 @@ export class Village {
       }
     }
     for (let x = -16; x <= 13; x++)
-      for (let z of [0, 1]) this.addRoad(x, z, false);
+      for (let z of [0, 1]) this.addRoad(x, z, false, true);
     for (let z = -15; z <= 14; z++)
-      for (let x of [0, -1]) this.addRoad(x, z, false);
-    for (let z = -10; z < 8; z++) this.addRoad(-6, z, false);
-    for (let x = -10; x <= 10; x++) this.addRoad(x, -8, false);
-    for (let x = -7; x < 10; x++) this.addRoad(x, 10, false);
+      for (let x of [0, -1]) this.addRoad(x, z, false, true);
+    for (let z = -10; z < 8; z++) this.addRoad(-6, z, false, true);
+    for (let x = -10; x <= 10; x++) this.addRoad(x, -8, false, true);
+    for (let x = -7; x < 10; x++) this.addRoad(x, 10, false, true);
     this.ripples = [];
     for (let i = 0; i < 45; i++) {
       const z = rand() * 70 - 35;
@@ -324,8 +572,57 @@ export class Village {
         z,
       );
       m.rotation.x = -Math.PI / 2;
+      m.material.transparent = true;
+      m.material.opacity = 0.28 + rand() * 0.17;
+      m.material.depthWrite = false;
+      m.userData.baseX = m.position.x;
+      m.userData.phase = rand() * Math.PI * 2;
+      m.userData.speed = 0.45 + rand() * 0.4;
       this.ripples.push(m);
     }
+    this.reeds = [];
+    for (let z = -58; z < 58; z += 1.9 + rand() * 1.4) {
+      for (const side of [0, 8]) {
+        if (rand() < 0.35) continue;
+        const m = this.mesh(
+          new THREE.ConeGeometry(0.045, 0.45 + rand() * 0.3, 3),
+          rand() > 0.45 ? "#82984e" : "#9caa59",
+          riverX(z) + side + (rand() - 0.5) * 0.35,
+          0.22,
+          z + (rand() - 0.5) * 0.45,
+        );
+        m.rotation.z = (rand() - 0.5) * 0.55;
+        m.userData.baseZ = m.rotation.z;
+        m.userData.phase = rand() * Math.PI * 2;
+        m.userData.speed = 1.1 + rand() * 0.6;
+        m.userData.amount = 0.12 + rand() * 0.08;
+        this.reeds.push(m);
+        this.swayers.push(m);
+      }
+    }
+    const motePositions = [];
+    for (let i = 0; i < 28; i++) {
+      const x = rand() * 32 - 16;
+      const z = rand() * 32 - 16;
+      const y = 0.7 + rand() * 2.2;
+      motePositions.push(x, y, z);
+      this.moteSeeds.push({ x, y, z, phase: rand() * Math.PI * 2, speed: 0.35 + rand() * 0.4 });
+    }
+    const moteGeometry = new THREE.BufferGeometry();
+    moteGeometry.setAttribute("position", new THREE.Float32BufferAttribute(motePositions, 3));
+    this.motes = new THREE.Points(
+      moteGeometry,
+      new THREE.PointsMaterial({
+        color: "#f4dfa0",
+        size: 0.1,
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        sizeAttenuation: true,
+      }),
+    );
+    this.scene.add(this.motes);
+    this.addBirds();
     // Small wooden landing on the riverbank.
     for (let i = 0; i < 10; i++)
       this.mesh(
@@ -347,10 +644,11 @@ export class Village {
         m.castShadow = true;
       }
   }
-  addRoad(x, z, custom = true) {
+  addRoad(x, z, custom = true, base = false) {
     const key = `${x},${z}`;
     if (this.roads.has(key)) return;
     this.roads.add(key);
+    if (base) this.baseRoads.add(key);
     const m = this.mesh(
       new THREE.BoxGeometry(1.02, 0.025, 1.02),
       ["#c5ad78", "#c8af79", "#c9b07b"][Math.floor(rand() * 3)],
@@ -366,7 +664,7 @@ export class Village {
   async load() {
     try {
       const loader = new GLTFLoader();
-      for (const key of [
+      const modelKeys = [
         "tree",
         "rock",
         "fence",
@@ -379,8 +677,11 @@ export class Village {
         "watchtower",
         "townhall",
         "worker",
-      ]) {
-        const gltf = await loader.loadAsync(`/models/${key}.glb`);
+      ];
+      const loadedModels = await Promise.all(
+        modelKeys.map(async (key) => [key, await loader.loadAsync(`/models/${key}.glb`)]),
+      );
+      for (const [key, gltf] of loadedModels) {
         this.models[key] = gltf.scene;
         gltf.scene.traverse((o) => {
           if (o.isMesh) {
@@ -391,17 +692,115 @@ export class Village {
       }
       if (this.dead) return;
       this.makeThumbnails();
-      if (this.saved?.buildings) {
-        this.resources = this.saved.resources;
-        this.elapsed = this.saved.elapsed || 0;
-        this.gathered = this.saved.gathered || 0;
-        this.created = this.saved.created || {};
-        for (const b of this.saved.buildings)
-          this.addBuilding(b.type, b.x, b.z, b.rotation, b.progress);
-        for (const key of this.saved.roads || []) {
-          const [x, z] = key.split(",").map(Number);
-          this.addRoad(x, z, false);
+      this.name = sanitizeVillageName(this.saved?.name);
+      const savedActivity = Array.isArray(this.saved?.activityLog)
+        ? this.saved.activityLog
+            .filter((message) => typeof message === "string")
+            .slice(0, 4)
+        : [];
+      this.activityLog = savedActivity.map((message) => ({
+        id: this.nextActivityId++,
+        message: message.slice(0, 140),
+      }));
+      const savedBuildingRecords = Array.isArray(this.saved?.buildings)
+        ? this.saved.buildings.filter(
+            (b) =>
+              b &&
+              (b.type === "townhall" ||
+                (CATALOG[b.type] && b.type !== "road")) &&
+              Number.isFinite(Number(b.x)) &&
+              Number.isFinite(Number(b.z)),
+          )
+        : [];
+      const hasStoredVillage = Array.isArray(this.saved?.buildings);
+      if (hasStoredVillage) {
+        const savedResources = this.saved.resources;
+        if (savedResources && typeof savedResources === "object")
+          for (const key of Object.keys(this.resources))
+            this.resources[key] = Math.max(
+              0,
+              finiteNumber(savedResources[key], this.resources[key]),
+            );
+        this.elapsed = Math.max(0, finiteNumber(this.saved.elapsed, 0));
+        this.gathered = Math.max(0, finiteNumber(this.saved.gathered, 0));
+        if (this.saved.delivered && typeof this.saved.delivered === "object")
+          for (const key of Object.keys(this.delivered))
+            this.delivered[key] = Math.max(0, finiteNumber(this.saved.delivered[key], 0));
+        this.chapterRewards =
+          this.saved.chapterRewards && typeof this.saved.chapterRewards === "object"
+            ? { ...this.saved.chapterRewards }
+            : {};
+        this.tutorialStep = Math.max(0, Math.floor(finiteNumber(this.saved.tutorialStep, 0)));
+        this.tutorialDismissed = Boolean(this.saved.tutorialDismissed);
+        this.feast =
+          this.saved.feast && finiteNumber(this.saved.feast.remaining, 0) > 0
+            ? { remaining: finiteNumber(this.saved.feast.remaining, 0) }
+            : null;
+        this.event = VILLAGE_EVENTS.find((candidate) => candidate.id === this.saved?.event?.id) || null;
+        this.nextEventAt = Math.max(70, finiteNumber(this.saved.nextEventAt, 70));
+        this.created =
+          this.saved.created && typeof this.saved.created === "object"
+            ? { ...this.saved.created }
+            : {};
+        const savedTownhall = savedBuildingRecords.find(
+              (building) =>
+                building.type === "townhall" && savedBuildingFits(building),
+        );
+        const restoreRecords = savedTownhall
+          ? [
+              savedTownhall,
+              ...savedBuildingRecords.filter(
+                (building) => building !== savedTownhall,
+              ),
+            ]
+          : [];
+        for (const b of restoreRecords) {
+          const rotation = finiteNumber(b.rotation, 0);
+          const progress = normalizedBuildingProgress(b.type, b.progress);
+          const cycles = Math.max(0, Math.floor(finiteNumber(b.cycles, 0)));
+          if (!savedBuildingFits(b, this.buildings)) continue;
+          this.addBuilding(
+            b.type,
+            Number(b.x),
+            Number(b.z),
+            rotation,
+            progress,
+            cycles,
+            b.priority,
+            b.paused,
+            b.upgrade,
+          );
         }
+        if (!this.buildings.some((building) => building.type === "townhall"))
+          initial.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
+        const savedRoads = Array.isArray(this.saved.roads)
+          ? this.saved.roads
+          : [];
+        const roadBoundary =
+          18 +
+          this.buildings.filter(
+            (building) =>
+              building.type === "watchtower" && building.progress === 1,
+          ).length *
+            3;
+        const restoredRoads = new Set();
+        for (const key of savedRoads) {
+          if (typeof key !== "string") continue;
+          const [x, z] = key.split(",").map(Number);
+          if (!Number.isInteger(x) || !Number.isInteger(z)) continue;
+          if (this.baseRoads.has(key)) continue;
+          if (
+            x - 0.5 < -roadBoundary ||
+            z - 0.5 < -roadBoundary ||
+            z + 0.5 > roadBoundary ||
+            x + 0.5 > riverX(z) - 0.7 ||
+            this.blocked(x, z, 0.4)
+          )
+            continue;
+          this.addRoad(x, z, false);
+          restoredRoads.add(key);
+        }
+        this.created = reconcileRoadCount(this.created, restoredRoads);
       } else {
         initial.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
       }
@@ -428,6 +827,13 @@ export class Village {
         const s = type === "tree" ? 0.65 + rand() * 0.7 : 0.35 + rand() * 0.65;
         m.scale.setScalar(s);
         m.rotation.y = rand() * 6;
+        if (type === "tree") {
+          m.userData.baseZ = 0;
+          m.userData.phase = rand() * Math.PI * 2;
+          m.userData.speed = 0.55 + rand() * 0.3;
+          m.userData.amount = 0.012 + rand() * 0.015;
+          this.swayers.push(m);
+        }
         this.decor.push({ m, x, z, r: type === "tree" ? 0.5 * s : 0.6 * s });
       }
       for (let i = 0; i < 350; i++) {
@@ -448,13 +854,24 @@ export class Village {
           z,
         );
         m.rotation.z = (rand() - 0.5) * 0.5;
+        m.userData.baseZ = m.rotation.z;
+        m.userData.phase = rand() * Math.PI * 2;
+        m.userData.speed = 0.8 + rand() * 0.5;
+        m.userData.amount = 0.04 + rand() * 0.04;
+        this.swayers.push(m);
       }
       for (let z = -28; z < 28; z += 2.4) {
         const m = this.model("rock", riverX(z) - 0.3, z);
         m.scale.setScalar(0.3 + rand() * 0.6);
       }
-      for (let i = 0; i < Math.min(24, this.saved?.population || 8); i++)
+      const population = restoredPopulation(
+        this.saved?.population,
+        housingCapacity(this.buildings),
+      );
+      for (let i = 0; i < population; i++)
         this.addWorker();
+      this.lastSave = saveCycleMarker(this.elapsed);
+      this.trendSample = { elapsed: this.elapsed, resources: { ...this.resources } };
       this.ready = true;
       this.onLoaded(this.thumbnails);
       this.emit();
@@ -465,10 +882,54 @@ export class Village {
     }
   }
   model(type, x = 0, z = 0) {
+    if (!this.models[type]) this.models[type] = this.makeDecorationModel(type);
     const m = this.models[type].clone(true);
     m.position.set(x, 0, z);
     this.scene.add(m);
     return m;
+  }
+  makeDecorationModel(type) {
+    const group = new THREE.Group();
+    const part = (geometry, color, x, y, z) => {
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({ color, roughness: 0.92, flatShading: true }),
+      );
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    };
+    if (type === "flowerbed") {
+      part(new THREE.BoxGeometry(0.76, 0.12, 0.55), "#8b603e", 0, 0.08, 0);
+      for (const [x, z, color] of [[-0.25, 0, "#e5a46e"], [0, 0.12, "#e7d47a"], [0.25, -0.05, "#a8b86d"]])
+        part(new THREE.ConeGeometry(0.11, 0.3, 5), color, x, 0.26, z);
+    } else if (type === "bench") {
+      part(new THREE.BoxGeometry(0.9, 0.12, 0.25), "#9b6a3f", 0, 0.5, 0);
+      part(new THREE.BoxGeometry(0.9, 0.38, 0.12), "#7e5635", 0, 0.74, 0.08);
+      for (const x of [-0.32, 0.32]) part(new THREE.BoxGeometry(0.1, 0.48, 0.12), "#6d4b31", x, 0.24, 0);
+    } else {
+      part(new THREE.BoxGeometry(0.1, 0.9, 0.1), "#76502e", 0, 0.45, 0);
+      part(new THREE.BoxGeometry(0.72, 0.42, 0.08), "#b47d49", 0, 0.78, 0);
+    }
+    return group;
+  }
+  restoreView() {
+    const view = sanitizeCameraView(this.saved?.view);
+    if (!view) return;
+    this.camera.position.fromArray(view.position);
+    this.controls.target.fromArray(view.target);
+    this.camera.zoom = view.zoom;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+  }
+  viewRecord() {
+    if (!this.camera?.position || !this.controls?.target) return undefined;
+    return sanitizeCameraView({
+      position: this.camera.position.toArray(),
+      target: this.controls.target.toArray(),
+      zoom: this.camera.zoom,
+    });
   }
   makeThumbnails() {
     const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -492,7 +953,7 @@ export class Village {
               new THREE.BoxGeometry(3, 0.12, 1.5),
               new THREE.MeshStandardMaterial({ color: "#bca46c" }),
             )
-          : this.models[key].clone(true);
+          : (this.models[key] || this.makeDecorationModel(key)).clone(true);
       s.add(m);
       r.render(s, c);
       this.thumbnails[key] = r.domElement.toDataURL();
@@ -500,31 +961,150 @@ export class Village {
     }
     r.dispose();
   }
-  addBuilding(type, x, z, rotation = 0, progress = 1) {
+  addBuilding(
+    type,
+    x,
+    z,
+    rotation = 0,
+    progress = 1,
+    cycles = 0,
+    priority = "normal",
+    paused = false,
+    upgrade = null,
+  ) {
     const m = this.model(type, x, z);
     m.rotation.y = rotation;
     const b = {
-      id: crypto.randomUUID(),
+      id:
+        globalThis.crypto?.randomUUID?.() ||
+        `building-${this.nextBuildingId++}`,
       type,
       x,
       z,
       rotation,
       progress,
       m,
-      cycles: 0,
+      cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
+      priority: priority === "priority" ? "priority" : "normal",
+      paused: Boolean(paused),
+      upgrade: upgrade ? String(upgrade) : null,
+      pop: 0,
     };
     m.userData.building = b;
     this.buildings.push(b);
     if (progress < 1) {
-      m.scale.y = 0.1;
+      m.scale.set(1, 0.1, 1);
       this.scaffold(b);
+    } else {
+      if (type === "house" || type === "townhall") this.addSmoke(b);
+      if (type === "house" || type === "townhall" || type === "well")
+        this.addLanterns(b);
     }
     return b;
+  }
+  addSmoke(b) {
+    if (b.smoke || !this.scene?.add) return;
+    const group = new THREE.Group();
+    const particles = [];
+    const chimneyHeight = b.type === "townhall" ? 3.25 : 2.65;
+    for (let i = 0; i < 4; i++) {
+      const p = new THREE.Mesh(
+        new THREE.SphereGeometry(0.12 + i * 0.025, 6, 5),
+        new THREE.MeshBasicMaterial({
+          color: "#f4eddc",
+          transparent: true,
+          opacity: 0.17,
+          depthWrite: false,
+        }),
+      );
+      p.position.set(0.13, chimneyHeight + i * 0.22, 0.04);
+      group.add(p);
+      particles.push(p);
+    }
+    group.position.set(b.x, 0, b.z);
+    this.scene.add(group);
+    b.smoke = { group, particles, phase: rand() * Math.PI * 2 };
+  }
+  addLanterns(b) {
+    if (b.lanterns || !b.m?.add) return;
+    const positions =
+      b.type === "well"
+        ? [
+            [0, 1.18, -0.74],
+            [0, 1.18, 0.74],
+          ]
+        : b.type === "townhall"
+          ? [
+              [0.75, 1.42, -1.68],
+              [-0.75, 1.42, 1.68],
+            ]
+          : [
+              [0.32, 0.95, -1.34],
+              [-0.32, 0.95, 1.34],
+            ];
+    const group = new THREE.Group();
+    const lamps = positions.map(([x, y, z]) => {
+      const glow = new THREE.Mesh(
+        new THREE.SphereGeometry(0.085, 8, 6),
+        new THREE.MeshBasicMaterial({
+          color: "#ffd07b",
+          transparent: true,
+          opacity: 0.04,
+          depthWrite: false,
+        }),
+      );
+      const light = new THREE.PointLight("#ffc56e", 0.04, 4.5, 2);
+      glow.position.set(x, y, z);
+      light.position.set(x, y, z);
+      group.add(glow, light);
+      return { glow, light, phase: rand() * Math.PI * 2 };
+    });
+    b.m.add(group);
+    b.lanterns = { group, lamps };
+  }
+  addBirds() {
+    for (let i = 0; i < 4; i++) {
+      const group = new THREE.Group();
+      const makeWing = () =>
+        new THREE.Mesh(
+          new THREE.BoxGeometry(0.34, 0.025, 0.07),
+          new THREE.MeshBasicMaterial({
+            color: "#4c5b45",
+            transparent: true,
+            opacity: 0.68,
+            depthWrite: false,
+          }),
+        );
+      const left = makeWing();
+      const right = makeWing();
+      left.position.x = -0.16;
+      right.position.x = 0.16;
+      group.add(left, right);
+      const centerX = -12 + i * 8;
+      const centerZ = -7 + (i % 2) * 10;
+      group.position.set(centerX, 4.6 + rand() * 1.4, centerZ);
+      this.scene.add(group);
+      this.birds.push({
+        group,
+        left,
+        right,
+        centerX,
+        centerZ,
+        baseY: group.position.y,
+        phase: rand() * Math.PI * 2,
+        speed: 0.16 + rand() * 0.08,
+      });
+    }
   }
   scaffold(b) {
     b.scaffolding = new THREE.Group();
     const n = (CATALOG[b.type]?.size || 3) / 2;
-    const mat = new THREE.MeshStandardMaterial({ color: "#a77945" });
+    const mat = new THREE.MeshStandardMaterial({
+      color: "#a77945",
+      transparent: true,
+      opacity: 0.82,
+      roughness: 0.9,
+    });
     for (let x of [-n, n])
       for (let z of [-n, n]) {
         const o = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.5, 0.1), mat);
@@ -536,9 +1116,23 @@ export class Village {
         const o = new THREE.Mesh(new THREE.BoxGeometry(n * 2, 0.08, 0.1), mat);
         o.position.set(0, y, z);
         b.scaffolding.add(o);
-      }
+    }
     b.scaffolding.position.set(b.x, 0, b.z);
     this.scene.add(b.scaffolding);
+    b.siteRing = new THREE.Mesh(
+      new THREE.RingGeometry(Math.max(0.45, n - 0.14), n - 0.03, 32),
+      new THREE.MeshBasicMaterial({
+        color: "#f1d78b",
+        transparent: true,
+        opacity: 0.48,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    b.siteRing.rotation.x = -Math.PI / 2;
+    b.siteRing.position.set(b.x, 0.035, b.z);
+    b.siteRing.userData.phase = rand() * Math.PI * 2;
+    this.scene.add(b.siteRing);
   }
   blocked(x, z, padding = 0.2, ignore = null) {
     return this.buildings.some(
@@ -548,8 +1142,50 @@ export class Village {
         Math.abs(z - b.z) < (CATALOG[b.type]?.size || 4) / 2 + padding,
     );
   }
-  valid(x, z, type) {
-    const n = CATALOG[type].size / 2;
+  routeBlocked(x, z, ignore = null) {
+    if (this.blocked(x, z, 0.1, ignore)) return true;
+    return Boolean(
+      this.decor?.some(
+        (decor) =>
+          Math.abs(x - decor.x) < 0.45 + decor.r &&
+          Math.abs(z - decor.z) < 0.45 + decor.r,
+      ),
+    );
+  }
+  overlapsRoad(x, z, halfSize) {
+    return [...(this.roads || [])].some((key) => {
+      const [roadX, roadZ] = key.split(",").map(Number);
+      return (
+        Number.isFinite(roadX) &&
+        Number.isFinite(roadZ) &&
+        Math.abs(x - roadX) < halfSize + 0.5 &&
+        Math.abs(z - roadZ) < halfSize + 0.5
+      );
+    });
+  }
+  placementType(type = this.selected) {
+    if (typeof type === "string" && type.startsWith("move:")) {
+      const building = this.buildings.find(
+        (candidate) => candidate.id === type.slice(5),
+      );
+      return building?.type || "";
+    }
+    return type;
+  }
+  movingBuilding(type = this.selected) {
+    if (typeof type !== "string" || !type.startsWith("move:")) return null;
+    return this.buildings.find((building) => building.id === type.slice(5)) || null;
+  }
+  valid(x, z, type, ignore = this.movingBuilding(type)) {
+    if (type === "road-remove") {
+      return this.roads.has(`${x},${z}`) && !this.baseRoads.has(`${x},${z}`)
+        ? { ok: true, reason: "Remove this path · 1 stone returned" }
+        : { ok: false, reason: "Choose one of your path tiles to remove." };
+    }
+    const buildingType = this.placementType(type);
+    const catalog = CATALOG[buildingType];
+    if (!catalog) return { ok: false, reason: "Choose a building tool." };
+    const n = catalog.size / 2;
     const boundary =
       18 +
       this.buildings.filter((b) => b.type === "watchtower" && b.progress === 1)
@@ -565,12 +1201,31 @@ export class Village {
         ok: false,
         reason: "Choose dry land inside your village boundary.",
       };
-    if (this.blocked(x, z, n - 0.1))
+    if (this.blocked(x, z, n - 0.1, ignore))
       return {
         ok: false,
         reason: "This space is occupied. Find a clear patch of land.",
       };
-    if (type === "road" && this.roads.has(`${x},${z}`))
+    if (buildingType !== "road" && this.overlapsRoad(x, z, n))
+      return {
+        ok: false,
+        reason: "A path crosses this site. Choose a clear patch of land.",
+      };
+    if (
+      type !== "road" &&
+      this.workers?.some(
+        (worker) =>
+          worker.m?.position &&
+          worker.building !== ignore &&
+          Math.abs(x - worker.m.position.x) < n + 0.45 &&
+          Math.abs(z - worker.m.position.z) < n + 0.45,
+      )
+    )
+      return {
+        ok: false,
+        reason: "A villager is working here. Choose another clear patch.",
+      };
+    if (buildingType === "road" && this.roads.has(`${x},${z}`))
       return { ok: false, reason: "There is already a path here." };
     if (
       this.decor.some(
@@ -579,27 +1234,47 @@ export class Village {
     )
       return { ok: false, reason: "Trees or rocks are in the way." };
     if (
-      Object.entries(CATALOG[type].cost).some(([r, v]) => this.resources[r] < v)
+      !ignore &&
+      Object.entries(catalog.cost).some(([r, v]) => this.resources[r] < v)
     )
       return {
         ok: false,
-        reason: "Not enough resources. Let your workers gather more.",
+        reason: `Not enough resources. Need ${Object.entries(catalog.cost)
+          .filter(([resource, amount]) => (this.resources[resource] || 0) < amount)
+          .map(
+            ([resource, amount]) =>
+              `${Math.max(1, Math.ceil(amount - (this.resources[resource] || 0)))} ${resource}`,
+          )
+          .join(" + ")} before building.`,
       };
-    return { ok: true, reason: "Click to place · R to rotate · Esc to cancel" };
+    return {
+      ok: true,
+      reason:
+        buildingType === "road"
+          ? "Click or drag to lay a path · Esc to cancel"
+          : ignore
+            ? "Choose a new spot · click to move · Esc to cancel"
+          : "Click to place · R to rotate · Esc to cancel",
+    };
   }
   select(type) {
     this.clearGhost();
     this.selected = type;
+    this.placement = null;
+    this.renderer.domElement.style.cursor = type ? "crosshair" : "";
     this.grid.visible = !!type;
     this.controls.mouseButtons.LEFT = type ? null : THREE.MOUSE.PAN;
+    this.controls.touches.ONE = type ? null : THREE.TOUCH.PAN;
     if (type) {
+      const buildingType = this.placementType(type);
       this.ghost =
-        type === "road"
+        buildingType === "road" || type === "road-remove"
           ? new THREE.Mesh(
               new THREE.BoxGeometry(1, 0.1, 1),
               new THREE.MeshStandardMaterial({ color: "#a8d580" }),
             )
-          : this.models[type].clone(true);
+          : this.models[buildingType].clone(true);
+      this.ghostGeometryOwned = buildingType === "road" || type === "road-remove";
       this.ghost.traverse((o) => {
         if (o.isMesh) {
           o.material = o.material.clone();
@@ -612,7 +1287,14 @@ export class Village {
       this.scene.add(this.ghost);
       this.ghost.visible = false;
       this.footprint = new THREE.Mesh(
-        new THREE.PlaneGeometry(CATALOG[type].size, CATALOG[type].size),
+        new THREE.PlaneGeometry(
+          buildingType === "road" || type === "road-remove"
+            ? 1
+            : CATALOG[buildingType].size,
+          buildingType === "road" || type === "road-remove"
+            ? 1
+            : CATALOG[buildingType].size,
+        ),
         new THREE.MeshBasicMaterial({
           color: "#8acb7e",
           transparent: true,
@@ -623,22 +1305,164 @@ export class Village {
       this.footprint.rotation.x = -Math.PI / 2;
       this.scene.add(this.footprint);
       this.footprint.visible = false;
+      this.previewOutline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(
+          new THREE.BoxGeometry(
+            buildingType === "road" || type === "road-remove"
+              ? 1
+              : CATALOG[buildingType].size,
+            0.035,
+            buildingType === "road" || type === "road-remove"
+              ? 1
+              : CATALOG[buildingType].size,
+          ),
+        ),
+        new THREE.LineBasicMaterial({
+          color: "#bce18c",
+          transparent: true,
+          opacity: 0.9,
+        }),
+      );
+      this.previewOutline.position.y = 0.06;
+      this.scene.add(this.previewOutline);
+      this.previewOutline.visible = false;
+      if (buildingType === "watchtower") {
+        const currentBoundary =
+          18 +
+          this.buildings.filter(
+            (building) => building.type === "watchtower" && building.progress === 1,
+          ).length *
+            3;
+        this.boundaryPreview = new THREE.Mesh(
+          new THREE.RingGeometry(currentBoundary + 2.94, currentBoundary + 3, 64),
+          new THREE.MeshBasicMaterial({
+            color: "#e9d38f",
+            transparent: true,
+            opacity: 0.42,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        this.boundaryPreview.rotation.x = -Math.PI / 2;
+        this.boundaryPreview.position.y = 0.04;
+        this.scene.add(this.boundaryPreview);
+      }
+      const start = this.findOpenPlacement(type, { x: 0, z: 3 });
+      this.updatePlacement(start.x, start.z);
     }
   }
   clearGhost() {
-    for (const m of [this.ghost, this.footprint])
+    const ghost = this.ghost;
+    for (const m of [ghost, this.footprint, this.previewOutline, this.boundaryPreview])
       if (m) {
         this.scene.remove(m);
         m.traverse((o) => {
-          if (o.isMesh) o.material.dispose();
+          if (!(o.isMesh || o.isLine || o.isPoints) || !o.material) return;
+          const materials = Array.isArray(o.material)
+            ? o.material
+            : [o.material];
+          materials.filter(Boolean).forEach((material) => material.dispose());
         });
+        if (m !== ghost || this.ghostGeometryOwned) m.geometry?.dispose();
       }
     this.ghost = null;
     this.footprint = null;
+    this.previewOutline = null;
+    this.boundaryPreview = null;
+    this.ghostGeometryOwned = false;
+  }
+  disposeOwnedObject(object) {
+    if (!object) return;
+    this.scene?.remove(object);
+    const geometries = new Set();
+    const materials = new Set();
+    object.traverse?.((child) => {
+      if (!child.isMesh) return;
+      if (child.geometry) geometries.add(child.geometry);
+      const list = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      list.filter(Boolean).forEach((material) => materials.add(material));
+    });
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
   }
   rotate() {
     this.rotation += Math.PI / 2;
     if (this.ghost) this.ghost.rotation.y = this.rotation;
+    if (this.placement) this.updatePlacement(this.placement.x, this.placement.z);
+  }
+  updatePlacement(x, z) {
+    if (!this.selected || !this.ghost) return null;
+    const previous = this.placement;
+    this.placement = { x, z, ...this.valid(x, z, this.selected) };
+    this.ghost.visible = true;
+    this.ghost.position.set(x, 0.06, z);
+    this.ghost.rotation.y = this.rotation;
+    this.footprint.visible = true;
+    this.footprint.position.set(x, 0.045, z);
+    this.previewOutline.visible = true;
+    this.previewOutline.position.set(x, 0.06, z);
+    this.previewOutline.rotation.y = this.rotation;
+    this.footprint.material.color.set(
+      this.placement.ok
+        ? this.selected === "road-remove"
+          ? "#e8c681"
+          : "#8fbf68"
+        : "#d9644d",
+    );
+    this.previewOutline.material.color.set(
+      this.placement.ok ? "#d7eca5" : "#f0a08a",
+    );
+    this.ghost.traverse((o) => {
+      if (o.isMesh)
+        o.material.color.set(
+          this.placement.ok
+            ? this.selected === "road-remove"
+              ? "#d6a060"
+              : "#99cc88"
+            : "#d97568",
+        );
+    });
+    if (
+      !previous ||
+      previous.x !== this.placement.x ||
+      previous.z !== this.placement.z ||
+      previous.ok !== this.placement.ok ||
+      previous.reason !== this.placement.reason
+    )
+      this.emit();
+    return this.placement;
+  }
+  movePlacement(dx, dz) {
+    const current = this.placement || { x: 0, z: 0 };
+    this.updatePlacement(current.x + dx, current.z + dz);
+  }
+  findOpenPlacement(type, origin = { x: 0, z: 3 }) {
+    const startX = Math.round(Number(origin.x) || 0);
+    const startZ = Math.round(Number(origin.z) || 0);
+    for (let radius = 0; radius <= 18; radius += 1) {
+      const candidates = [];
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        for (let dz = -radius; dz <= radius; dz += 1) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+          candidates.push({ x: startX + dx, z: startZ + dz });
+        }
+      }
+      candidates.sort(
+        (a, b) =>
+          Math.abs(a.x - startX) + Math.abs(a.z - startZ) -
+          (Math.abs(b.x - startX) + Math.abs(b.z - startZ)),
+      );
+      for (const candidate of candidates) {
+        if (this.valid(candidate.x, candidate.z, type).ok) return candidate;
+      }
+    }
+    return { x: startX, z: startZ };
+  }
+  confirmPlacement() {
+    if (!this.ready || !this.selected) return false;
+    return this.commitPlacement();
   }
   pointerMove(e) {
     const r = this.renderer.domElement.getBoundingClientRect();
@@ -654,45 +1478,118 @@ export class Village {
     ) {
       const x = Math.round(this.point.x),
         z = Math.round(this.point.z);
-      this.placement = { x, z, ...this.valid(x, z, this.selected) };
-      this.ghost.visible = true;
-      this.ghost.position.set(x, 0.06, z);
-      this.ghost.rotation.y = this.rotation;
-      this.footprint.visible = true;
-      this.footprint.position.set(x, 0.045, z);
-      this.footprint.material.color.set(
-        this.placement.ok ? "#8fbf68" : "#d9644d",
+      this.updatePlacement(x, z);
+    } else {
+      const hits = this.raycaster.intersectObjects(
+        [
+          ...this.workers.map((w) => w.m),
+          ...this.buildings.map((b) => b.m),
+        ],
+        true,
       );
-      this.ghost.traverse((o) => {
-        if (o.isMesh)
-          o.material.color.set(this.placement.ok ? "#99cc88" : "#d97568");
-      });
-      this.emit();
+      this.renderer.domElement.style.cursor = hits.length ? "pointer" : "";
     }
+  }
+  commitPlacement() {
+    if (this.storageConflict) {
+      this.notify("This village changed in another tab. Reload to continue.");
+      return false;
+    }
+    const p = this.placement;
+    if (!p?.ok) {
+      this.notify(p?.reason || "Move over the terrain to choose a site.");
+      return false;
+    }
+    const selected = this.selected;
+    this.ensureAudio();
+    this.playSound("place");
+    if (selected === "road-remove") {
+      return this.removeRoad(p.x, p.z);
+    }
+    const type = this.placementType(selected);
+    const moving = this.movingBuilding(selected);
+    if (moving) {
+      moving.x = p.x;
+      moving.z = p.z;
+      moving.rotation = this.rotation;
+      moving.m.position.set(p.x, 0, p.z);
+      for (const worker of this.workers) {
+        if (worker.building !== moving) continue;
+        worker.building = null;
+        worker.phase = "idle";
+        worker.timer = 0;
+        worker.path = [];
+      }
+      this.announce(`${CATALOG[type].name} moved. Workers are finding their way again.`);
+      this.notify(`${CATALOG[type].name} moved.`);
+      this.select(null);
+      this.save();
+      this.emit();
+      return true;
+    }
+    for (const [r, v] of Object.entries(CATALOG[type].cost))
+      this.resources[r] -= v;
+    if (type === "road") {
+      this.addRoad(p.x, p.z);
+      const pathMessage = "A new path for wandering feet.";
+      this.announce(pathMessage);
+      this.notify(pathMessage);
+      if ((this.tutorialStep || 0) === 2) this.tutorialStep = 3;
+    } else {
+      this.addBuilding(
+        type,
+        p.x,
+        p.z,
+        this.rotation,
+        CATALOG[type].decoration ? 1 : 0,
+      );
+      this.created[type] = (this.created[type] || 0) + 1;
+      const plannedMessage = `${CATALOG[type].name} planned. A builder is on the way.`;
+      this.announce(plannedMessage);
+      this.notify(plannedMessage);
+      if (type === "house" && (this.tutorialStep || 0) === 0) {
+        this.tutorialStep = 1;
+        const guideWorker = this.workers.find((worker) => worker.m?.position);
+        if (guideWorker) this.highlightWorker(guideWorker);
+      }
+    }
+    this.save();
+    this.emit();
+    return true;
   }
   click(e) {
     if (!this.ready) return;
     this.pointerMove(e);
     if (this.selected) {
-      const p = this.placement;
-      if (!p?.ok) {
-        this.notify(p?.reason || "Move over the terrain to choose a site.");
+      this.commitPlacement();
+      return;
+    }
+    const workerHits = this.raycaster.intersectObjects(
+      this.workers.map((w) => w.m),
+      true,
+    );
+    if (workerHits.length) {
+      let o = workerHits[0].object;
+      while (o && !o.userData.worker) o = o.parent;
+      const w = o?.userData.worker;
+      if (w) {
+        this.onSelect({
+          type: "worker",
+          name: "Village worker",
+          description: `A willing pair of hands helping ${this.name} grow.`,
+          effect: w.building
+            ? `Assigned to ${CATALOG[w.building.type]?.name || "the village"}`
+            : "Ready for a new task",
+          workerId: w.id,
+        });
+        this.highlightWorker(w);
+        if ((this.tutorialStep || 0) === 1) {
+          this.tutorialStep = 2;
+          this.save();
+          this.emit();
+        }
         return;
       }
-      const type = this.selected;
-      for (const [r, v] of Object.entries(CATALOG[type].cost))
-        this.resources[r] -= v;
-      if (type === "road") {
-        this.addRoad(p.x, p.z);
-        this.notify("A new path for wandering feet.");
-      } else {
-        this.addBuilding(type, p.x, p.z, this.rotation, 0);
-        this.created[type] = (this.created[type] || 0) + 1;
-        this.notify(`${CATALOG[type].name} planned. A builder is on the way.`);
-      }
-      this.save();
-      this.emit();
-      return;
     }
     const hits = this.raycaster.intersectObjects(
       this.buildings.map((b) => b.m),
@@ -716,14 +1613,237 @@ export class Village {
       }
     } else {
       this.onSelect(null);
-      if (this.ring) {
-        this.scene.remove(this.ring);
-        this.ring = null;
-      }
+      this.clearHighlight();
     }
   }
+  paintRoad(start, end) {
+    if (!start || !end) return;
+    if (this.storageConflict) {
+      this.notify("This village changed in another tab. Reload to continue.");
+      return;
+    }
+    const makePoints = (horizontalFirst) => {
+      const points = [[start.x, start.z]];
+      let x = start.x;
+      let z = start.z;
+      const moveX = () => {
+        while (x !== end.x) {
+          x += Math.sign(end.x - x);
+          points.push([x, z]);
+        }
+      };
+      const moveZ = () => {
+        while (z !== end.z) {
+          z += Math.sign(end.z - z);
+          points.push([x, z]);
+        }
+      };
+      if (horizontalFirst) {
+        moveX();
+        moveZ();
+      } else {
+        moveZ();
+        moveX();
+      }
+      return points;
+    };
+    const traces = [true, false].map((horizontalFirst) => {
+      const points = makePoints(horizontalFirst);
+      let reachable = -1;
+      let blockedReason = "";
+      const usable = [];
+      for (const [px, pz] of points) {
+        if (this.roads.has(`${px},${pz}`)) {
+          reachable++;
+          continue;
+        }
+        const spot = this.valid(px, pz, "road");
+        if (!spot.ok) {
+          blockedReason = spot.reason;
+          break;
+        }
+        reachable++;
+        usable.push([px, pz]);
+      }
+      return { reachable, usable, blockedReason };
+    });
+    const best = traces.sort(
+      (a, b) => b.reachable - a.reachable || b.usable.length - a.usable.length,
+    )[0];
+    if (!best.usable.length) {
+      if (best.blockedReason) this.notify(best.blockedReason);
+      return;
+    }
+    let placed = 0;
+    for (const [px, pz] of best.usable) {
+      if (this.roads.has(`${px},${pz}`)) continue;
+      const spot = this.valid(px, pz, "road");
+      if (!spot.ok) {
+        if (!placed) this.notify(spot.reason || best.blockedReason);
+        break;
+      }
+      for (const [resource, amount] of Object.entries(CATALOG.road.cost))
+        this.resources[resource] -= amount;
+      this.addRoad(px, pz);
+      placed++;
+    }
+    if (!placed) return;
+    const message = `${placed} path tile${placed === 1 ? "" : "s"} laid.`;
+    this.announce(message);
+    this.notify(message);
+    this.save();
+    this.emit();
+  }
+  removeRoad(x, z) {
+    const key = `${x},${z}`;
+    if (!this.roads.has(key) || this.baseRoads.has(key)) {
+      this.notify("Choose one of your path tiles to remove.");
+      return false;
+    }
+    this.roads.delete(key);
+    const roadMesh = this.scene.children.find(
+      (child) => child.userData?.road && child.position.x === x && child.position.z === z,
+    );
+    if (roadMesh) this.disposeOwnedObject(roadMesh);
+    this.created = reconcileRoadCount(this.created, this.roads);
+    this.resources.stone += CATALOG.road.cost.stone;
+    const message = "Path removed. 1 stone returned.";
+    this.announce(message);
+    this.notify(message);
+    this.save();
+    this.emit();
+    return true;
+  }
+  removeBuilding(id) {
+    if (this.blockedByStorageConflict()) return false;
+    const building = this.buildings.find((candidate) => candidate.id === id);
+    if (!building || building.progress >= 1 || building.type === "townhall") return false;
+    const refundRate = Math.max(0, Math.min(1, 1 - building.progress));
+    Object.entries(CATALOG[building.type]?.cost || {}).forEach(([resource, amount]) => {
+      this.resources[resource] += Math.floor(amount * refundRate);
+    });
+    for (const worker of this.workers) {
+      if (worker.building !== building) continue;
+      worker.building = null;
+      worker.phase = "idle";
+      worker.timer = 0;
+      worker.path = [];
+    }
+    this.disposeOwnedObject(building.scaffolding);
+    this.disposeOwnedObject(building.siteRing);
+    this.scene.remove(building.m);
+    this.buildings = this.buildings.filter((candidate) => candidate !== building);
+    this.created[building.type] = Math.max(0, (this.created[building.type] || 1) - 1);
+    const message = `${CATALOG[building.type].name} cancelled. Eligible costs refunded.`;
+    this.announce(message);
+    this.notify(message);
+    this.save();
+    this.emit();
+    return true;
+  }
+  beginMove(id) {
+    if (this.blockedByStorageConflict()) return false;
+    const building = this.buildings.find((candidate) => candidate.id === id);
+    if (!building || building.progress < 1 || building.type === "townhall") return false;
+    if (this.workers.some((worker) => worker.building === building && worker.carry)) {
+      this.notify("Let this building finish its delivery before moving it.");
+      return false;
+    }
+    this.clearHighlight();
+    this.select(`move:${id}`);
+    this.updatePlacement(Math.round(building.x), Math.round(building.z));
+    return true;
+  }
+  setPriority(id, priority) {
+    if (this.blockedByStorageConflict()) return false;
+    const building = this.buildings.find((candidate) => candidate.id === id);
+    if (!building || building.progress === 1 && !CATALOG[building.type]?.resource) return false;
+    building.priority = priority === "priority" ? "priority" : "normal";
+    this.announce(`${CATALOG[building.type].name} set to ${building.priority === "priority" ? "priority" : "normal"}.`);
+    this.save();
+    this.emit();
+    return true;
+  }
+  setPaused(id, paused) {
+    if (this.blockedByStorageConflict()) return false;
+    const building = this.buildings.find((candidate) => candidate.id === id);
+    if (!building) return false;
+    building.paused = Boolean(paused);
+    for (const worker of this.workers) {
+      if (worker.building !== building || worker.phase === "deliver") continue;
+      worker.building = null;
+      worker.phase = "idle";
+      worker.timer = 0;
+      worker.path = [];
+    }
+    this.announce(`${CATALOG[building.type].name} ${building.paused ? "paused" : "resuming"}.`);
+    this.save();
+    this.emit();
+    return true;
+  }
+  upgradeBuilding(id) {
+    if (this.blockedByStorageConflict()) return false;
+    const building = this.buildings.find((candidate) => candidate.id === id);
+    const upgrade = CATALOG[building?.type]?.upgrade;
+    if (!building || building.progress < 1 || building.upgrade || !upgrade) return false;
+    if (Object.entries(upgrade.cost).some(([resource, amount]) => (this.resources[resource] || 0) < amount)) {
+      this.notify("Not enough resources for this upgrade.");
+      return false;
+    }
+    Object.entries(upgrade.cost).forEach(([resource, amount]) => {
+      this.resources[resource] -= amount;
+    });
+    building.upgrade = upgrade.name;
+    this.announce(`${CATALOG[building.type].name} upgraded: ${upgrade.name}.`);
+    this.notify(`${CATALOG[building.type].name} upgraded.`);
+    this.save();
+    this.emit();
+    return true;
+  }
+  startFeast() {
+    if (this.blockedByStorageConflict()) return false;
+    if (this.feast?.remaining > 0) {
+      this.notify("The village is already enjoying a feast.");
+      return false;
+    }
+    if (this.resources.food < 30) {
+      this.notify("A feast needs 30 food. Keep the farms working.");
+      return false;
+    }
+    this.resources.food -= 30;
+    this.ensureAudio();
+    this.feast = { remaining: 45 };
+    this.announce("The village feast begins. Builders feel the extra warmth.");
+    this.notify("Village feast started: construction is 25% faster for 45 seconds.");
+    this.save();
+    this.emit();
+    return true;
+  }
+  resolveEvent(choiceIndex) {
+    if (this.blockedByStorageConflict()) return false;
+    if (!this.event) return false;
+    const choice = this.event.choices[choiceIndex];
+    if (!choice) return false;
+    if (choice.cost && Object.entries(choice.cost).some(([resource, amount]) => (this.resources[resource] || 0) < amount)) {
+      this.notify("The village does not have enough to make that trade.");
+      return false;
+    }
+    Object.entries(choice.cost || {}).forEach(([resource, amount]) => {
+      this.resources[resource] -= amount;
+    });
+    Object.entries(choice.reward || {}).forEach(([resource, amount]) => {
+      this.resources[resource] += amount;
+    });
+    this.announce(choice.result);
+    this.notify(choice.result);
+    this.event = null;
+    this.nextEventAt = this.elapsed + 70;
+    this.save();
+    this.emit();
+    return true;
+  }
   highlight(b) {
-    if (this.ring) this.scene.remove(this.ring);
+    this.clearHighlight();
     const n = (CATALOG[b.type]?.size || 4) / 2 + 0.3;
     this.ring = new THREE.Mesh(
       new THREE.RingGeometry(n, n + 0.075, 48),
@@ -731,7 +1851,70 @@ export class Village {
     );
     this.ring.rotation.x = -Math.PI / 2;
     this.ring.position.set(b.x, 0.05, b.z);
+    this.ring.material.transparent = true;
+    this.ring.material.opacity = 0.6;
+    this.ring.userData.worker = null;
     this.scene.add(this.ring);
+  }
+  highlightWorker(worker) {
+    this.clearHighlight();
+    this.ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.42, 0.51, 32),
+      new THREE.MeshBasicMaterial({ color: "#f4e7b3", side: THREE.DoubleSide }),
+    );
+    this.ring.rotation.x = -Math.PI / 2;
+    this.ring.material.transparent = true;
+    this.ring.material.opacity = 0.72;
+    this.ring.userData.worker = worker;
+    this.scene.add(this.ring);
+    this.ring.position.set(worker.m.position.x, 0.055, worker.m.position.z);
+    this.guideMarker = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.18, 0),
+      new THREE.MeshBasicMaterial({
+        color: "#f4e7b3",
+        transparent: true,
+        opacity: 0.9,
+      }),
+    );
+    this.guideMarker.userData.worker = worker;
+    this.scene.add(this.guideMarker);
+    this.guideMarker.position.set(worker.m.position.x, 0.58, worker.m.position.z);
+  }
+  clearHighlight() {
+    if (this.ring) {
+      this.scene.remove(this.ring);
+      this.ring.geometry.dispose();
+      this.ring.material.dispose();
+      this.ring = null;
+    }
+    if (this.guideMarker) {
+      this.scene.remove(this.guideMarker);
+      this.guideMarker.geometry.dispose();
+      this.guideMarker.material.dispose();
+      this.guideMarker = null;
+    }
+  }
+  disposeSceneResources() {
+    const geometries = new Set();
+    const materials = new Set();
+    const textures = new Set();
+    this.scene?.traverse((object) => {
+      if (!(object.isMesh || object.isLine || object.isPoints)) return;
+      if (object.geometry) geometries.add(object.geometry);
+      const list = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      list.filter(Boolean).forEach((material) => {
+        materials.add(material);
+        Object.values(material).forEach((value) => {
+          if (value?.isTexture) textures.add(value);
+        });
+      });
+    });
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
+    textures.forEach((texture) => texture.dispose());
+    this.scene?.clear();
   }
   addWorker() {
     const m = this.model("worker", rand() * 2 - 1, rand() * 2);
@@ -739,24 +1922,216 @@ export class Village {
       m,
       phase: "idle",
       path: [],
+      id: `worker-${this.nextWorkerId++}`,
       timer: 0,
+      workDuration: 0,
       building: null,
       carry: null,
+      waitingForInput: false,
+      walkPhase: rand() * Math.PI * 2,
+      idlePhase: rand() * Math.PI * 2,
     };
+    m.userData.worker = w;
+    const hitbox = new THREE.Mesh(
+      new THREE.SphereGeometry(0.48, 8, 6),
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      }),
+    );
+    hitbox.name = "WorkerHitbox";
+    hitbox.position.y = 0.42;
+    hitbox.userData.worker = w;
+    m.add(hitbox);
     this.workers.push(w);
+  }
+  carryColor(resource) {
+    return {
+      wood: "#b97943",
+      stone: "#9ca8a3",
+      food: "#e1b74e",
+    }[resource] || "#d6bd7c";
+  }
+  showCarry(w, resource) {
+    if (w.carryMesh || !w.m?.add) return;
+    const geometry =
+      resource === "stone"
+        ? new THREE.DodecahedronGeometry(0.13, 0)
+        : resource === "food"
+          ? new THREE.ConeGeometry(0.11, 0.23, 5)
+          : new THREE.BoxGeometry(0.24, 0.13, 0.13);
+    w.carryMesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({
+        color: this.carryColor(resource),
+        roughness: 0.85,
+        flatShading: true,
+      }),
+    );
+    w.carryMesh.position.set(0, 0.63, -0.17);
+    w.carryMesh.rotation.y = rand() * Math.PI;
+    w.carryMesh.castShadow = true;
+    w.m.add(w.carryMesh);
+  }
+  clearCarry(w) {
+    if (!w.carryMesh) return;
+    w.m.remove(w.carryMesh);
+    w.carryMesh.geometry.dispose();
+    w.carryMesh.material.dispose();
+    w.carryMesh = null;
+  }
+  deliveryBurst(b, resource, amount) {
+    if (!this.scene?.add || !b) return;
+    if (this.reduceMotion) return;
+    const color = this.carryColor(resource);
+    const group = new THREE.Group();
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.18, 0.28, 18),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.82,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    group.add(ring);
+    const sparks = [];
+    for (let i = 0; i < 5; i++) {
+      const spark = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.07, 0),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.9,
+          depthWrite: false,
+        }),
+      );
+      const angle = (i / 5) * Math.PI * 2;
+      spark.position.set(Math.cos(angle) * 0.22, 0.08, Math.sin(angle) * 0.22);
+      group.add(spark);
+      sparks.push(spark);
+    }
+    group.position.set(b.x, 0.08, b.z);
+    this.scene.add(group);
+    this.deliveryBursts.push({ group, ring, sparks, amount, life: 0.95 });
+  }
+  announce(message, duration = 8.5) {
+    this.activity = message;
+    this.activityTime = duration;
+    if (!Array.isArray(this.activityLog)) this.activityLog = [];
+    if (!Number.isInteger(this.nextActivityId)) this.nextActivityId = 0;
+    const text = String(message).slice(0, 140);
+    const duplicate = this.activityLog.findIndex(
+      ({ message: previous }) => previous === text,
+    );
+    if (duplicate >= 0) this.activityLog.splice(duplicate, 1);
+    this.activityLog.unshift({
+      id: this.nextActivityId++,
+      message: text,
+    });
+    this.activityLog = this.activityLog.slice(0, 4);
+    if (/ready|delivered|feast|path|planned|removed/i.test(text)) this.playSound("notice");
+  }
+  ensureAudio() {
+    if (typeof AudioContext === "undefined") return null;
+    if (!this.audioContext) this.audioContext = new AudioContext();
+    if (this.audioContext.state === "suspended") this.audioContext.resume();
+    return this.audioContext;
+  }
+  playSound(kind = "notice") {
+    if (!this.audioSettings?.effects) return;
+    const context = this.audioContext;
+    if (!context) return;
+    const frequencies = { place: 440, notice: 660, complete: 880 };
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = frequencies[kind] || frequencies.notice;
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.035, context.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.16);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.18);
+  }
+  setAudioSetting(key, enabled) {
+    if (!(key in this.audioSettings)) return false;
+    this.audioSettings[key] = Boolean(enabled);
+    if (this.audioSettings[key]) this.ensureAudio();
+    if (key === "ambience") {
+      if (this.audioSettings.ambience && !this.ambientOscillator && this.audioContext) {
+        const oscillator = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = 110;
+        gain.gain.value = 0.006;
+        oscillator.connect(gain).connect(this.audioContext.destination);
+        oscillator.start();
+        this.ambientOscillator = { oscillator, gain };
+      } else if (!this.audioSettings.ambience && this.ambientOscillator) {
+        this.ambientOscillator.oscillator.stop();
+        this.ambientOscillator = null;
+      }
+    }
+    try {
+      localStorage.setItem("hearth-settings", JSON.stringify({ graphicsPreset: this.graphicsPreset, ...this.audioSettings }));
+    } catch {}
+    this.emit?.();
+    return true;
+  }
+  updateAtmosphere() {
+    if (!this.sun || !this.hemi) return;
+    const cycle = ((this.elapsed % 120) / 120 + 0.22) % 1;
+    const sunHeight = Math.max(0, Math.sin(cycle * Math.PI));
+    const dusk = Math.pow(1 - sunHeight, 2.4);
+    const night = THREE.MathUtils.clamp((0.36 - sunHeight) / 0.36, 0, 1);
+    this.atmosphere.sunHeight = sunHeight;
+    this.atmosphere.nightAmount = Math.max(
+      night,
+      Math.pow(1 - sunHeight, 4) * 0.35,
+    );
+    this.atmosphere.sky
+      .copy(this.atmosphere.day)
+      .lerp(this.atmosphere.dusk, Math.min(1, dusk * 0.72))
+      .lerp(this.atmosphere.night, night * 0.72);
+    this.atmosphere.fog
+      .copy(this.atmosphere.sky)
+      .lerp(this.atmosphere.night, night * 0.2);
+    this.atmosphere.sun
+      .copy(this.atmosphere.sunDay)
+      .lerp(this.atmosphere.sunWarm, Math.min(1, dusk * 0.7));
+    this.scene.background.copy(this.atmosphere.sky);
+    this.scene.fog.color.copy(this.atmosphere.fog);
+    const angle = cycle * Math.PI * 2 - Math.PI * 0.42;
+    this.sun.position.set(
+      Math.cos(angle) * 32,
+      9 + sunHeight * 39,
+      Math.sin(angle) * 32,
+    );
+    this.sun.color.copy(this.atmosphere.sun);
+    this.sun.intensity = 0.62 + sunHeight * 2.12;
+    this.hemi.intensity = 0.82 + sunHeight * 0.82;
   }
   route(w, x, z, ignore = null) {
     const sx = Math.round(w.m.position.x),
       sz = Math.round(w.m.position.z),
       tx = Math.round(x),
       tz = Math.round(z);
+    w.routeTarget = { x: tx, z: tz };
     const start = `${sx},${sz}`,
       goal = `${tx},${tz}`;
-    const queue = [[sx, sz]],
-      visited = new Map([[start, null]]);
+    const queue = [],
+      costs = new Map([[start, 0]]),
+      parents = new Map([[start, null]]);
+    pushPriority(queue, [0, sx, sz]);
     let found = false;
-    for (let q = 0; q < queue.length && q < 4200; q++) {
-      const [cx, cz] = queue[q];
+    for (let q = 0; queue.length && q < 4200; q++) {
+      const [cost, cx, cz] = popPriority(queue);
+      const current = `${cx},${cz}`;
+      if (cost > (costs.get(current) ?? Infinity)) continue;
       if (cx === tx && cz === tz) {
         found = true;
         break;
@@ -771,16 +2146,19 @@ export class Village {
           nz = cz + dz,
           k = `${nx},${nz}`;
         if (
-          visited.has(k) ||
           nx < -30 ||
           nz < -30 ||
           nz > 30 ||
           nx > riverX(nz) - 0.6 ||
-          this.blocked(nx, nz, 0.1, ignore)
+          this.routeBlocked(nx, nz, ignore)
         )
           continue;
-        visited.set(k, `${cx},${cz}`);
-        queue.push([nx, nz]);
+        const stepCost = this.roads.has(k) ? 0.67 : 1;
+        const nextCost = cost + stepCost;
+        if (nextCost >= (costs.get(k) ?? Infinity)) continue;
+        costs.set(k, nextCost);
+        parents.set(k, current);
+        pushPriority(queue, [nextCost, nx, nz]);
       }
     }
     w.path = [];
@@ -789,7 +2167,7 @@ export class Village {
       while (k !== start) {
         const [px, pz] = k.split(",").map(Number);
         w.path.unshift(new THREE.Vector3(px, 0, pz));
-        k = visited.get(k);
+        k = parents.get(k);
       }
     }
     return found;
@@ -803,40 +2181,96 @@ export class Village {
       [b.x, b.z - n],
     ];
     return (
-      pts.find(([x, z]) => !this.blocked(x, z, 0.1) && x < riverX(z) - 0.5) ||
+      pts.find(
+        ([x, z]) => !this.routeBlocked(x, z) && x < riverX(z) - 0.5,
+      ) ||
       pts[0]
     );
   }
   assign(w) {
-    const construction = this.buildings.find(
-      (b) =>
-        b.progress < 1 &&
-        !this.workers.some((v) => v !== w && v.building === b),
-    );
+    const workerLoad = (building) =>
+      this.workers.filter((v) => v !== w && v.building === building).length;
+    const distanceToJob = (building) => {
+      const [x, z] = this.jobPoint(building);
+      return Math.hypot(w.m.position.x - x, w.m.position.z - z);
+    };
+    const compareJobs = (a, b) =>
+      (a.priority === "priority" ? 0 : 1) - (b.priority === "priority" ? 0 : 1) ||
+      workerLoad(a) - workerLoad(b) ||
+      distanceToJob(a) - distanceToJob(b);
+    const construction = this.buildings
+      .filter(
+        (b) =>
+          b.progress < 1 &&
+          !b.paused &&
+          !this.workers.some((v) => v !== w && v.building === b),
+      )
+      .sort(compareJobs);
     const sites = this.buildings.filter(
-      (b) => b.progress === 1 && CATALOG[b.type]?.resource,
+      (b) => b.progress === 1 && CATALOG[b.type]?.resource && !b.paused,
     );
-    const b =
-      construction ||
-      sites.sort(
-        (a, b) =>
-          this.workers.filter((v) => v.building === a).length -
-          this.workers.filter((v) => v.building === b).length,
-      )[0];
-    if (!b) return;
-    w.building = b;
-    w.phase = "travel";
-    const [x, z] = this.jobPoint(b);
-    if (!this.route(w, x, z)) {
-      w.phase = "idle";
-      w.building = null;
-      w.timer = 2;
+    const candidates = [...construction, ...sites.sort(compareJobs)];
+    for (const b of candidates) {
+      const [x, z] = this.jobPoint(b);
+      if (!this.route(w, x, z)) {
+        b.lastRouteBlocked = true;
+        continue;
+      }
+      b.lastRouteBlocked = false;
+      w.building = b;
+      w.phase = "travel";
+      return;
     }
+    const well = this.buildings.find(
+      (building) => building.type === "well" && building.progress === 1 && !building.paused,
+    );
+    if (well && this.route(w, ...this.jobPoint(well))) {
+      w.building = well;
+      w.phase = "visit";
+      w.timer = 3.5;
+      return;
+    }
+    w.phase = "idle";
+    w.building = null;
+    w.timer = candidates.length ? 2 : 0;
   }
   simulate(dt) {
+    if (!this.delivered) this.delivered = { wood: 0, stone: 0, food: 0 };
+    if (!this.trends) this.trends = { wood: 0, stone: 0, food: 0 };
     this.elapsed += dt;
+    if (!this.event && this.elapsed >= (this.nextEventAt || 70)) {
+      const event = VILLAGE_EVENTS[Math.floor(this.elapsed / 70) % VILLAGE_EVENTS.length];
+      this.event = event;
+      this.announce(`${event.title}.`);
+      this.save();
+    }
+    if (this.activityTime > 0) {
+      this.activityTime = Math.max(0, this.activityTime - dt);
+      if (this.activityTime === 0) this.activity = "";
+    }
     for (const w of this.workers) {
+      if (w.building?.paused && w.phase !== "deliver") {
+        w.building = null;
+        w.phase = "idle";
+        w.timer = 0;
+        w.path = [];
+      }
       if (w.path.length) {
+        const next = w.path[0];
+        if (
+          this.routeTargetBlocked(next) &&
+          w.routeTarget &&
+          !this.route(w, w.routeTarget.x, w.routeTarget.z)
+        ) {
+          w.path = [];
+          if (w.phase === "deliver") w.deliveryRetry = 1.5;
+          else {
+            w.phase = "idle";
+            w.building = null;
+            w.timer = 2;
+          }
+          continue;
+        }
         const target = w.path[0],
           delta = target.clone().sub(w.m.position);
         delta.y = 0;
@@ -852,31 +2286,76 @@ export class Village {
         } else {
           w.m.position.addScaledVector(delta.normalize(), step);
           w.m.rotation.y = Math.atan2(delta.x, delta.z);
-          w.m.position.y =
-            Math.abs(Math.sin(this.elapsed * 11 + w.m.id)) * 0.04;
+          const walkWave = Math.sin(
+            this.elapsed * 11 + (w.walkPhase || 0),
+          );
+          w.m.position.y = 0.018 + Math.abs(walkWave) * 0.045;
+          w.m.rotation.z = walkWave * 0.055;
+          w.m.scale.y = 1 + Math.abs(walkWave) * 0.025;
         }
         continue;
       }
-      w.m.position.y = 0;
+      const idleWave = Math.sin(this.elapsed * 2.4 + (w.idlePhase || 0));
+      w.m.position.y = Math.max(0, idleWave * 0.012);
+      w.m.rotation.z *= 0.92;
+      w.m.scale.y += (1 - w.m.scale.y) * 0.14;
       if (w.phase === "idle") {
         w.timer -= dt;
         if (w.timer <= 0) this.assign(w);
       } else if (w.phase === "travel") {
-        w.phase = w.building.progress < 1 ? "construct" : "work";
-        w.timer = 5 + rand() * 3;
-      } else if (w.phase === "construct") {
-        const b = w.building;
-        b.progress = Math.min(1, b.progress + dt / CATALOG[b.type].seconds);
-        b.m.scale.y = 0.1 + b.progress * 0.9;
-        if (b.progress >= 1) {
-          this.scene.remove(b.scaffolding);
-          b.scaffolding = null;
-          this.notify(`${CATALOG[b.type].name} is ready!`);
+        if (w.building.progress < 1) {
+          w.phase = "construct";
+          w.workDuration = 0;
+          w.timer = 5 + rand() * 3;
+        } else {
+          w.phase = "work";
+          w.workDuration =
+            (5 + rand() * 3) / (w.building.upgrade === "Faster sails" ? 1.25 : 1);
+          w.timer = w.workDuration;
+        }
+      } else if (w.phase === "visit") {
+        w.timer -= dt;
+        if (w.timer <= 0) {
           w.phase = "idle";
           w.building = null;
+          w.timer = 1.5;
+        }
+      } else if (w.phase === "construct") {
+        const b = w.building;
+        b.progress = Math.min(
+          1,
+          b.progress +
+            (dt * (this.feast?.remaining > 0 ? 1.25 : 1)) /
+              CATALOG[b.type].seconds,
+        );
+        b.m.scale.y = 0.1 + b.progress * 0.9;
+        if (b.progress >= 1) {
+          this.disposeOwnedObject(b.scaffolding);
+          b.scaffolding = null;
+          this.disposeOwnedObject(b.siteRing);
+          b.siteRing = null;
+          if (b.type === "house" || b.type === "townhall") this.addSmoke(b);
+          if (b.type === "house" || b.type === "townhall" || b.type === "well")
+            this.addLanterns(b);
+          b.pop = 1;
+          w.phase = "idle";
+          w.workDuration = 0;
+          w.building = null;
+          const newcomers =
+            b.type === "house"
+              ? Math.min(2, Math.max(0, MAX_POPULATION - this.workers.length))
+              : 0;
           if (b.type === "house")
-            for (let i = 0; i < 2 && this.workers.length < 24; i++)
+            for (let i = 0; i < 2 && this.workers.length < MAX_POPULATION; i++)
               this.addWorker();
+          const readyMessage = `${CATALOG[b.type].name} is ready.${
+            newcomers
+              ? ` ${newcomers} new villager${newcomers === 1 ? " has" : "s have"} arrived.`
+              : ""
+          }`;
+          this.announce(readyMessage);
+          this.playSound("complete");
+          this.notify(readyMessage);
           this.save();
         }
       } else if (w.phase === "work") {
@@ -884,89 +2363,377 @@ export class Village {
         if (w.timer <= 0) {
           const c = CATALOG[w.building.type];
           if (c.input && this.resources.food < c.input) {
+            if (!w.waitingForInput)
+              this.announce(`${c.name} is waiting for food.`);
+            w.waitingForInput = true;
+            w.workDuration = 0;
             w.timer = 4;
             continue;
           }
+          const resumedFromWaiting = w.waitingForInput;
+          w.waitingForInput = false;
+          if (resumedFromWaiting) this.announce(`${c.name} has food again.`);
           if (c.input) this.resources.food -= c.input;
-          w.carry = { resource: c.resource, amount: c.amount };
+          const amount = c.amount + (w.building.upgrade === "Rich soil" ? 4 : 0);
+          w.carry = { resource: c.resource, amount };
+          w.workDuration = 0;
+          this.showCarry(w, c.resource);
           w.phase = "deliver";
-          this.route(w, 0, 0);
+          const depot =
+            this.buildings.find((building) => building.type === "townhall") ||
+            w.building;
+          const [depotX, depotZ] = this.jobPoint(depot);
+          w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
         }
       } else if (w.phase === "deliver") {
+        if (w.deliveryRetry > 0) {
+          w.deliveryRetry -= dt;
+          if (w.deliveryRetry <= 0) {
+            const depot =
+              this.buildings.find((building) => building.type === "townhall") ||
+              w.building;
+            const [depotX, depotZ] = this.jobPoint(depot);
+            w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
+          }
+          continue;
+        }
         if (w.carry) {
+          const depot =
+            this.buildings.find((building) => building.type === "townhall") ||
+            w.building;
+          this.deliveryBurst(depot, w.carry.resource, w.carry.amount);
           this.resources[w.carry.resource] += w.carry.amount;
+          this.delivered[w.carry.resource] =
+            (this.delivered[w.carry.resource] || 0) + w.carry.amount;
           if (w.carry.resource === "wood") this.gathered += w.carry.amount;
+          this.announce(
+            `${w.carry.resource[0].toUpperCase()}${w.carry.resource.slice(1)} +${w.carry.amount} delivered to the hall.`,
+          );
           w.building.cycles++;
+          this.clearCarry(w);
           w.carry = null;
+          w.deliveryRetry = 0;
         }
         w.phase = "idle";
+        w.workDuration = 0;
         w.building = null;
       }
     }
     for (const b of this.buildings)
       if (b.type === "windmill" && b.progress === 1) {
         const sails = b.m.getObjectByName("Sails");
-        if (sails) sails.rotation.z += dt * 0.45;
+        if (sails && !this.reduceMotion) sails.rotation.z += dt * 0.45;
       }
+    if (this.feast?.remaining > 0) {
+      this.feast.remaining = Math.max(0, this.feast.remaining - dt);
+      if (this.feast.remaining === 0) {
+        this.feast = null;
+        this.announce("The feast is over. The village returns to its gentle rhythm.");
+        this.save();
+      }
+    }
+    if (!this.trendSample || this.elapsed - this.trendSample.elapsed >= 20) {
+      const sample = this.trendSample || {
+        elapsed: this.elapsed,
+        resources: { ...this.resources },
+      };
+      const minutes = Math.max(1 / 60, (this.elapsed - sample.elapsed) / 60);
+      for (const resource of Object.keys(this.resources))
+        this.trends[resource] = Math.round(
+          ((this.resources[resource] - (sample.resources[resource] || 0)) /
+            minutes) *
+            10,
+        ) / 10;
+      this.trendSample = {
+        elapsed: this.elapsed,
+        resources: { ...this.resources },
+      };
+    }
+  }
+  routeTargetBlocked(point) {
+    if (!point) return false;
+    return this.routeBlocked(point.x, point.z);
+  }
+  workSnapshot(w) {
+    if (!w || w.phase !== "work" || !(w.workDuration > 0))
+      return { progress: null, remaining: null };
+    return {
+      progress: Math.max(0, Math.min(1, 1 - w.timer / w.workDuration)),
+      remaining: Math.max(0, Math.ceil(w.timer)),
+    };
   }
   emit() {
+    if (!this.chapterRewards) this.chapterRewards = {};
+    const chapterGoals = chapterGoalState(this.chapterRewards, {
+      buildings: this.buildings,
+      created: this.created,
+      delivered: this.delivered,
+    });
+    for (const goal of chapterGoals)
+      if (goal.completed && !goal.claimed) this.chapterRewards[goal.id] = true;
+    const inTransit = this.workers.reduce(
+      (total, worker) => total + (worker.carry?.amount || 0),
+      0,
+    );
+    const blockedSites = this.buildings.filter(
+      (building) =>
+        building.progress === 1 &&
+        CATALOG[building.type]?.resource &&
+        (building.paused || building.lastRouteBlocked ||
+          !this.workers.some((worker) => worker.building === building)),
+    ).length;
     this.onUpdate({
       resources: { ...this.resources },
       population: this.workers.length,
-      capacity:
-        4 +
-        this.buildings.filter((b) => b.type === "house" && b.progress === 1)
-          .length *
-          4,
+      capacity: housingCapacity(this.buildings),
       day: Math.floor(this.elapsed / 120) + 1,
       time: this.elapsed % 120,
       speed: this.speed,
-      buildings: this.buildings.map((b) => ({
-        id: b.id,
-        type: b.type,
-        progress: b.progress,
-        workers: this.workers.filter((w) => w.building === b).length,
-        cycles: b.cycles,
-      })),
+      name: this.name,
+      buildings: this.buildings.map((b) => {
+        const assigned = this.workers.filter((w) => w.building === b);
+        const work = this.workSnapshot(
+          assigned.find((w) => w.phase === "work" && w.workDuration > 0),
+        );
+        const status =
+          b.paused
+            ? "Paused"
+            : b.progress < 1
+            ? "Building"
+            : b.lastRouteBlocked
+              ? "Waiting for route"
+            : assigned.some((w) => w.deliveryRetry > 0)
+              ? "Waiting for route"
+              : assigned.some((w) => w.phase === "deliver")
+                ? "Delivering"
+              : assigned.some((w) => w.phase === "travel")
+                ? "On the way"
+                : assigned.some((w) => w.waitingForInput)
+                  ? "Waiting for food"
+                : assigned.some((w) => w.phase === "work")
+                  ? "Working"
+                  : assigned.length
+                    ? "Assigned"
+                    : "Idle";
+        return {
+          id: b.id,
+          type: b.type,
+          progress: b.progress,
+          workers: assigned.length,
+          cycles: b.cycles,
+          cycleProgress: work.progress,
+          nextDelivery: work.remaining,
+          status,
+          priority: b.priority,
+          paused: Boolean(b.paused),
+          upgrade: b.upgrade,
+        };
+      }),
+      workers: this.workers.map((w, index) => {
+        const work = this.workSnapshot(w);
+        return {
+          id: w.id || `worker-${index}`,
+          phase: w.phase,
+          waitingForInput: !!w.waitingForInput,
+          deliveryRetry: w.deliveryRetry > 0,
+          buildingType: w.building?.type || null,
+          carry: w.carry ? { ...w.carry } : null,
+          workProgress: work.progress,
+          workRemaining: work.remaining,
+        };
+      }),
       gathered: this.gathered,
       created: { ...this.created },
+      delivered: { ...this.delivered },
+      trends: { ...this.trends },
+      inTransit,
+      blockedSites,
+      chapterGoals: chapterGoals.map((goal) => ({
+        ...goal,
+        claimed: goal.completed || goal.claimed || Boolean(this.chapterRewards[goal.id]),
+      })),
+      feast: this.feast ? { ...this.feast } : null,
+      event: this.event
+        ? { id: this.event.id, title: this.event.title, text: this.event.text, choices: this.event.choices }
+        : null,
+      tutorialStep: this.tutorialStep,
+      tutorialDismissed: this.tutorialDismissed,
+      graphicsPreset: this.graphicsPreset,
+      audioSettings: { ...this.audioSettings },
       placement: this.placement,
+      activity: this.activity,
+      activityLog: this.activityLog.map(({ message }) => message),
+      saveAvailable: this.storageAvailable !== false && !this.storageConflict,
+      saveConflict: this.storageConflict,
+      hasSaved: this.lastSavedAt > 0,
     });
   }
   save() {
-    if (!this.ready) return;
+    if (!this.ready || this.storageConflict) return false;
     try {
-      localStorage.setItem(
-        "hearth-v1",
-        JSON.stringify({
-          resources: this.resources,
-          population: this.workers.length,
-          elapsed: this.elapsed,
-          created: this.created,
-          gathered: this.gathered,
-          roads: [...this.roads],
-          buildings: this.buildings.map(
-            ({ type, x, z, rotation, progress }) => ({
-              type,
-              x,
-              z,
-              rotation,
-              progress,
-            }),
-          ),
-        }),
-      );
+      if (this.storageChanged()) {
+        this.markStorageConflict();
+        return false;
+      }
+      const serialized = JSON.stringify({
+        version: SAVE_VERSION,
+        name: this.name,
+        resources: this.resources,
+        population: this.workers.length,
+        elapsed: this.elapsed,
+        created: this.created,
+        gathered: this.gathered,
+        delivered: this.delivered,
+        chapterRewards: this.chapterRewards,
+        feast: this.feast,
+        event: this.event ? { id: this.event.id } : null,
+        nextEventAt: this.nextEventAt,
+        tutorialStep: this.tutorialStep,
+        tutorialDismissed: this.tutorialDismissed,
+        activityLog: (Array.isArray(this.activityLog) ? this.activityLog : [])
+          .slice(0, 4)
+          .map(({ message }) => String(message).slice(0, 140)),
+        view: this.viewRecord(),
+        roads: [...this.roads].filter((key) => !this.baseRoads?.has(key)),
+        buildings: this.buildings.map(
+          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade }) => ({
+            type,
+            x,
+            z,
+            rotation,
+            progress,
+            cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
+            priority: priority === "priority" ? "priority" : "normal",
+            paused: Boolean(paused),
+            upgrade: upgrade ? String(upgrade) : null,
+          }),
+        ),
+      });
+      localStorage.setItem("hearth-v1", serialized);
+      this.saveFingerprint = serialized;
+      this.lastSavedAt = Date.now();
+      this.storageAvailable = true;
       return true;
     } catch {
+      this.storageAvailable = false;
       this.notify(
         "Browser storage is unavailable. This village cannot be saved.",
       );
       return false;
     }
   }
+  exportSave() {
+    if (!this.save()) return null;
+    try {
+      return localStorage.getItem("hearth-v1");
+    } catch {
+      return null;
+    }
+  }
+  importVillage(value) {
+    if (this.storageConflict) return false;
+    if (this.storageChanged()) {
+      this.markStorageConflict();
+      return false;
+    }
+    const parsed = parseVillageImport(value);
+    if (!parsed.ok) return false;
+    try {
+      const current = localStorage.getItem("hearth-v1");
+      if (current) localStorage.setItem("hearth-v1-backup", current);
+      localStorage.setItem("hearth-v1", JSON.stringify(parsed.value));
+      return true;
+    } catch {
+      this.storageAvailable = false;
+      return false;
+    }
+  }
+  dismissTutorial() {
+    if (this.blockedByStorageConflict()) return false;
+    this.tutorialDismissed = true;
+    this.clearHighlight();
+    this.save();
+    this.emit();
+    return true;
+  }
+  clearSave() {
+    if (this.storageConflict) return false;
+    try {
+      if (this.storageChanged()) {
+        this.markStorageConflict();
+        return false;
+      }
+      localStorage.removeItem("hearth-v1");
+      this.lastSavedAt = 0;
+      this.saveFingerprint = null;
+      this.storageAvailable = true;
+      this.storageConflict = false;
+      return true;
+    } catch {
+      this.storageAvailable = false;
+      return false;
+    }
+  }
+  storageChanged() {
+    return Boolean(
+      this.lastSavedAt > 0 &&
+        this.saveFingerprint != null &&
+        typeof localStorage.getItem === "function" &&
+        localStorage.getItem("hearth-v1") !== this.saveFingerprint,
+    );
+  }
+  markStorageConflict() {
+    this.storageConflict = true;
+    this.speed = 0;
+    this.notify?.(
+      "This village changed in another tab. Reload to continue from the latest save.",
+    );
+    this.emit?.();
+  }
+  blockedByStorageConflict() {
+    if (!this.storageConflict) return false;
+    this.notify?.(
+      "This village changed in another tab. Reload to continue from the latest save.",
+    );
+    return true;
+  }
+  setGraphicsPreset(preset) {
+    if (!["low", "balanced", "high"].includes(preset)) return false;
+    this.graphicsPreset = preset;
+    this.renderer.shadowMap.enabled = preset !== "low";
+    try {
+      localStorage.setItem(
+        "hearth-settings",
+        JSON.stringify({ graphicsPreset: preset, ...this.audioSettings }),
+      );
+    } catch {}
+    this.resize?.();
+    this.emit?.();
+    return true;
+  }
   zoom(d) {
     this.camera.zoom = THREE.MathUtils.clamp(this.camera.zoom + d, 0.65, 2.4);
     this.camera.updateProjectionMatrix();
+  }
+  pan(dx, dz) {
+    const target = this.controls.target;
+    const nextX = THREE.MathUtils.clamp(target.x + dx, -20, 18);
+    const nextZ = THREE.MathUtils.clamp(target.z + dz, -24, 24);
+    const offset = new THREE.Vector3(nextX - target.x, 0, nextZ - target.z);
+    this.camera.position.add(offset);
+    this.controls.target.add(offset);
+  }
+  setName(name) {
+    if (this.storageConflict) return null;
+    const previous = this.name;
+    this.name = sanitizeVillageName(name, this.name);
+    if (!this.save() && this.storageConflict) {
+      this.name = previous;
+      this.emit?.();
+      return null;
+    }
+    this.emit();
+    return this.name;
   }
   home() {
     this.camera.position.set(30, 37, 42);
@@ -974,15 +2741,180 @@ export class Village {
     this.camera.zoom = 1;
     this.camera.updateProjectionMatrix();
   }
+  focusBuilding(id) {
+    const building = this.buildings.find((candidate) => candidate.id === id);
+    if (!building) return false;
+    const offset = new THREE.Vector3(25, 31, 29);
+    this.controls.target.set(building.x, 0, building.z);
+    this.camera.position.set(building.x + offset.x, offset.y, building.z + offset.z);
+    this.controls.update();
+    this.onSelect?.({
+      type: building.type,
+      name: CATALOG[building.type]?.name || "Village hall",
+      description: CATALOG[building.type]?.description || "A village landmark.",
+      effect: CATALOG[building.type]?.effect || "",
+      id: building.id,
+    });
+    this.highlight(building);
+    return true;
+  }
+  focusWorker(id) {
+    const worker = this.workers.find((candidate) => candidate.id === id);
+    if (!worker) return false;
+    this.controls.target.set(worker.m.position.x, 0, worker.m.position.z);
+    this.camera.position.set(worker.m.position.x + 18, 24, worker.m.position.z + 22);
+    this.controls.update();
+    this.onSelect?.({
+      type: "worker",
+      name: "Village worker",
+      description: `A willing pair of hands helping ${this.name} grow.`,
+      effect: worker.building
+        ? `Assigned to ${CATALOG[worker.building.type]?.name || "the village"}`
+        : "Ready for a new task",
+      workerId: worker.id,
+    });
+    this.highlightWorker(worker);
+    if ((this.tutorialStep || 0) === 1) {
+      this.tutorialStep = 2;
+      this.save();
+      this.emit();
+    }
+    return true;
+  }
   animate = () => {
     if (this.dead) return;
     this.frame = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 0.1);
+    const t = this.clock.elapsedTime;
+    const motion = this.reduceMotion ? 0 : 1;
     if (this.ready && this.speed) this.simulate(dt * this.speed);
     this.controls.update();
-    for (const m of this.ripples)
-      m.position.x +=
-        Math.sin(this.clock.elapsedTime * 0.8 + m.id) * dt * 0.015;
+    this.updateAtmosphere();
+    for (const m of this.ripples) {
+      const phase = m.userData.phase || 0;
+      const speed = m.userData.speed || 0.5;
+      const wave = motion * Math.sin(t * speed + phase);
+      m.position.x = (m.userData.baseX || m.position.x) + wave * 0.1;
+      m.scale.x = 0.9 + (wave + 1) * 0.12;
+      m.material.opacity = 0.25 + (wave + 1) * 0.1;
+    }
+    for (const m of this.swayers) {
+      if (!m.parent) continue;
+      const phase = m.userData.phase || 0;
+      const speed = m.userData.speed || 0.7;
+      const amount = motion * (m.userData.amount || 0.02);
+      m.rotation.z = (m.userData.baseZ || 0) + Math.sin(t * speed + phase) * amount;
+    }
+    if (this.motes) {
+      const positions = this.motes.geometry.attributes.position.array;
+      this.moteSeeds.forEach((seed, i) => {
+        const wave = motion * (t * seed.speed + seed.phase);
+        positions[i * 3] = seed.x + Math.sin(wave) * 0.18;
+        positions[i * 3 + 1] = seed.y + Math.sin(wave * 1.23) * 0.12;
+        positions[i * 3 + 2] = seed.z + Math.cos(wave * 0.7) * 0.12;
+      });
+      this.motes.geometry.attributes.position.needsUpdate = true;
+      this.motes.material.opacity =
+        0.38 + motion * Math.sin(t * 1.4) * 0.08;
+    }
+    if (this.ring) {
+      const worker = this.ring.userData.worker;
+      if (worker?.m) {
+        this.ring.position.set(worker.m.position.x, 0.055, worker.m.position.z);
+      }
+      const pulse = motion * (Math.sin(t * 3.2) + 1) * 0.5;
+      this.ring.scale.setScalar(1 + pulse * 0.035);
+      this.ring.material.opacity = 0.4 + pulse * 0.24;
+    }
+    if (this.guideMarker) {
+      const worker = this.guideMarker.userData.worker;
+      if (worker?.m) {
+        this.guideMarker.position.set(
+          worker.m.position.x,
+          0.54 + motion * (Math.sin(t * 2.4) + 1) * 0.06,
+          worker.m.position.z,
+        );
+      }
+      if (motion) this.guideMarker.rotation.y = t * 0.8;
+    }
+    for (const b of this.buildings) {
+      if (b.siteRing) {
+        const pulse =
+          motion *
+          (Math.sin(t * 3.7 + (b.siteRing.userData.phase || 0)) + 1) *
+          0.5;
+        b.siteRing.scale.setScalar(0.94 + pulse * 0.09);
+        b.siteRing.material.opacity = 0.27 + pulse * 0.25;
+      }
+      if (b.pop > 0 && b.progress === 1) {
+        const amount = motion * Math.sin(b.pop * Math.PI) * 0.09;
+        b.m.scale.x = 1 + amount;
+        b.m.scale.y = 1 + amount;
+        b.m.scale.z = 1 + amount;
+        b.pop = Math.max(0, b.pop - dt * 2.4);
+        if (b.pop === 0) b.m.scale.set(1, 1, 1);
+      }
+      if (b.smoke) {
+        const smokeWave = motion * (t * 0.65 + b.smoke.phase);
+        b.smoke.particles.forEach((p, i) => {
+          const cycle = motion * ((t * 0.46 + i * 0.55 + b.smoke.phase) % 2.6);
+          const rise = cycle / 2.6;
+          p.position.x = 0.13 + Math.sin(smokeWave + i * 0.9) * 0.11 * rise;
+          p.position.y = (b.type === "townhall" ? 3.25 : 2.65) + cycle;
+          p.position.z = 0.04 + Math.cos(smokeWave * 0.7 + i) * 0.06 * rise;
+          p.scale.setScalar(0.7 + rise * 1.5);
+          p.material.opacity = (1 - rise) * 0.17;
+        });
+      }
+      if (b.lanterns) {
+        const glow = this.atmosphere.nightAmount || 0;
+        b.lanterns.lamps.forEach((lamp) => {
+          const flicker = 0.98 + motion * Math.sin(t * 5.5 + lamp.phase) * 0.08;
+          lamp.light.intensity = (0.025 + glow * 1.35) * flicker;
+          lamp.glow.material.opacity = 0.025 + glow * 0.86;
+          lamp.glow.scale.setScalar(0.8 + glow * 0.45);
+        });
+      }
+    }
+    const daylight = this.atmosphere.sunHeight ?? 1;
+    for (const bird of this.birds) {
+      const visible = daylight > 0.16 && !this.reduceMotion;
+      bird.group.visible = visible;
+      if (!visible) continue;
+      const wave = t * bird.speed + bird.phase;
+      bird.group.position.x = bird.centerX + Math.sin(wave) * 4.2;
+      bird.group.position.z = bird.centerZ + Math.cos(wave * 0.72) * 3.2;
+      bird.group.position.y = bird.baseY + Math.sin(wave * 1.25) * 0.3;
+      bird.group.rotation.y = wave * 0.75;
+      const flap = Math.sin(t * 7 + bird.phase) * 0.18;
+      bird.left.rotation.y = -0.3 - flap;
+      bird.right.rotation.y = 0.3 + flap;
+    }
+    for (let i = this.deliveryBursts.length - 1; i >= 0; i--) {
+      const burst = this.deliveryBursts[i];
+      burst.life -= dt;
+      const progress = 1 - Math.max(0, burst.life / 0.95);
+      burst.group.position.y = 0.08 + progress * 0.55;
+      burst.group.scale.setScalar(1 + progress * 0.65);
+      burst.ring.material.opacity = burst.life * 0.76;
+      burst.sparks.forEach((spark, index) => {
+        const angle = (index / burst.sparks.length) * Math.PI * 2;
+        spark.position.x = Math.cos(angle) * (0.22 + progress * 0.36);
+        spark.position.z = Math.sin(angle) * (0.22 + progress * 0.36);
+        spark.rotation.y += motion * dt * 4;
+        spark.material.opacity = burst.life * 0.9;
+      });
+      if (burst.life <= 0) {
+        this.scene.remove(burst.group);
+        burst.group.traverse((object) => {
+          if (object.isMesh) {
+            object.geometry.dispose();
+            object.material.dispose();
+          }
+        });
+        this.deliveryBursts.splice(i, 1);
+      }
+    }
     this.renderer.render(this.scene, this.camera);
     this.lastUI += dt;
     if (this.lastUI > 0.4) {
@@ -1007,8 +2939,14 @@ export class Village {
     this.container.removeEventListener("pointermove", this.move);
     this.container.removeEventListener("pointerdown", this.down);
     this.container.removeEventListener("pointerup", this.up);
+    this.container.removeEventListener("pointercancel", this.cancelPointer);
     this.container.removeEventListener("contextmenu", this.context);
+    window.removeEventListener("storage", this.storageChange);
     this.controls.dispose();
+    this.clearHighlight();
+    this.clearGhost();
+    this.disposeSceneResources();
+    this.renderer.renderLists.dispose?.();
     this.renderer.dispose();
     this.container.replaceChildren();
   }
