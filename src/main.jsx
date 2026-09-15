@@ -21,6 +21,7 @@ import {
   MousePointer2,
   Grid2X2,
   Leaf,
+  Info,
   House,
   Hammer,
   ChevronDown,
@@ -149,6 +150,7 @@ function App() {
     [thumbs, setThumbs] = useState({}),
     [selected, setSelected] = useState(null),
     [hover, setHover] = useState(null),
+    [buildDetailsOpen, setBuildDetailsOpen] = useState(false),
     [detail, setDetail] = useState(null),
     [toast, setToast] = useState(null),
     [help, setHelp] = useState(false),
@@ -278,6 +280,7 @@ function App() {
       placementFocusReturn.current = null;
     }
     setSelected(next);
+    setBuildDetailsOpen(false);
     setHover(null);
     setDetail(null);
     setEventOpen(false);
@@ -296,6 +299,7 @@ function App() {
   }, [selected]);
   const endPlacement = (preserveHighlight = false) => {
     setSelected(null);
+    setBuildDetailsOpen(false);
     if (!preserveHighlight) game.current?.clearHighlight();
     game.current?.select(null);
     setGrid(false);
@@ -650,7 +654,7 @@ function App() {
       window.removeEventListener("resize", syncHiddenSurfaces);
       observer?.disconnect();
     };
-  }, [advisorOpen, detail, eventOpen, menu, modalOpen, selected, tutorialVisible]);
+  }, [advisorOpen, buildDetailsOpen, detail, eventOpen, menu, modalOpen, selected, tutorialVisible]);
   const runTutorialAction = () => {
     if (!tutorialAction) return;
     if (tutorialAction.kind === "focus") {
@@ -1589,7 +1593,10 @@ function App() {
       </div>
       <div className="build-area">
         {active && (
-          <div className="build-tooltip parchment">
+          <div
+            id="build-details"
+            className={`build-tooltip parchment ${buildDetailsOpen ? "is-open" : ""}`}
+          >
             <div>
               <span className="tooltip-category">
                 {pathRemoval
@@ -1664,6 +1671,16 @@ function App() {
           >
             <MousePointer2 size={14} />
             <span>{placementHint}</span>
+            <button
+              className="placement-details-toggle"
+              type="button"
+              aria-expanded={buildDetailsOpen}
+              aria-controls="build-details"
+              onClick={() => setBuildDetailsOpen((open) => !open)}
+            >
+              <Info size={13} />
+              <span>{buildDetailsOpen ? "Hide details" : "Details"}</span>
+            </button>
             {!pathMode && (
               <button
                 aria-label="Rotate building"

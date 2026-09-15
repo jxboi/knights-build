@@ -974,10 +974,10 @@ h1 span {
   bottom: 168px;
   left: 50%;
   transform: translateX(-50%);
-  width: 400px;
-  padding: 20px;
+  width: min(340px, calc(100% - 40px));
+  padding: 14px 16px;
   display: flex;
-  gap: 24px;
+  gap: 16px;
   pointer-events: none;
   z-index: 20;
 }
@@ -995,15 +995,15 @@ h1 span {
 }
 .build-tooltip h3 {
   font:
-    500 20px "Lora",
+    500 18px "Lora",
     Georgia,
     serif;
-  margin: 6px 0 7px;
+  margin: 5px 0 5px;
 }
 .build-tooltip p {
-  font-size: 10px;
-  line-height: 1.65;
-  max-width: 235px;
+  font-size: 9px;
+  line-height: 1.45;
+  max-width: 195px;
   color: #96876d;
 }
 .effect {
@@ -1011,24 +1011,24 @@ h1 span {
   gap: 6px;
   align-items: center;
   color: #78855c;
-  font-size: 9px;
-  margin-top: 12px;
+  font-size: 8px;
+  margin-top: 8px;
   line-height: 1.4;
 }
 .tooltip-cost {
   border-left: 1px solid #dfd4bd;
-  min-width: 105px;
-  padding-left: 17px;
+  min-width: 89px;
+  padding-left: 12px;
 }
 .tooltip-cost > div {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  font-size: 11px;
+  gap: 4px;
+  margin-top: 7px;
+  font-size: 10px;
 }
 .tooltip-cost > div > span {
-  font-size: 9px;
+  font-size: 8px;
   color: #9b8b71;
 }
 .tooltip-cost .cost-gap {
@@ -1042,9 +1042,9 @@ h1 span {
 }
 .tooltip-cost small {
   display: block;
-  font-size: 8px;
+  font-size: 7px;
   color: #a1937c;
-  margin-top: 13px;
+  margin-top: 9px;
   white-space: nowrap;
 }
 .relocation-note {
@@ -1085,6 +1085,12 @@ h1 span {
   gap: 4px;
   padding-left: 7px;
   border-left: 1px solid #d3c8ae;
+}
+.placement-details-toggle {
+  display: none;
+}
+.placement-details-toggle > span {
+  white-space: nowrap;
 }
 .placement-hint kbd {
   font-family: inherit;
@@ -3012,8 +3018,14 @@ h1 span {
 @media (max-width: 760px) {
   /* Keep the placement guidance above the build detail card instead of
      allowing the two surfaces to share the same bottom edge. */
+  .game-shell .build-tooltip:not(.is-open) {
+    visibility: hidden;
+  }
   .game-shell:has(.world.is-building) .build-tooltip {
     bottom: calc(100% + 12px);
+  }
+  .placement-details-toggle {
+    display: flex;
   }
   .game-shell:has(.event-card:not([aria-hidden="true"])) .advisor-launch {
     visibility: hidden;
