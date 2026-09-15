@@ -70,11 +70,14 @@ def bakery():
  for y in [-.55,.05,.62]:
   cube('Left stone course',(-1.29,y,.47),(.10,.22,.17),'stoneLight' if y==.05 else 'stoneBlue')
  # Dark framing and warm plaster sit above the masonry, echoing the reference.
- for x,y in [(-1.2,-1.08),(1.2,-1.08),(-1.2,1.04),(1.2,1.04)]:
-  cube('Bakery oak post',(x,y,1.37),(.14,.14,1.15),'wood')
- cube('Open front lintel',(0,-1.08,2.34),(2.55,.14,.14),'wood')
+ # Keep supports directly under the short roof: front posts set at the roof
+ # eave read as genuine structure instead of detached porch pillars.
+ for x in [-1.2,1.2]:
+  cube('Rear bakery oak post',(x,1.04,1.37),(.14,.14,1.15),'wood')
+  cube('Eave bakery oak post',(x,-.30,1.37),(.14,.14,1.15),'wood')
+ cube('Open roof lintel',(0,-.30,2.34),(2.55,.14,.14),'wood')
  cube('Rear eave beam',(0,1.06,2.34),(2.55,.14,.14),'wood')
- beam('Left timber brace',(-1.19,-1.06,1.23),(-1.19,-.26,2.34),.075,'timber')
+ beam('Left timber brace',(-1.19,-.30,1.25),(-.55,-.30,2.28),.075,'timber')
  beam('Rear timber brace',(-1.18,.94,1.16),(-.55,1.03,2.28),.065,'timber')
  # A deep, honey-thatch rear roof gives a rich silhouette while its open gable
  # frames—not hides—the active counter from the standard isometric view.
