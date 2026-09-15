@@ -2083,6 +2083,8 @@ export class Village {
       for (const worker of this.workers) {
         if (worker.building !== moving) continue;
         worker.building = null;
+        worker.workInside = false;
+        this.setWorkerInside(worker, false);
         worker.phase = "idle";
         worker.timer = 0;
         worker.path = [];
@@ -2380,6 +2382,8 @@ export class Village {
         if (worker.field !== building) continue;
         worker.field = null;
         worker.building = null;
+        worker.workInside = false;
+        this.setWorkerInside(worker, false);
         worker.phase = "idle";
         worker.timer = 0;
         worker.path = [];
@@ -2409,6 +2413,8 @@ export class Village {
       this.clearCarry(worker);
       worker.carry = null;
       worker.building = null;
+      worker.workInside = false;
+      this.setWorkerInside(worker, false);
       worker.phase = "idle";
       worker.timer = 0;
       worker.path = [];
@@ -2478,6 +2484,8 @@ export class Village {
       worker.field = null;
       worker.tree = null;
       worker.building = null;
+      worker.workInside = false;
+      this.setWorkerInside(worker, false);
       worker.phase = "idle";
       worker.timer = 0;
       worker.path = [];
@@ -2976,6 +2984,8 @@ export class Village {
       timer: 0,
       workDuration: 0,
       building: null,
+      workInside: false,
+      insideBuilding: false,
       carry: null,
       tree: null,
       waitingForInput: false,
@@ -3268,6 +3278,15 @@ export class Village {
       return score(a) - score(candidate);
     })[0];
   }
+  workerRouteIgnore(worker) {
+    return worker?.workInside ? worker.building || null : worker?.field || null;
+  }
+  setWorkerInside(worker, inside) {
+    if (!worker) return;
+    worker.insideBuilding = Boolean(inside);
+    if (worker.m) worker.m.visible = !inside;
+    if (worker.contactShadow) worker.contactShadow.visible = !inside;
+  }
   nextConstructionMaterial(building) {
     return Object.entries(CATALOG[building?.type]?.cost || {}).find(
       ([resource, required]) =>
@@ -3293,6 +3312,8 @@ export class Village {
   assign(w) {
     if (!WORKER_TYPE_LABELS[w.workerType])
       this.setWorkerType(w, WORKER_TYPES.BUILDER);
+    w.workInside = false;
+    this.setWorkerInside(w, false);
     w.waitingForSpace = false;
     w.waitingFor = null;
     w.spaceWait = 0;
@@ -3381,12 +3402,18 @@ export class Village {
                 ),
             )[0]
           : null;
+      const workInside =
+        !material && ["farm", "bakery", "windmill"].includes(b.type);
+      w.workInside = workInside;
       const [x, z] = tree
         ? [tree.x, tree.z]
-        : field
+        : workInside
+          ? [b.x, b.z]
+          : field
           ? [field.x, field.z]
           : this.jobPoint(destination, w);
-      if (!this.route(w, x, z, field, tree)) {
+      if (!this.route(w, x, z, workInside ? b : field, tree)) {
+        w.workInside = false;
         b.lastRouteBlocked = true;
         continue;
       }
@@ -3425,6 +3452,8 @@ export class Village {
     }
     w.phase = "idle";
     w.building = null;
+    w.workInside = false;
+    this.setWorkerInside(w, false);
     this.setWorkerType(w, WORKER_TYPES.BUILDER);
     w.waitingForSpace = false;
     w.timer = candidates.length ? 2 : 0;
@@ -3453,7 +3482,7 @@ export class Village {
       !this.routeBlocked(
         candidate.x,
         candidate.z,
-        worker.field || null,
+        this.workerRouteIgnore(worker),
         worker.tree || null,
       ) &&
       !this.workerMoveBlocker(worker, candidate)
@@ -3623,7 +3652,7 @@ export class Village {
       worker,
       target.x,
       target.z,
-      worker.field || null,
+      this.workerRouteIgnore(worker),
       worker.tree || null,
     );
     if (!routed) worker.path = previousPath;
@@ -3646,7 +3675,7 @@ export class Village {
         w,
         w.routeTarget.x,
         w.routeTarget.z,
-        w.field || null,
+        this.workerRouteIgnore(w),
         w.tree || null,
       )
     ) {
@@ -3762,6 +3791,8 @@ export class Village {
         w.field = null;
         w.tree = null;
         w.building = null;
+        w.workInside = false;
+        this.setWorkerInside(w, false);
         w.phase = "idle";
         w.timer = 0;
         w.path = [];
@@ -3789,6 +3820,8 @@ export class Village {
         const delivered = finiteNumber(b?.materials?.[resource], 0);
         const amount = Math.min(10, Math.max(0, required - delivered));
         if (!b || !resource || amount <= 0) {
+          this.setWorkerInside(w, false);
+          w.workInside = false;
           w.phase = "idle";
           w.building = null;
           w.materialResource = null;
@@ -3804,6 +3837,8 @@ export class Village {
         if (!b) {
           this.clearCarry(w);
           w.carry = null;
+          this.setWorkerInside(w, false);
+          w.workInside = false;
           w.phase = "idle";
           continue;
         }
@@ -3838,6 +3873,8 @@ export class Village {
           this.announce(`${CATALOG[b.type].name} has all materials. Construction begins.`);
           this.save();
         } else {
+          this.setWorkerInside(w, false);
+          w.workInside = false;
           w.phase = "idle";
           w.building = null;
           w.materialResource = null;
@@ -3853,14 +3890,17 @@ export class Village {
           w.timer = w.workDuration;
           this.announce("A worker is chopping down a tree for the lumberyard.");
         } else if (w.field) {
+          if (w.workInside) this.setWorkerInside(w, true);
           w.phase = "harvest";
           w.workDuration = 3.5;
           w.timer = w.workDuration;
         } else if (w.building.progress < 1) {
+          this.setWorkerInside(w, false);
           w.phase = "construct";
           w.workDuration = 0;
           w.timer = 5 + rand() * 3;
         } else {
+          if (w.workInside) this.setWorkerInside(w, true);
           w.phase = "work";
           w.workDuration =
             (5 + rand() * 3) / (w.building.upgrade === "Faster sails" ? 1.25 : 1);
@@ -3869,6 +3909,8 @@ export class Village {
       } else if (w.phase === "visit") {
         w.timer -= dt;
         if (w.timer <= 0) {
+          this.setWorkerInside(w, false);
+          w.workInside = false;
           w.phase = "idle";
           w.building = null;
           w.timer = 1.5;
@@ -3938,6 +3980,7 @@ export class Village {
             product: "logs",
           };
           this.showCarry(w, "wood", "logs");
+          this.setWorkerInside(w, false);
           w.phase = "lumber_delivery";
           const [yardX, yardZ] = this.jobPoint(lumberyard, w);
           w.deliveryRetry = this.route(w, yardX, yardZ) ? 0 : 1.5;
@@ -4009,6 +4052,7 @@ export class Village {
           w.field = null;
           w.workDuration = 0;
           this.showCarry(w, "wheat");
+          this.setWorkerInside(w, false);
           w.phase = "deliver";
           const depot =
             this.buildings.find((building) => building.type === "townhall") ||
@@ -4038,6 +4082,7 @@ export class Village {
           w.carry = { resource: c.resource, amount };
           w.workDuration = 0;
           this.showCarry(w, c.resource);
+          this.setWorkerInside(w, false);
           w.phase = "deliver";
           const depot =
             this.buildings.find((building) => building.type === "townhall") ||
@@ -4077,6 +4122,8 @@ export class Village {
         }
         w.phase = "idle";
         w.workDuration = 0;
+        w.workInside = false;
+        this.setWorkerInside(w, false);
         w.field = null;
         w.tree = null;
         w.building = null;
@@ -4115,7 +4162,12 @@ export class Village {
   }
   routeTargetBlocked(point, worker = null) {
     if (!point) return false;
-    return this.routeBlocked(point.x, point.z, null, worker?.tree || null);
+    return this.routeBlocked(
+      point.x,
+      point.z,
+      this.workerRouteIgnore(worker),
+      worker?.tree || null,
+    );
   }
   workSnapshot(w) {
     if (
@@ -4286,6 +4338,7 @@ export class Village {
           workerType: w.workerType || WORKER_TYPES.BUILDER,
           workerTypeLabel: WORKER_TYPE_LABELS[w.workerType] || "Builder",
           buildingType: w.building?.type || null,
+          ...(w.insideBuilding ? { insideBuilding: true } : {}),
           carry: w.carry ? { ...w.carry } : null,
           workProgress: work.progress,
           workRemaining: work.remaining,

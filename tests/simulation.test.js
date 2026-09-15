@@ -598,12 +598,17 @@ test("a farmer harvests only ripe connected grain and carries it to the hall", (
   v.assign(worker);
   assert.equal(worker.building, farm);
   assert.equal(worker.field, field);
+  assert.equal(worker.workInside, true);
   assert.equal(field.claimedBy, worker.id);
   worker.path = [];
   v.simulate(0.1);
   assert.equal(worker.phase, "harvest");
+  assert.equal(worker.insideBuilding, true);
+  assert.equal(worker.m.visible, false);
   v.simulate(4);
   assert.equal(worker.phase, "deliver");
+  assert.equal(worker.insideBuilding, false);
+  assert.equal(worker.m.visible, true);
   assert.deepEqual(worker.carry, { resource: "wheat", amount: 8 });
   assert.equal(field.claimedBy, null);
   assert.equal(field.cycles, 1);
@@ -611,6 +616,36 @@ test("a farmer harvests only ripe connected grain and carries it to the hall", (
   v.simulate(0.1);
   assert.equal(v.resources.wheat, 8);
   assert.equal(farm.cycles, 1);
+});
+
+test("a baker enters the bakery before starting a production cycle", () => {
+  const v = village();
+  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0, paused: false };
+  const worker = {
+    id: "worker-baker",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    workDuration: 0,
+    building: null,
+    workerType: WORKER_TYPES.BAKER,
+  };
+  const routeCalls = [];
+  v.buildings = [bakery];
+  v.workers = [worker];
+  v.route = (_worker, x, z, ignoredBuilding) => {
+    routeCalls.push({ x, z, ignoredBuilding });
+    return true;
+  };
+  v.assign(worker);
+  assert.deepEqual(routeCalls[0], { x: bakery.x, z: bakery.z, ignoredBuilding: bakery });
+  assert.equal(worker.workInside, true);
+  worker.path = [];
+  v.simulate(0.1);
+  assert.equal(worker.phase, "work");
+  assert.equal(worker.insideBuilding, true);
+  assert.equal(worker.m.visible, false);
 });
 
 test("worker assignment falls back when the preferred site is unreachable", () => {

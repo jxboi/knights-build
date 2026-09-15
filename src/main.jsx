@@ -60,6 +60,13 @@ function workerStatus(worker) {
   if (worker.waitingForInput) return "Waiting for ingredients";
   if (worker.waitingForSpace) return "Waiting for space";
   if (worker.deliveryRetry) return "Waiting for route";
+  if (worker.insideBuilding) {
+    return {
+      farm: "Working inside Farmhouse",
+      bakery: "Working inside Bakery",
+      windmill: "Working inside Windmill",
+    }[worker.buildingType] || "Working inside building";
+  }
   return {
     travel: "On the way",
     chop: "Chopping a tree",
