@@ -492,6 +492,8 @@ test("workers pass a head-on collision without overlapping or deadlocking", () =
   v.workers = [first, second];
 
   let closest = Infinity;
+  let avoidanceStarts = 0;
+  let wasAvoiding = false;
   for (let tick = 0; tick < 100; tick++) {
     for (const worker of v.workers)
       worker.repathCooldown = Math.max(0, worker.repathCooldown - 0.05);
@@ -501,6 +503,9 @@ test("workers pass a head-on collision without overlapping or deadlocking", () =
         v.workerPriority(a) - v.workerPriority(b),
     );
     for (const worker of movementOrder) v.moveWorker(worker, 0.05);
+    const isAvoiding = Boolean(second.avoidanceTarget);
+    if (isAvoiding && !wasAvoiding) avoidanceStarts++;
+    wasAvoiding = isAvoiding;
     closest = Math.min(
       closest,
       first.m.position.distanceTo(second.m.position),
@@ -510,6 +515,7 @@ test("workers pass a head-on collision without overlapping or deadlocking", () =
   assert.ok(closest >= WORKER_CLEARANCE);
   assert.equal(first.path.length, 0);
   assert.equal(second.path.length, 0);
+  assert.ok(avoidanceStarts <= 2);
   assert.equal(first.m.position.x, 1);
   assert.equal(second.m.position.x, 0);
 });

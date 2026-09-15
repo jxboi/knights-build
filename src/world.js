@@ -26,6 +26,7 @@ const riverX = (z) => 16 + Math.sin(z * 0.13) * 1.6;
 // hitboxes and carried goods from visually merging at a shared waypoint.
 export const WORKER_CLEARANCE = 0.78;
 const WORKER_REPATH_SECONDS = 1.1;
+const WORKER_PASS_SECONDS = 1;
 const VILLAGE_EVENTS = [
   {
     id: "peddler",
@@ -2530,6 +2531,8 @@ export class Village {
       spaceWait: 0,
       repathCooldown: 0,
       forcedYield: null,
+      avoidanceTarget: null,
+      avoidanceTime: 0,
       rig,
     };
     m.userData.worker = w;
@@ -2829,6 +2832,8 @@ export class Village {
     w.waitingFor = null;
     w.spaceWait = 0;
     w.forcedYield = null;
+    w.avoidanceTarget = null;
+    w.avoidanceTime = 0;
     const workerLoad = (building) =>
       this.workers.filter((v) => v !== w && v.building === building).length;
     const distanceToJob = (building) => {
@@ -2945,28 +2950,62 @@ export class Village {
       !this.workerMoveBlocker(worker, candidate)
     );
   }
-  avoidanceStep(worker, direction, step) {
-    const side = this.workerPriority(worker) % 2 === 0 ? 1 : -1;
-    const angles = worker.forcedYield
-      ? [side * Math.PI / 2, -side * Math.PI / 2, side * 0.75 * Math.PI, Math.PI]
-      : [side * Math.PI / 3, -side * Math.PI / 3, side * Math.PI / 2, -side * Math.PI / 2];
-    for (const angle of angles) {
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      const x = direction.x * cos - direction.z * sin;
-      const z = direction.x * sin + direction.z * cos;
+  startAvoidance(worker, direction) {
+    // Everyone prefers the same passing side, so a dense crossing circulates
+    // instead of forming an alternating ring of workers yielding into one
+    // another. The opposite side remains a fallback near walls and scenery.
+    const sides = [1, -1];
+    for (const passingSide of sides) {
       const candidate = worker.m.position.clone();
-      candidate.x += x * step;
-      candidate.z += z * step;
-      if (!this.workerCanStepTo(worker, candidate)) continue;
-      worker.m.position.copy(candidate);
-      worker.m.rotation.y = Math.atan2(x, z);
+      // Commit to a lateral lane before resuming the original route. Adding a
+      // forward component here points the worker back into a head-on blocker
+      // and recreates the frame-by-frame shiver this maneuver is meant to stop.
+      candidate.x -= direction.z * passingSide * 1.05;
+      candidate.z += direction.x * passingSide * 1.05;
+      const lane = candidate.clone().sub(worker.m.position);
+      const probe = worker.m.position
+        .clone()
+        .addScaledVector(lane.normalize(), 0.15);
+      if (
+        !this.workerCanStepTo(worker, probe) ||
+        !this.workerCanStepTo(worker, candidate)
+      )
+        continue;
+      worker.avoidanceTarget = candidate;
+      worker.avoidanceTime = WORKER_PASS_SECONDS;
       worker.forcedYield = null;
-      worker.waitingForSpace = false;
-      worker.spaceWait = Math.max(0, (worker.spaceWait || 0) - step);
       return true;
     }
     return false;
+  }
+  followAvoidance(worker, step, dt) {
+    if (!worker.avoidanceTarget) return false;
+    worker.avoidanceTime = Math.max(0, (worker.avoidanceTime || 0) - dt);
+    const delta = worker.avoidanceTarget.clone().sub(worker.m.position);
+    delta.y = 0;
+    const distance = delta.length();
+    if (distance <= 0.04 || worker.avoidanceTime === 0) {
+      worker.avoidanceTarget = null;
+      worker.avoidanceTime = 0;
+      return false;
+    }
+    const direction = delta.multiplyScalar(1 / distance);
+    const candidate = worker.m.position
+      .clone()
+      .addScaledVector(direction, Math.min(distance, step));
+    if (!this.workerCanStepTo(worker, candidate)) {
+      worker.waitingForSpace = true;
+      return true;
+    }
+    worker.m.position.copy(candidate);
+    worker.m.rotation.y = Math.atan2(direction.x, direction.z);
+    worker.waitingForSpace = false;
+    worker.waitingFor = null;
+    if (distance <= step) {
+      worker.avoidanceTarget = null;
+      worker.avoidanceTime = 0;
+    }
+    return true;
   }
   repathWorker(worker) {
     if (
@@ -3023,6 +3062,7 @@ export class Village {
       : 1;
     // The cap keeps a large simulation tick from jumping through a neighbour.
     const step = Math.min(dt * 1.5 * fast, WORKER_CLEARANCE * 0.62);
+    if (this.followAvoidance(w, step, dt)) return true;
     const direction = delta.multiplyScalar(1 / distance);
     const candidate = w.m.position
       .clone()
@@ -3035,10 +3075,15 @@ export class Village {
       const hasRightOfWay = this.workerHasRightOfWay(w, blocker);
       if (hasRightOfWay && blocker.path?.length) blocker.forcedYield = w.id;
       if (
-        (!hasRightOfWay || w.forcedYield || !blocker.path?.length) &&
-        this.avoidanceStep(w, direction, Math.max(0.12, step * 0.9))
-      )
+        (!hasRightOfWay ||
+          w.forcedYield ||
+          !blocker.path?.length ||
+          w.spaceWait >= WORKER_REPATH_SECONDS) &&
+        this.startAvoidance(w, direction)
+      ) {
+        this.followAvoidance(w, step, dt);
         return true;
+      }
       this.repathWorker(w);
       return false;
     }
@@ -3094,6 +3139,8 @@ export class Village {
         w.waitingFor = null;
         w.spaceWait = 0;
         w.forcedYield = null;
+        w.avoidanceTarget = null;
+        w.avoidanceTime = 0;
       }
       if (w.path.length) {
         this.moveWorker(w, dt);
