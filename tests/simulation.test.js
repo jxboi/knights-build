@@ -26,6 +26,9 @@ import {
   treeRegrowthProgress,
   treeGrowthStage,
   WORKER_CLEARANCE,
+  WORKER_TYPES,
+  workerTypeForBuilding,
+  workerCapacityForBuilding,
   Village,
 } from "../src/world.js";
 import {
@@ -72,6 +75,44 @@ test("placement rejects occupied sites, river, scenery, and insufficient resourc
   assert.match(v.valid(-8, -8, "house").reason, /resources/);
   assert.match(v.valid(-8, -8, "house").reason, /Need 30 wood \+ 10 stone/);
 });
+test("cleared resource nodes stop blocking placement until they are removed", () => {
+  const v = village();
+  const tree = {
+    type: "tree",
+    state: "regrowing",
+    claimedBy: null,
+    regrowAt: TREE_REGROW_SECONDS,
+    m: new THREE.Object3D(),
+    x: 0,
+    z: 0,
+    r: 0.5,
+  };
+  v.decor = [tree];
+  assert.equal(v.valid(0, 0, "house").ok, true);
+  assert.equal(v.routeBlocked(0, 0), false);
+
+  tree.state = "chopping";
+  assert.match(v.valid(0, 0, "house").reason, /Trees or rocks are in the way/);
+
+  tree.state = "regrowing";
+  tree.m.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)));
+  assert.equal(v.clearClearedDecorInFootprint(0, 0, 1.5), 1);
+  assert.equal(v.decor.length, 0);
+});
+test("mined or depleted stone nodes stop blocking roads and buildings", () => {
+  const v = village();
+  v.decor = [{
+    type: "rock",
+    state: "mined",
+    x: 0,
+    z: 0,
+    r: 0.6,
+    m: new THREE.Object3D(),
+  }];
+  assert.equal(v.valid(0, 0, "road").ok, true);
+  v.decor[0].state = "depleted";
+  assert.equal(v.valid(0, 0, "house").ok, true);
+});
 test("guided placement searches for the nearest clear site", () => {
   const v = village();
   v.buildings.push({ type: "house", x: 0, z: 3 });
@@ -93,6 +134,14 @@ test("successful building placement clears the active placement tool", () => {
     buildings: [],
     workers: [],
     created: {},
+    decor: [{
+      type: "tree",
+      state: "regrowing",
+      x: 0,
+      z: 0,
+      r: 0.5,
+      m: new THREE.Object3D(),
+    }],
     ensureAudio() {},
     playSound() {},
     addBuilding() {},
@@ -114,6 +163,7 @@ test("successful building placement clears the active placement tool", () => {
   assert.equal(placementComplete, 1);
   assert.equal(v.selected, null);
   assert.equal(v.placement, null);
+  assert.equal(v.decor.length, 0);
 });
 test("decorative building tools create a placement ghost without a loaded GLB", () => {
   const v = Object.create(Village.prototype);
@@ -326,6 +376,47 @@ test("worker assignment prefers the closest equally staffed work site", () => {
   v.simulate(0.1);
   assert.equal(w.building, near);
   assert.equal(w.phase, "travel");
+});
+test("production buildings enforce worker roles and employment caps", () => {
+  assert.equal(workerTypeForBuilding("lumberyard"), WORKER_TYPES.WOODCUTTER);
+  assert.equal(workerTypeForBuilding("mine"), WORKER_TYPES.MINER);
+  assert.equal(workerTypeForBuilding("farm"), WORKER_TYPES.FARMER);
+  assert.equal(workerTypeForBuilding("bakery"), WORKER_TYPES.BAKER);
+  assert.equal(workerCapacityForBuilding("lumberyard"), 2);
+  assert.equal(workerCapacityForBuilding("farm"), 1);
+  assert.equal(workerCapacityForBuilding("mine"), 1);
+  assert.equal(workerCapacityForBuilding("bakery"), 1);
+});
+test("a lumberyard employs two woodcutters and leaves the next worker a builder", () => {
+  const v = village();
+  const lumberyard = {
+    type: "lumberyard",
+    progress: 1,
+    x: 0,
+    z: 0,
+    cycles: 0,
+    m: new THREE.Object3D(),
+  };
+  v.buildings = [lumberyard];
+  v.route = () => true;
+  v.jobPoint = () => [0, 0];
+  const workers = Array.from({ length: 3 }, (_, index) => ({
+    id: `worker-${index}`,
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+  }));
+  workers.forEach((worker) => {
+    worker.m.position.set(0, 0, 0);
+    v.workers.push(worker);
+    v.assign(worker);
+  });
+  assert.equal(workers[0].workerType, WORKER_TYPES.WOODCUTTER);
+  assert.equal(workers[1].workerType, WORKER_TYPES.WOODCUTTER);
+  assert.equal(workers[2].workerType, WORKER_TYPES.BUILDER);
+  assert.equal(workers.filter((worker) => worker.building === lumberyard).length, 2);
 });
 test("lumberyard workers chop trees, saw planks, and wait for regrowth", () => {
   const v = village();
@@ -1077,6 +1168,8 @@ test("worker snapshots expose their task and carried goods", () => {
       phase: "deliver",
       waitingForInput: false,
       deliveryRetry: true,
+      workerType: "builder",
+      workerTypeLabel: "Builder",
       buildingType: "stone",
       carry: { resource: "stone", amount: 6 },
       workProgress: null,
@@ -1355,11 +1448,11 @@ test("saved population cannot exceed completed cottage housing", () => {
     { type: "house", progress: 0.6 },
     { type: "townhall", progress: 1 },
   ];
-  assert.equal(housingCapacity(buildings), 8);
-  assert.equal(safePopulation(24, housingCapacity(buildings)), 8);
-  assert.equal(safePopulation("not-a-number", 8), 8);
-  assert.equal(restoredPopulation(0, 8), 1);
-  assert.equal(restoredPopulation(24, 8), 8);
+  assert.equal(housingCapacity(buildings), 6);
+  assert.equal(safePopulation(24, housingCapacity(buildings)), 6);
+  assert.equal(safePopulation("not-a-number", 6), 6);
+  assert.equal(restoredPopulation(0, 6), 1);
+  assert.equal(restoredPopulation(24, 6), 6);
   assert.equal(restoredPopulation(0, 0), 0);
 });
 

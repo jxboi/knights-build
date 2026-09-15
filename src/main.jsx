@@ -46,6 +46,7 @@ import "./style.css";
 const resourceIcons = { wood: Trees, stone: Mountain, food: Croissant, wheat: Wheat };
 const formatCount = (value) =>
   Math.floor(Number(value) || 0).toLocaleString("en-US");
+const workerTypeOrder = ["Builder", "Woodcutter", "Miner", "Farmer", "Baker"];
 function timeOfDay(seconds = 0) {
   const cycle = ((seconds % 120) / 120 + 0.22) % 1;
   if (cycle < 0.18) return "Dawn";
@@ -131,7 +132,7 @@ function App() {
     name: "Willowbrook",
     resources: { wood: 140, stone: 95, food: 80, wheat: 0 },
     population: 8,
-    capacity: 16,
+    capacity: 10,
     day: 1,
     speed: 1,
     time: 0,
@@ -645,7 +646,7 @@ function App() {
   const activeEffect = moving
     ? "Choose a clear site · workers reroute automatically"
     : activeType === "house"
-      ? `+4 housing capacity · welcomes ${Math.min(2, Math.max(0, 24 - state.population))} villagers (simulation limit 24)`
+      ? `+2 housing capacity · houses ${Math.min(2, Math.max(0, 24 - state.population))} workers (simulation limit 24)`
       : active?.effect;
   const builtHouse = completedPlayerMilestone(
     state.buildings,
@@ -677,7 +678,7 @@ function App() {
     : {
         type: "house",
         label: "Build a cottage",
-        detail: "Make room for four more villagers at the edge of town.",
+        detail: "Make room for two more workers at the edge of town.",
       };
   const introActive = loaded && !state.tutorialDismissed && state.tutorialStep < 3;
   const tutorialAction =
@@ -778,6 +779,11 @@ function App() {
     (total, building) => total + (building.cycles || 0),
     0,
   );
+  const workerTypeCounts = state.workers.reduce((counts, worker) => {
+    const label = worker.workerTypeLabel || "Builder";
+    counts[label] = (counts[label] || 0) + 1;
+    return counts;
+  }, {});
   const savedPathCount = Number(state.created?.road);
   const pathCount = Number.isFinite(savedPathCount)
     ? Math.max(0, Math.floor(savedPathCount))
@@ -1405,13 +1411,17 @@ function App() {
           ) : (
             thumbs[detail.type] && <img src={thumbs[detail.type]} alt="" />
           )}
-          <h3 id="inspector-title">{detail.name}</h3>
+          <h3 id="inspector-title">
+            {detail.type === "worker"
+              ? inspectedWorker?.workerTypeLabel || detail.name
+              : detail.name}
+          </h3>
           <p>
             {detail.type === "worker"
               ? inspectedWorker
                 ? inspectedWorker.buildingType
                   ? `${inspectedWorkerStatus} at ${CATALOG[inspectedWorker.buildingType]?.name || "the village"}.`
-                  : "Taking a breather before the next assignment."
+                  : `${inspectedWorker.workerTypeLabel || "Builder"} is ready for the next structure.`
                 : "This villager is no longer in the settlement."
               : detail.description}
           </p>
@@ -1422,7 +1432,7 @@ function App() {
                 ? `Carrying ${inspectedWorker.carry.amount} ${inspectedWorker.carry.product || inspectedWorker.carry.resource}`
                 : inspectedWorker?.buildingType
                   ? `Assigned to ${CATALOG[inspectedWorker.buildingType]?.name || "the village"}`
-                  : "Ready for a new task"
+                  : "Automatically assigned as a builder"
               : detail.effect}
           </div>
           {detail.type !== "worker" &&
@@ -1498,14 +1508,22 @@ function App() {
               </strong>
             </span>
             {detail.type === "worker" ? (
-              <span>
-                Current task
+              <>
+                <span>
+                  Worker type
+                  <strong>{inspectedWorker?.workerTypeLabel || "Builder"}</strong>
+                </span>
+                <span>
+                  Current task
                 <strong>
                   {inspectedWorker?.buildingType
                     ? CATALOG[inspectedWorker.buildingType]?.name || "Village work"
-                    : "Unassigned"}
+                    : inspectedWorker?.workerTypeLabel === "Builder"
+                      ? "Construction pool"
+                      : "Unassigned"}
                 </strong>
-              </span>
+                </span>
+              </>
             ) : (
               <span>
                 Assigned workers<strong>{inspected?.workers || 0}</strong>
@@ -2248,6 +2266,14 @@ function App() {
                   <div><span>In transit</span><strong>{formatCount(state.inTransit)}</strong></div>
                   <div><span>Blocked sites</span><strong className={state.blockedSites ? "negative" : ""}>{formatCount(state.blockedSites)}</strong></div>
                 </div>
+                <div className="workforce-strip" aria-label="Worker types">
+                  <span className="workforce-heading">Workforce</span>
+                  {workerTypeOrder.map((type) => (
+                    <span key={type} className={`workforce-type ${type.toLowerCase()}`}>
+                      <i /> {type} <strong>{workerTypeCounts[type] || 0}</strong>
+                    </span>
+                  ))}
+                </div>
                 <div className="feast-panel">
                   <div>
                     <span className="overview-kicker"><Sparkles size={13} /> OPTIONAL SPENDING</span>
@@ -2292,10 +2318,10 @@ function App() {
                     {state.workers.slice(0, 4).map((worker, index) => (
                       <button
                         key={worker.id}
-                        aria-label={"Focus Villager " + (index + 1) + ". Current task: " + (worker.buildingType ? CATALOG[worker.buildingType]?.name || worker.buildingType : "Idle")}
+                        aria-label={"Focus " + (worker.workerTypeLabel || "Builder") + " " + (index + 1) + ". Current task: " + (worker.buildingType ? CATALOG[worker.buildingType]?.name || worker.buildingType : "Builder")}
                         onClick={() => { setOverview(false); game.current?.focusWorker(worker.id); }}
                       >
-                        <span>Villager {index + 1}</span><em>{worker.buildingType ? CATALOG[worker.buildingType]?.name : "Idle"}</em>
+                        <span>{worker.workerTypeLabel || "Builder"} {index + 1}</span><em>{worker.buildingType ? CATALOG[worker.buildingType]?.name : "Builder"}</em>
                       </button>
                     ))}
                   </div>

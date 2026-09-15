@@ -91,9 +91,9 @@ function popPriority(heap) {
 }
 export const DEFAULT_VILLAGE_NAME = "Willowbrook";
 export const MAX_POPULATION = 24;
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 export const GRAIN_GROW_SECONDS = 30;
-export const TREE_REGROW_SECONDS = 45;
+export const TREE_REGROW_SECONDS = 90;
 export const TREE_LOG_AMOUNT = 8;
 export const LUMBERYARD_PROCESS_SECONDS = 5;
 export const grainGrowthProgress = (plantedAt, elapsed) =>
@@ -160,12 +160,44 @@ export const sanitizeCameraView = (view) => {
     zoom: clamp(finiteNumber(view.zoom, 1), 0.65, 2.4),
   };
 };
+export const WORKER_TYPES = Object.freeze({
+  BUILDER: "builder",
+  WOODCUTTER: "woodcutter",
+  MINER: "miner",
+  FARMER: "farmer",
+  BAKER: "baker",
+});
+export const WORKER_TYPE_LABELS = Object.freeze({
+  [WORKER_TYPES.BUILDER]: "Builder",
+  [WORKER_TYPES.WOODCUTTER]: "Woodcutter",
+  [WORKER_TYPES.MINER]: "Miner",
+  [WORKER_TYPES.FARMER]: "Farmer",
+  [WORKER_TYPES.BAKER]: "Baker",
+});
+export const workerTypeForBuilding = (type) =>
+  ({
+    lumberyard: WORKER_TYPES.WOODCUTTER,
+    mine: WORKER_TYPES.MINER,
+    farm: WORKER_TYPES.FARMER,
+    bakery: WORKER_TYPES.BAKER,
+    // Keep the existing windmill production loop useful while sharing the
+    // baker appearance and role with the village's food-processing buildings.
+    windmill: WORKER_TYPES.BAKER,
+  })[type] || null;
+export const workerCapacityForBuilding = (type) =>
+  ({
+    lumberyard: 2,
+    farm: 1,
+    mine: 1,
+    bakery: 1,
+    windmill: 1,
+  })[type] || 0;
 export const housingCapacity = (buildings = []) =>
   4 +
   buildings.filter(
     (building) => building?.type === "house" && building.progress === 1,
   ).length *
-    4;
+    2;
 export const safePopulation = (value, capacity, fallback = 8) =>
   Math.min(
     MAX_POPULATION,
@@ -1567,10 +1599,40 @@ export class Village {
       this.decor?.some(
         (decor) =>
           decor !== ignoreDecor &&
+          this.decorBlocksMovement(decor) &&
           Math.abs(x - decor.x) < 0.45 + decor.r &&
           Math.abs(z - decor.z) < 0.45 + decor.r,
       ),
     );
+  }
+  decorBlocksMovement(decor) {
+    return !this.clearedResourceNode(decor);
+  }
+  clearedResourceNode(decor) {
+    if (!decor || !decor.type) return false;
+    if (decor.type === "tree") return decor.state === "regrowing";
+    if (decor.type === "rock")
+      return ["mined", "depleted", "cleared", "regrowing"].includes(
+        decor.state,
+      );
+    return false;
+  }
+  clearClearedDecorInFootprint(x, z, halfSize) {
+    const cleared = this.decor?.filter(
+      (decor) =>
+        this.clearedResourceNode(decor) &&
+        Math.abs(x - decor.x) < halfSize + decor.r &&
+        Math.abs(z - decor.z) < halfSize + decor.r,
+    ) || [];
+    for (const decor of cleared) {
+      this.disposeOwnedObject(decor.m);
+      const index = this.decor.indexOf(decor);
+      if (index >= 0) this.decor.splice(index, 1);
+    }
+    if (cleared.length) this.swayers = (this.swayers || []).filter((mesh) =>
+      cleared.every((decor) => decor.m !== mesh),
+    );
+    return cleared.length;
   }
   workerPriority(worker) {
     const index = this.workers.indexOf(worker);
@@ -1718,7 +1780,10 @@ export class Village {
       return { ok: false, reason: "There is already a path here." };
     if (
       this.decor.some(
-        (d) => Math.abs(x - d.x) < n + d.r && Math.abs(z - d.z) < n + d.r,
+        (d) =>
+          this.decorBlocksMovement(d) &&
+          Math.abs(x - d.x) < n + d.r &&
+          Math.abs(z - d.z) < n + d.r,
       )
     )
       return { ok: false, reason: "Trees or rocks are in the way." };
@@ -2014,6 +2079,7 @@ export class Village {
       moving.z = p.z;
       moving.rotation = this.rotation;
       moving.m.position.set(p.x, 0, p.z);
+      this.clearClearedDecorInFootprint(p.x, p.z, CATALOG[type].size / 2);
       for (const worker of this.workers) {
         if (worker.building !== moving) continue;
         worker.building = null;
@@ -2033,6 +2099,7 @@ export class Village {
       this.resources[r] -= v;
     if (type === "road") {
       this.addRoad(p.x, p.z);
+      this.clearClearedDecorInFootprint(p.x, p.z, CATALOG[type].size / 2);
       const pathMessage = "A new path for wandering feet.";
       this.announce(pathMessage);
       this.notify(pathMessage);
@@ -2045,6 +2112,7 @@ export class Village {
         this.rotation,
         CATALOG[type].decoration ? 1 : 0,
       );
+      this.clearClearedDecorInFootprint(p.x, p.z, CATALOG[type].size / 2);
       this.created[type] = (this.created[type] || 0) + 1;
       const plannedMessage = type === "grainfield"
         ? "Grain planted. The first shoots will appear soon."
@@ -2085,11 +2153,11 @@ export class Village {
       if (w) {
         this.onSelect({
           type: "worker",
-          name: "Village worker",
-          description: `A willing pair of hands helping ${this.name} grow.`,
+          name: WORKER_TYPE_LABELS[w.workerType] || "Builder",
+          description: `${WORKER_TYPE_LABELS[w.workerType] || "Builder"} helping ${this.name} grow.`,
           effect: w.building
             ? `Assigned to ${CATALOG[w.building.type]?.name || "the village"}`
-            : "Ready for a new task",
+            : "Ready to build the next structure",
           workerId: w.id,
         });
         this.highlightWorker(w);
@@ -2643,10 +2711,120 @@ export class Village {
     axe.rotation.z = -0.6;
     axe.visible = false;
     rightArm.add(axe);
+    const makeTool = (headWidth, headHeight) => {
+      const tool = new THREE.Group();
+      const handle = part(
+        new THREE.BoxGeometry(0.035, 0.34, 0.035),
+        materials.wood,
+      );
+      handle.position.y = -0.17;
+      tool.add(handle);
+      const head = part(
+        new THREE.BoxGeometry(headWidth, headHeight, 0.035),
+        materials.dark,
+      );
+      head.position.set(0.035, -0.02, 0);
+      tool.add(head);
+      tool.position.set(0, -0.31, -0.05);
+      tool.rotation.z = -0.6;
+      tool.visible = false;
+      return tool;
+    };
+    const hammer = makeTool(0.14, 0.08);
+    leftArm.add(hammer);
+    const pickaxe = makeTool(0.2, 0.045);
+    pickaxe.rotation.z = -0.95;
+    rightArm.add(pickaxe);
+    const farmerBrim = part(
+      new THREE.CylinderGeometry(0.18, 0.18, 0.035, 8),
+      materials.cream,
+    );
+    farmerBrim.position.y = 0.9;
+    farmerBrim.visible = false;
+    rig.add(farmerBrim);
+    const bakerApron = part(
+      new THREE.BoxGeometry(0.18, 0.21, 0.025),
+      materials.cream,
+    );
+    bakerApron.position.set(0, 0.51, -0.09);
+    bakerApron.visible = false;
+    rig.add(bakerApron);
     const leftLeg = makeLeg(-0.075);
     const rightLeg = makeLeg(0.075);
     m.add(rig);
-    return { rig, leftArm, rightArm, leftLeg, rightLeg, axe };
+    return {
+      rig,
+      leftArm,
+      rightArm,
+      leftLeg,
+      rightLeg,
+      axe,
+      hammer,
+      pickaxe,
+      farmerBrim,
+      bakerApron,
+      cap,
+      materials,
+    };
+  }
+  setWorkerType(worker, type = WORKER_TYPES.BUILDER) {
+    const workerType = WORKER_TYPE_LABELS[type]
+      ? type
+      : WORKER_TYPES.BUILDER;
+    if (!worker) return workerType;
+    if (!worker.rig) {
+      worker.workerType = workerType;
+      return workerType;
+    }
+    const palette = {
+      [WORKER_TYPES.BUILDER]: {
+        tunic: "#4167a2",
+        cap: "#e1c386",
+        dark: "#201d19",
+        shoe: "#70452b",
+      },
+      [WORKER_TYPES.WOODCUTTER]: {
+        tunic: "#7c4e31",
+        cap: "#d2a261",
+        dark: "#29231d",
+        shoe: "#5c3824",
+      },
+      [WORKER_TYPES.MINER]: {
+        tunic: "#5f666e",
+        cap: "#b4bbb6",
+        dark: "#30343a",
+        shoe: "#45484a",
+      },
+      [WORKER_TYPES.FARMER]: {
+        tunic: "#6e8651",
+        cap: "#d6b04e",
+        dark: "#3e3a25",
+        shoe: "#67482b",
+      },
+      [WORKER_TYPES.BAKER]: {
+        tunic: "#b85f55",
+        cap: "#f0d8b5",
+        dark: "#43302c",
+        shoe: "#70452b",
+      },
+    }[workerType];
+    const materials = worker.rig.materials;
+    materials.tunic.color.set(palette.tunic);
+    materials.cream.color.set(palette.cap);
+    materials.dark.color.set(palette.dark);
+    materials.wood.color.set(palette.shoe);
+    worker.rig.cap.scale.set(
+      workerType === WORKER_TYPES.MINER ? 1.12 : 1,
+      workerType === WORKER_TYPES.FARMER ? 0.86 : 1,
+      workerType === WORKER_TYPES.MINER ? 1.12 : 1,
+    );
+    worker.rig.axe.visible = false;
+    worker.rig.hammer.visible = workerType === WORKER_TYPES.BUILDER;
+    worker.rig.pickaxe.visible = workerType === WORKER_TYPES.MINER;
+    worker.rig.farmerBrim.visible = workerType === WORKER_TYPES.FARMER;
+    worker.rig.bakerApron.visible = workerType === WORKER_TYPES.BAKER;
+    worker.workerType = workerType;
+    return workerType;
   }
   addWorker() {
     const preferredX = rand() * 2 - 1;
@@ -2694,7 +2872,9 @@ export class Village {
       deadlockYieldTime: 0,
       deadlockYieldTo: null,
       rig,
+      workerType: WORKER_TYPES.BUILDER,
     };
+    this.setWorkerType(w, WORKER_TYPES.BUILDER);
     m.userData.worker = w;
     const hitbox = new THREE.Mesh(
       new THREE.SphereGeometry(0.48, 8, 6),
@@ -2991,6 +3171,8 @@ export class Village {
     );
   }
   assign(w) {
+    if (!WORKER_TYPE_LABELS[w.workerType])
+      this.setWorkerType(w, WORKER_TYPES.BUILDER);
     w.waitingForSpace = false;
     w.waitingFor = null;
     w.spaceWait = 0;
@@ -2998,7 +3180,11 @@ export class Village {
     w.avoidanceTarget = null;
     w.avoidanceTime = 0;
     const workerLoad = (building) =>
-      this.workers.filter((v) => v !== w && v.building === building).length;
+      this.workers.filter(
+        (v) =>
+          v !== w &&
+          (v.building === building || v.field === building),
+      ).length;
     const distanceToJob = (building) => {
       const ripeField =
         building.type === "farm"
@@ -3029,11 +3215,27 @@ export class Village {
       (b) =>
         b.progress === 1 &&
         CATALOG[b.type]?.resource &&
+        workerTypeForBuilding(b.type) &&
+        workerLoad(b) < workerCapacityForBuilding(b.type) &&
         !b.paused &&
         (b.type !== "farm" || this.readyGrainFields(b).length > 0),
     );
-    const candidates = [...construction, ...sites.sort(compareJobs)];
+    const employedSites = sites
+      .filter((building) => workerTypeForBuilding(building.type) === w.workerType)
+      .sort(compareJobs);
+    const candidates =
+      w.workerType === WORKER_TYPES.BUILDER
+        ? [...construction, ...sites.sort(compareJobs)]
+        : [...employedSites, ...construction];
     for (const b of candidates) {
+      const productionType = workerTypeForBuilding(b.type);
+      if (
+        b.progress === 1 &&
+        (!productionType ||
+          workerLoad(b) >= workerCapacityForBuilding(b.type) ||
+          (w.workerType !== WORKER_TYPES.BUILDER && productionType !== w.workerType))
+      )
+        continue;
       const material = b.progress < 1 ? this.nextConstructionMaterial(b) : null;
       const forestTrees = (this.decor || []).filter((decor) => decor.type === "tree");
       const tree = !material && b.type === "lumberyard" && forestTrees.length
@@ -3075,6 +3277,12 @@ export class Village {
       if (field) field.claimedBy = w.id;
       if (tree) tree.claimedBy = w.id;
       w.materialResource = material;
+      this.setWorkerType(
+        w,
+        material || b.progress < 1
+          ? WORKER_TYPES.BUILDER
+          : productionType || WORKER_TYPES.BUILDER,
+      );
       w.phase = material ? "material_pickup" : "travel";
       w.waitingForSpace = false;
       return;
@@ -3097,6 +3305,7 @@ export class Village {
     }
     w.phase = "idle";
     w.building = null;
+    this.setWorkerType(w, WORKER_TYPES.BUILDER);
     w.waitingForSpace = false;
     w.timer = candidates.length ? 2 : 0;
   }
@@ -3954,6 +4163,8 @@ export class Village {
           waitingForInput: !!w.waitingForInput,
           ...(w.waitingForSpace ? { waitingForSpace: true } : {}),
           deliveryRetry: w.deliveryRetry > 0,
+          workerType: w.workerType || WORKER_TYPES.BUILDER,
+          workerTypeLabel: WORKER_TYPE_LABELS[w.workerType] || "Builder",
           buildingType: w.building?.type || null,
           carry: w.carry ? { ...w.carry } : null,
           workProgress: work.progress,
@@ -4196,11 +4407,11 @@ export class Village {
     this.controls.update();
     this.onSelect?.({
       type: "worker",
-      name: "Village worker",
-      description: `A willing pair of hands helping ${this.name} grow.`,
+      name: WORKER_TYPE_LABELS[worker.workerType] || "Builder",
+      description: `${WORKER_TYPE_LABELS[worker.workerType] || "Builder"} helping ${this.name} grow.`,
       effect: worker.building
         ? `Assigned to ${CATALOG[worker.building.type]?.name || "the village"}`
-        : "Ready for a new task",
+        : "Ready to build the next structure",
       workerId: worker.id,
     });
     this.highlightWorker(worker);
@@ -4250,7 +4461,8 @@ export class Village {
           ((chopping ? -0.72 : gait * 0.3) - w.rig.rightArm.rotation.x) *
           0.35;
         if (w.rig.axe) {
-          w.rig.axe.visible = chopping;
+          w.rig.axe.visible =
+            w.workerType === WORKER_TYPES.WOODCUTTER && chopping;
           if (chopping) {
             const swing = Math.max(0, Math.sin(t * 7.5 + w.walkPhase));
             w.rig.axe.rotation.z = -0.7 + swing * 1.75;

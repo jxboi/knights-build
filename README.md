@@ -52,7 +52,7 @@ The numbered cards match the keyboard shortcuts:
 
 | Key | Building | Cost | Effect |
 | --- | --- | --- | --- |
-| 1 | Cottage | 30 wood · 10 stone | +4 housing capacity; welcomes up to 2 villagers when complete |
+| 1 | Cottage | 30 wood · 10 stone | +2 housing capacity; houses up to 2 workers when complete |
 | 2 | Well | 15 wood · 25 stone | Village gathering place |
 | 3 | Farmhouse | 25 wood · 5 stone | Farmers harvest connected ripe fields |
 | 4 | Grain field | 1 food per tile | Grows in 30 seconds, then yields 8 food |
@@ -61,6 +61,8 @@ The numbered cards match the keyboard shortcuts:
 | 7 | Windmill | 50 wood · 35 stone | Converts 2 food into 8 food per cycle |
 | 8 | Watchtower | 45 wood · 20 stone | Expands the buildable boundary by 3 tiles |
 | 9 | Path | 1 stone per tile | Villagers move 50% faster on paths |
+
+Workers are assigned automatically. Builders handle construction, while lumberyards employ up to 2 woodcutters, and farms, mines, and bakeries employ up to 1 farmer, miner, or baker respectively. Windmills use one baker slot for their existing food-processing loop. Any worker without a production job remains a builder. Each completed cottage houses 2 workers.
 
 The starter village includes a town hall and several completed structures. Player-built cottages, farms, and delivered timber count toward the three starter milestones. Completing all three produces a one-time flourishing acknowledgement.
 
@@ -82,7 +84,7 @@ Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment ser
 
 1. **World:** grassy terrain with subtle color variation → toggleable 1-unit grid → orthographic pan/zoom/orbit camera → warm sunlight and shadows → a readable morning-to-night light cycle with dusk lanterns → animated foliage, water highlights, ambient motes, distant birds, and paths with faster movement → curved river, ripples, rocks, reeds, and a wooden landing.
 2. **Assets:** pine trees → faceted rocks → timber fences → cottages → masonry well → wheat farm → lumberyard → rocky mine → rotating windmill → watchtower. Includes a central village hall and workers.
-3. **Simulation:** workers → balanced job assignment → obstacle-aware grid routing → automatic work and construction jobs → renewable tree harvesting → Lumberyard log delivery and plank sawing → wood/stone/food storage → timed production with visible carried goods, delivery bursts, and activity feedback at the town hall. Chopped trees regrow after a short delay. Farms deliver wheat to storage. Bakeries turn 4 wheat into 8 bread (added to food) per 16-second work cycle and wait when wheat is unavailable. Windmills require food input. Cottages add housing and welcome two workers, up to 24 simulated villagers. Completing the three starter goals gets a one-time flourishing acknowledgement.
+3. **Simulation:** workers → balanced job assignment → obstacle-aware grid routing → automatic work and construction jobs → renewable tree harvesting → Lumberyard log delivery and plank sawing → wood/stone/food storage → timed production with visible carried goods, delivery bursts, and activity feedback at the town hall. Chopped trees regrow after 90 seconds. Farms deliver wheat to storage. Bakeries turn 4 wheat into 8 bread (added to food) per 16-second work cycle and wait when wheat is unavailable. Windmills require food input. Cottages add housing and welcome two workers, up to 24 simulated villagers. Completing the three starter goals gets a one-time flourishing acknowledgement.
 4. **Building:** choose a building → translucent grid-snapped preview → validate land, obstacles, resources, and footprint → place and pay → a worker travels to the site → scaffolding and rising geometry show construction → the finished building joins the village simulation.
 
 ## Controls

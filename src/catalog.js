@@ -3,8 +3,8 @@ export const CATALOG = {
     name: "Cottage",
     size: 3,
     cost: { wood: 30, stone: 10 },
-    description: "A warm hearth and room for four more villagers.",
-    effect: "+4 housing capacity · welcomes 2 villagers (simulation limit 24)",
+    description: "A warm hearth and room for two more workers.",
+    effect: "+2 housing capacity · houses 2 workers (simulation limit 24)",
     seconds: 12,
   },
   well: {

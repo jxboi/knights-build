@@ -1545,6 +1545,43 @@ h1 span {
 .economy-strip strong.negative {
   color: #b16d4e;
 }
+.workforce-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 11px;
+  margin: -7px 0 17px;
+  color: #8b7b62;
+  font-size: 7px;
+}
+.workforce-heading {
+  width: 100%;
+  color: #9b8c74;
+  font-size: 7px;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+}
+.workforce-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.workforce-type i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4167a2;
+}
+.workforce-type.woodcutter i { background: #7c4e31; }
+.workforce-type.miner i { background: #5f666e; }
+.workforce-type.farmer i { background: #6e8651; }
+.workforce-type.baker i { background: #b85f55; }
+.workforce-type strong {
+  color: #665b45;
+  font-size: 8px;
+  font-weight: 600;
+}
 .feast-panel {
   display: flex;
   align-items: center;
