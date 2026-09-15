@@ -123,6 +123,61 @@ def bakery():
  beam('Sign bracket',(1.02,-1.03,2.12),(1.02,-1.48,2.12),.055,'wood')
  cube('Bakery sign',(1.02,-1.50,1.88),(.34,.07,.30),'roof')
  ico('Sign loaf',(1.02,-1.55,1.88),(.14,.022,.06),'cream')
+def inn():
+ # A compact half-timbered coaching inn based on the reference: two stories,
+ # red tile roof, open frontage, striped awning, hanging sign and outdoor tables.
+ cube('Inn foundation',(0,0,.10),(3.55,2.55,.20),'stoneBlue')
+ cube('Ground floor',(0,.05,.86),(3.35,2.35,1.52),'stoneLight')
+ cube('Upper floor',(0,.10,2.00),(3.55,2.45,1.05),'plaster')
+ cube('Upper floor ledge',(0,-1.20,1.49),(3.70,.16,.16),'timber')
+ roof(3.95,2.95,2.56,1.22,'roof',.10)
+
+ # Heavy oak framing keeps the pale plaster bays readable at game scale.
+ for x in [-1.66,-.55,.55,1.66]:
+  cube('Front upright',(x,-1.145,2.00),(.10,.10,1.05),'wood')
+ for z in [1.52,2.48]:cube('Front crossbeam',(0,-1.15,z),(3.45,.10,.10),'wood')
+ for x in [-1.08,0,1.08]:
+  beam('Front diagonal',(x-.42,-1.26,1.55),(x+.42,-1.26,2.45),.065,'timber')
+ for x in [-1.10,0,1.10]:
+  cube('Upper window frame',(x,-1.235,2.03),(.30,.055,.36),'timber')
+  cube('Upper window glass',(x,-1.27,2.03),(.20,.025,.26),'dark')
+  cube('Window mullion',(x,-1.30,2.03),(.025,.02,.25),'cream')
+
+ # The ground floor reads as an open tavern front, with a warm service counter.
+ cube('Tavern opening',(-.40,-1.205,.86),(1.82,.05,.92),'dark')
+ cube('Inn door',(1.10,-1.23,.78),(.62,.06,1.30),'wood')
+ cube('Door inset',(1.10,-1.275,.78),(.46,.025,1.12),'timber')
+ cyl('Door handle',(1.28,-1.32,.82),.035,.06,'wheat')
+ cube('Serving counter',(-.42,-1.42,.72),(1.86,.42,.16),'cut')
+ for x in [-1.18,.32]:cube('Counter post',(x,-1.42,.38),(.10,.10,.60),'wood')
+ for x in [-1.05,-.62,-.18,.20]:ico('Bread on counter',(x,-1.66,.86),(.13,.08,.06),'wheatLight')
+
+ # Red-and-cream market awning, echoing the striped canopy in the reference.
+ cube('Awning beam',(-.42,-1.64,1.47),(2.22,.10,.10),'wood')
+ for i in range(6):
+  x=-1.34+i*.37
+  canopy=cube('Awning stripe',(x,-1.58,1.56),(.34,.82,.055),'cream' if i%2 else 'roof')
+  canopy.rotation_euler.x=-.18
+ for x in [-1.48,.64]:cube('Awning post',(x,-1.92,.73),(.08,.08,1.38),'wood')
+
+ # A projecting sign, casks and crates give the silhouette a lively roadside feel.
+ beam('Inn sign bracket',(1.52,-1.18,2.38),(1.52,-1.72,2.38),.055,'wood')
+ beam('Inn sign chain',(1.52,-1.69,2.38),(1.52,-1.69,2.12),.022,'dark')
+ cube('Inn sign',(1.52,-1.70,1.94),(.38,.07,.36),'blue')
+ ico('Inn sign mark',(1.52,-1.75,1.94),(.11,.022,.11),'wheatLight')
+ for x,z in [(1.52,.34),(1.20,.26)]:
+  barrel=cyl('Ale cask',(x,-1.48,z),.24,.56,'timber',10,.21);barrel.rotation_euler.x=math.pi/2
+  for yy in [-1.70,-1.26]:
+   ring=cyl('Cask band',(x,yy,z),.255,.035,'stone',10,.245);ring.rotation_euler.x=math.pi/2
+ cube('Inn crate',(1.48,-1.86,.20),(.48,.42,.40),'cut')
+
+ # Three clear seats line up with the runtime meal points.
+ for x in [-1.05,0,1.05]:
+  cube('Dining table',(x,-1.66,.58),(.72,.46,.10),'timber')
+  cube('Table leg',(x,-1.66,.30),(.10,.10,.52),'wood')
+  cube('Dining bench',(x,-1.98,.40),(.72,.22,.10),'cut')
+  for bx in [x-.25,x+.25]:cube('Bench leg',(bx,-1.98,.20),(.07,.07,.36),'wood')
+  ico('Table loaf',(x,-1.66,.68),(.12,.08,.055),'wheatLight')
 def tree():
  cyl('Trunk',(0,0,.65),.19,1.3,'wood',6)
  for z,r,d in [(1.4,.93,1.45),(2.07,.74,1.35),(2.66,.48,1.2)]:cyl('Pine',(0,0,z),r,d,'leaf' if z<2 else 'leafLight',5,0)
@@ -212,7 +267,7 @@ def worker():
  cube('Tunic',(0,0,.51),(.23,.16,.3),'blue');ico('Head',(0,0,.79),(.115,.1,.13),'skin');cyl('Cap',(0,0,.9),.13,.12,'cream',6,.11)
  for x in [-.075,.075]:beam('Leg',(x,0,.10),(x,0,.38),.08,'dark');cube('Shoe',(x,-.035,.07),(.09,.17,.09),'wood')
  for x in [-.16,.16]:beam('Arm',(x,0,.62),(x,-.02,.36),.07,'cream');ico('Hand',(x,-.02,.33),(.055,.055,.06),'skin')
-assets={'tree':tree,'rock':rock,'fence':fence,'house':house,'bakery':bakery,'well':well,'farm':farm,'grainfield':lambda:grainfield('ripe'),'grainfield_sown':lambda:grainfield('sown'),'grainfield_sprout':lambda:grainfield('sprout'),'grainfield_growing':lambda:grainfield('growing'),'grainfield_ripe':lambda:grainfield('ripe'),'lumberyard':lumberyard,'mine':mine,'windmill':windmill,'watchtower':watchtower,'townhall':townhall,'worker':worker}
+assets={'tree':tree,'rock':rock,'fence':fence,'house':house,'bakery':bakery,'inn':inn,'well':well,'farm':farm,'grainfield':lambda:grainfield('ripe'),'grainfield_sown':lambda:grainfield('sown'),'grainfield_sprout':lambda:grainfield('sprout'),'grainfield_growing':lambda:grainfield('growing'),'grainfield_ripe':lambda:grainfield('ripe'),'lumberyard':lumberyard,'mine':mine,'windmill':windmill,'watchtower':watchtower,'townhall':townhall,'worker':worker}
 only_asset=os.environ.get("ONLY_ASSET")
 if only_asset: assets={only_asset:assets[only_asset]}
 for name,fn in assets.items():

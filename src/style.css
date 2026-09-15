@@ -785,7 +785,7 @@ h1 span {
 .build-palette {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-columns: repeat(14, minmax(0, 1fr));
   padding: 7px;
   gap: 4px;
   background: linear-gradient(135deg, #fbf7ebef, #eee4cef7);
@@ -1274,6 +1274,9 @@ h1 span {
 }
 .inspector-state.waiting-for-food strong {
   color: #b16d4e;
+}
+.hunger-progress span {
+  background: linear-gradient(90deg, #b69248, #b16d4e);
 }
 .inspector-state.paused strong {
   color: #b16d4e;

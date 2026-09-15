@@ -42,6 +42,14 @@ export const CATALOG = {
     inputResource: "wheat",
     seconds: 16,
   },
+  inn: {
+    name: "Inn",
+    size: 4,
+    cost: { wood: 55, stone: 25 },
+    description: "A welcoming table where hungry villagers share fresh bread.",
+    effect: "Receives bread from bakeries · seats 3 hungry workers",
+    seconds: 18,
+  },
   grainfield: {
     name: "Grain field",
     size: 1,

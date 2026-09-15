@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
+import { CATALOG } from "../src/catalog.js";
 import {
   finiteNumber,
   housingCapacity,
@@ -23,6 +24,9 @@ import {
   TREE_REGROW_SECONDS,
   TREE_LOG_AMOUNT,
   LUMBERYARD_PROCESS_SECONDS,
+  HUNGRY_THRESHOLD,
+  EAT_SECONDS,
+  MEAL_SATIETY,
   treeRegrowthProgress,
   treeGrowthStage,
   WORKER_CLEARANCE,
@@ -625,6 +629,7 @@ test("a farmer harvests only ripe connected grain and carries it to the hall", (
 test("a baker enters the bakery before starting a production cycle", () => {
   const v = village();
   const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0, paused: false };
+  const inn = { id: "inn-1", type: "inn", progress: 1, x: 10, z: 6, cycles: 0, paused: false, breadStock: 0 };
   const worker = {
     id: "worker-baker",
     m: new THREE.Object3D(),
@@ -636,7 +641,7 @@ test("a baker enters the bakery before starting a production cycle", () => {
     workerType: WORKER_TYPES.BAKER,
   };
   const routeCalls = [];
-  v.buildings = [bakery];
+  v.buildings = [bakery, inn];
   v.workers = [worker];
   v.route = (_worker, x, z, ignoredBuilding) => {
     routeCalls.push({ x, z, ignoredBuilding });
@@ -1211,6 +1216,8 @@ test("worker snapshots expose their task and carried goods", () => {
       workerTypeLabel: "Builder",
       buildingType: "stone",
       carry: { resource: "stone", amount: 6 },
+      hunger: 0,
+      hungry: false,
       workProgress: null,
       workRemaining: null,
     },
@@ -1245,7 +1252,7 @@ test("save numeric fields reject missing values without erasing defaults", () =>
   assert.equal(finiteNumber("not-a-number", 7), 7);
 });
 
-test("save keeps delivery history as safe whole-number building totals", () => {
+test("save keeps delivery history, Inn stock, and worker hunger safely bounded", () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const storage = {
     value: "",
@@ -1263,7 +1270,7 @@ test("save keeps delivery history as safe whole-number building totals", () => {
       ready: true,
       name: "Willowbrook",
       resources: { wood: 100, stone: 100, food: 100, wheat: 0 },
-      workers: [],
+      workers: [{ hunger: 0.73 }],
       elapsed: 12,
       created: {},
       gathered: 8,
@@ -1273,6 +1280,7 @@ test("save keeps delivery history as safe whole-number building totals", () => {
       buildings: [
         { type: "mine", x: 1, z: 1, rotation: 0, progress: 1, cycles: 7.8 },
         { type: "farm", x: 4, z: 4, rotation: 0, progress: 1, cycles: -3 },
+        { type: "inn", x: 8, z: 4, rotation: 0, progress: 1, cycles: 4, breadStock: 12.9 },
       ],
       notify() {},
       storageAvailable: true,
@@ -1287,8 +1295,10 @@ test("save keeps delivery history as safe whole-number building totals", () => {
     const saved = JSON.parse(storage.value);
     assert.deepEqual(
       saved.buildings.map((building) => building.cycles),
-      [7, 0],
+      [7, 0, 4],
     );
+    assert.equal(saved.buildings[2].breadStock, 12);
+    assert.deepEqual(saved.workerNeeds, [{ hunger: 0.73 }]);
     assert.deepEqual(saved.activityLog, ["Wood +8 delivered to the hall."]);
     assert.deepEqual(saved.roads, ["2,2"]);
     assert.deepEqual(saved.view, {
@@ -1856,11 +1866,12 @@ test("feasts spend food and pause controls release current workers", () => {
 });
 
 
-test("bakery waits for wheat, consumes one recipe, and delivers bread as food", () => {
+test("bakery waits for wheat, then delivers bread to the Inn", () => {
   const v = village();
   const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0 };
+  const inn = { id: "inn-1", type: "inn", progress: 1, x: 10, z: 6, cycles: 0, paused: false, breadStock: 0 };
   const worker = { m: new THREE.Object3D(), path: [], phase: "work", timer: 0, building: bakery };
-  v.buildings = [bakery];
+  v.buildings = [bakery, inn];
   v.workers = [worker];
   v.route = () => true;
   v.showCarry = () => {};
@@ -1874,10 +1885,158 @@ test("bakery waits for wheat, consumes one recipe, and delivers bread as food", 
   v.simulate(4);
   assert.equal(worker.waitingForInput, false);
   assert.equal(v.resources.wheat, 4);
-  assert.deepEqual(worker.carry, { resource: "food", amount: 8 });
+  assert.deepEqual(worker.carry, {
+    resource: "food",
+    amount: 8,
+    product: "bread",
+    destinationId: "inn-1",
+  });
   assert.equal(v.resources.food, 100);
   v.simulate(.1);
   assert.equal(v.resources.food, 108);
+  assert.equal(inn.breadStock, 8);
   assert.equal(v.resources.wheat, 4);
   assert.equal(bakery.cycles, 1);
+});
+
+test("bakery does not consume wheat until a completed Inn is available", () => {
+  const v = village();
+  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0 };
+  const worker = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "work",
+    timer: 0,
+    building: bakery,
+  };
+  v.resources.wheat = 8;
+  v.buildings = [bakery];
+  v.workers = [worker];
+  v.simulate(1);
+  assert.equal(worker.waitingForInn, true);
+  assert.equal(worker.carry, undefined);
+  assert.equal(v.resources.wheat, 8);
+});
+
+test("hungry workers reserve an Inn seat, eat one bread, and return satisfied", () => {
+  const v = village();
+  const inn = {
+    id: "inn-1",
+    type: "inn",
+    progress: 1,
+    x: 6,
+    z: 6,
+    rotation: 0,
+    cycles: 0,
+    paused: false,
+    breadStock: 3,
+  };
+  const worker = {
+    id: "worker-hungry",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+    hunger: HUNGRY_THRESHOLD,
+  };
+  v.buildings = [inn];
+  v.workers = [worker];
+  v.route = () => true;
+  v.assign(worker);
+  assert.equal(worker.phase, "eat_travel");
+  assert.equal(worker.building, inn);
+  assert.equal(worker.mealSeat, 0);
+  v.simulate(0.1);
+  assert.equal(worker.phase, "eat");
+  assert.equal(inn.breadStock, 2);
+  assert.equal(v.resources.food, 99);
+  v.simulate(EAT_SECONDS);
+  assert.equal(worker.phase, "idle");
+  assert.equal(worker.hunger, MEAL_SATIETY);
+  assert.equal(inn.cycles, 1);
+});
+
+test("bread already served to a seated diner does not reserve the remaining pantry stock", () => {
+  const v = village();
+  const inn = {
+    id: "inn-1",
+    type: "inn",
+    progress: 1,
+    x: 6,
+    z: 6,
+    rotation: 0,
+    paused: false,
+    breadStock: 1,
+  };
+  const seated = {
+    m: new THREE.Object3D(),
+    phase: "eat",
+    building: inn,
+    mealSeat: 0,
+  };
+  const hungry = {
+    m: new THREE.Object3D(),
+    phase: "idle",
+    building: null,
+    hunger: HUNGRY_THRESHOLD,
+  };
+  v.buildings = [inn];
+  v.workers = [seated, hungry];
+  v.resources.food = 0;
+  assert.equal(v.availableInnFor(hungry), undefined);
+  v.resources.food = 1;
+  const meal = v.availableInnFor(hungry);
+  assert.equal(meal.inn, inn);
+  assert.equal(meal.seat, 1);
+  assert.equal(meal.availableBread, 1);
+});
+
+test("the real route loop carries Bakery bread to the Inn and serves a meal", () => {
+  const v = village();
+  const bakery = {
+    id: "bakery-1",
+    type: "bakery",
+    progress: 1,
+    x: 4,
+    z: 4,
+    cycles: 0,
+    paused: false,
+    m: new THREE.Object3D(),
+  };
+  const inn = {
+    id: "inn-1",
+    type: "inn",
+    progress: 1,
+    x: 10,
+    z: 4,
+    rotation: 0,
+    cycles: 0,
+    paused: false,
+    breadStock: 0,
+    m: new THREE.Object3D(),
+  };
+  const worker = {
+    id: "worker-route",
+    movementPriority: 0,
+    workerType: WORKER_TYPES.BUILDER,
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    workDuration: 0,
+    building: null,
+    carry: null,
+    hunger: 0.95,
+  };
+  v.resources.wheat = 40;
+  v.buildings = [bakery, inn];
+  v.workers = [worker];
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+  for (let step = 0; step < 900; step++) v.simulate(0.1);
+  assert.ok(bakery.cycles >= 1);
+  assert.ok(inn.cycles >= 1);
+  assert.ok(v.delivered.food >= CATALOG.bakery.amount);
 });

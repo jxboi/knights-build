@@ -62,11 +62,16 @@ function popPriority(heap) {
 }
 export const DEFAULT_VILLAGE_NAME = "Willowbrook";
 export const MAX_POPULATION = 24;
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 export const GRAIN_GROW_SECONDS = 30;
 export const TREE_REGROW_SECONDS = 90;
 export const TREE_LOG_AMOUNT = 8;
 export const LUMBERYARD_PROCESS_SECONDS = 5;
+export const HUNGER_SECONDS = 75;
+export const HUNGRY_THRESHOLD = 0.82;
+export const EAT_SECONDS = 8;
+export const INN_SEATS = 3;
+export const MEAL_SATIETY = 0.12;
 export const grainGrowthProgress = (plantedAt, elapsed) =>
   Math.max(
     0,
@@ -759,6 +764,7 @@ export class Village {
         "well",
         "farm",
         "bakery",
+        "inn",
         "grainfield",
         "grainfield_sown",
         "grainfield_sprout",
@@ -870,6 +876,7 @@ export class Village {
             b.upgrade,
             b.materials,
             b.plantedAt,
+            b.breadStock,
           );
         }
         if (!this.buildings.some((building) => building.type === "townhall"))
@@ -1009,6 +1016,15 @@ export class Village {
       );
       for (let i = 0; i < population; i++)
         this.addWorker();
+      const savedWorkerNeeds = Array.isArray(this.saved?.workerNeeds)
+        ? this.saved.workerNeeds
+        : [];
+      this.workers.forEach((worker, index) => {
+        worker.hunger = Math.max(
+          0,
+          Math.min(1, finiteNumber(savedWorkerNeeds[index]?.hunger, worker.hunger)),
+        );
+      });
       this.lastSave = saveCycleMarker(this.elapsed);
       this.trendSample = { elapsed: this.elapsed, resources: { ...this.resources } };
       this.ready = true;
@@ -1125,6 +1141,7 @@ export class Village {
     upgrade = null,
     materials = null,
     plantedAt = null,
+    breadStock = 0,
   ) {
     const m = this.model(type, x, z);
     m.rotation.y = rotation;
@@ -1152,6 +1169,10 @@ export class Village {
           : null,
       fieldStage: type === "grainfield" ? "sown" : null,
       claimedBy: null,
+      breadStock:
+        type === "inn"
+          ? Math.max(0, Math.floor(finiteNumber(breadStock, 0)))
+          : 0,
       pop: 0,
     };
     m.userData.building = b;
@@ -2044,6 +2065,7 @@ export class Village {
         if (worker.building !== moving) continue;
         worker.building = null;
         worker.workInside = false;
+        worker.mealSeat = null;
         this.setWorkerInside(worker, false);
         worker.phase = "idle";
         worker.timer = 0;
@@ -2409,6 +2431,14 @@ export class Village {
     }
     if (this.workers.some((worker) => worker.building === building && worker.carry)) {
       this.notify("Let this building finish its delivery before moving it.");
+      return false;
+    }
+    if (
+      this.workers.some(
+        (worker) => worker.carry?.destinationId === building.id,
+      )
+    ) {
+      this.notify("Let the bread delivery reach this Inn before moving it.");
       return false;
     }
     this.clearHighlight();
@@ -2956,6 +2986,9 @@ export class Village {
       carry: null,
       tree: null,
       waitingForInput: false,
+      waitingForInn: false,
+      hunger: 0.18 + rand() * 0.45,
+      mealSeat: null,
       walkPhase: rand() * Math.PI * 2,
       idlePhase: rand() * Math.PI * 2,
       walkBlend: 0,
@@ -3251,16 +3284,17 @@ export class Village {
   setWorkerInside(worker, inside) {
     if (!worker) return;
     worker.insideBuilding = Boolean(inside);
-    const openBakery = inside && worker.building?.type === "bakery";
+    const openBuilding =
+      inside && ["bakery", "inn"].includes(worker.building?.type);
     if (worker.m) {
-      worker.m.visible = !inside || openBakery;
-      if (openBakery) {
+      worker.m.visible = !inside || openBuilding;
+      if (inside && worker.building?.type === "bakery") {
         // Keep the baker in the open prep area instead of hiding them at the
         // building origin behind the roof and shell.
         worker.m.position.set(worker.building.x + 0.25, 0, worker.building.z - 0.42);
       }
     }
-    if (worker.contactShadow) worker.contactShadow.visible = !inside || openBakery;
+    if (worker.contactShadow) worker.contactShadow.visible = !inside || openBuilding;
   }
   createWorkEffect(type) {
     const group = new THREE.Group();
@@ -3387,6 +3421,72 @@ export class Village {
       )
     );
   }
+  completedInns() {
+    return this.buildings.filter(
+      (building) =>
+        building.type === "inn" && building.progress === 1 && !building.paused,
+    );
+  }
+  innSeatPoint(inn, seat = 0) {
+    // Blender's negative-Y frontage becomes positive Z in the exported GLB.
+    const local = new THREE.Vector3([-1.05, 0, 1.05][seat] || 0, 0, 1.98);
+    local.applyAxisAngle(new THREE.Vector3(0, 1, 0), inn.rotation || 0);
+    return [inn.x + local.x, inn.z + local.z];
+  }
+  availableInnFor(worker) {
+    return this.completedInns()
+      .map((inn) => {
+        const diners = this.workers.filter(
+          (candidate) =>
+            candidate !== worker &&
+            candidate.building === inn &&
+            ["eat_travel", "eat"].includes(candidate.phase),
+        );
+        const reserved = new Set(diners.map((candidate) => candidate.mealSeat));
+        const seat = Array.from({ length: INN_SEATS }, (_, index) => index).find(
+          (index) => !reserved.has(index),
+        );
+        const incomingDiners = diners.filter(
+          (candidate) => candidate.phase === "eat_travel",
+        ).length;
+        const incomingMeals = this.workers.filter(
+          (candidate) => candidate.phase === "eat_travel",
+        ).length;
+        const availableBread = Math.min(
+          Math.max(0, finiteNumber(inn.breadStock, 0)) - incomingDiners,
+          Math.max(0, finiteNumber(this.resources.food, 0) - incomingMeals),
+        );
+        return { inn, seat, availableBread };
+      })
+      .filter(({ seat, availableBread }) => seat != null && availableBread > 0)
+      .sort(
+        (a, b) =>
+          Math.hypot(worker.m.position.x - a.inn.x, worker.m.position.z - a.inn.z) -
+          Math.hypot(worker.m.position.x - b.inn.x, worker.m.position.z - b.inn.z),
+      )[0];
+  }
+  bakeryDeliveryTarget(worker) {
+    const requested = worker?.carry?.destinationId;
+    const inns = this.completedInns();
+    if (requested) {
+      const destination = inns.find((inn) => inn.id === requested);
+      if (destination) return destination;
+    }
+    return inns.sort(
+      (a, b) =>
+        Math.hypot(worker.m.position.x - a.x, worker.m.position.z - a.z) -
+        Math.hypot(worker.m.position.x - b.x, worker.m.position.z - b.z),
+    )[0] || null;
+  }
+  deliveryTarget(worker) {
+    if (worker?.building?.type === "bakery")
+      return this.bakeryDeliveryTarget(worker);
+    return (
+      this.buildings.find((building) => building.type === "townhall") ||
+      worker?.building ||
+      null
+    );
+  }
   assign(w) {
     if (!WORKER_TYPE_LABELS[w.workerType])
       this.setWorkerType(w, WORKER_TYPES.BUILDER);
@@ -3398,6 +3498,25 @@ export class Village {
     w.forcedYield = null;
     w.avoidanceTarget = null;
     w.avoidanceTime = 0;
+    w.mealSeat = null;
+    w.waitingForInn = false;
+    const hunger = Math.max(0, Math.min(1, finiteNumber(w.hunger, 0)));
+    if (hunger >= HUNGRY_THRESHOLD) {
+      const meal = this.availableInnFor(w);
+      if (meal) {
+        const [x, z] = this.innSeatPoint(meal.inn, meal.seat);
+        w.workInside = true;
+        if (this.route(w, x, z, meal.inn)) {
+          w.building = meal.inn;
+          w.mealSeat = meal.seat;
+          w.phase = "eat_travel";
+          w.timer = 0;
+          return;
+        }
+        w.workInside = false;
+        meal.inn.lastRouteBlocked = true;
+      }
+    }
     const workerLoad = (building) =>
       this.workers.filter(
         (v) =>
@@ -3437,6 +3556,7 @@ export class Village {
         workerTypeForBuilding(b.type) &&
         workerLoad(b) < workerCapacityForBuilding(b.type) &&
         !b.paused &&
+        (b.type !== "bakery" || this.completedInns().length > 0) &&
         (b.type !== "farm" || this.readyGrainFields(b).length > 0),
     );
     const employedSites = sites
@@ -3773,6 +3893,9 @@ export class Village {
         w.tree = null;
         w.phase = "idle";
         w.building = null;
+        w.workInside = false;
+        w.mealSeat = null;
+        this.setWorkerInside(w, false);
         w.timer = 2;
       }
       return false;
@@ -3841,6 +3964,13 @@ export class Village {
       if (this.activityTime === 0) this.activity = "";
     }
     for (const w of this.workers) {
+      w.hunger = Math.max(
+        0,
+        Math.min(
+          1,
+          finiteNumber(w.hunger, 0) + (w.phase === "eat" ? 0 : dt / HUNGER_SECONDS),
+        ),
+      );
       w.repathCooldown = Math.max(0, (w.repathCooldown || 0) - dt);
       w.deadlockLeaderTime = Math.max(0, (w.deadlockLeaderTime || 0) - dt);
       w.deadlockYieldTime = Math.max(0, (w.deadlockYieldTime || 0) - dt);
@@ -3868,6 +3998,7 @@ export class Village {
         w.workInside = false;
         this.setWorkerInside(w, false);
         w.phase = "idle";
+        w.mealSeat = null;
         w.timer = 0;
         w.path = [];
         w.waitingForSpace = false;
@@ -3979,6 +4110,42 @@ export class Village {
           w.workDuration =
             (5 + rand() * 3) / (w.building.upgrade === "Faster sails" ? 1.25 : 1);
           w.timer = w.workDuration;
+        }
+      } else if (w.phase === "eat_travel") {
+        const inn = w.building;
+        if (
+          !inn ||
+          inn.type !== "inn" ||
+          finiteNumber(inn.breadStock, 0) <= 0 ||
+          finiteNumber(this.resources.food, 0) <= 0
+        ) {
+          w.phase = "idle";
+          w.building = null;
+          w.workInside = false;
+          w.mealSeat = null;
+          w.timer = 1;
+          continue;
+        }
+        inn.breadStock = Math.max(0, Math.floor(inn.breadStock) - 1);
+        this.resources.food = Math.max(0, (this.resources.food || 0) - 1);
+        this.setWorkerInside(w, true);
+        w.m.rotation.y = (inn.rotation || 0) + Math.PI;
+        w.phase = "eat";
+        w.workDuration = EAT_SECONDS;
+        w.timer = w.workDuration;
+        this.announce("A hungry villager has taken a seat for fresh bread at the Inn.");
+      } else if (w.phase === "eat") {
+        w.timer -= dt;
+        if (w.timer <= 0) {
+          if (w.building?.type === "inn") w.building.cycles++;
+          w.hunger = MEAL_SATIETY;
+          w.phase = "idle";
+          w.workDuration = 0;
+          w.workInside = false;
+          w.mealSeat = null;
+          this.setWorkerInside(w, false);
+          w.building = null;
+          w.timer = 0.75;
         }
       } else if (w.phase === "visit") {
         w.timer -= dt;
@@ -4140,6 +4307,17 @@ export class Village {
         if (w.timer <= 0) {
           const c = CATALOG[w.building.type];
           const inputResource = c.inputResource || "food";
+          const inn =
+            w.building.type === "bakery" ? this.bakeryDeliveryTarget(w) : null;
+          if (w.building.type === "bakery" && !inn) {
+            if (!w.waitingForInn)
+              this.announce("The Bakery needs a completed Inn before it can send out bread.");
+            w.waitingForInn = true;
+            w.workDuration = 0;
+            w.timer = 4;
+            continue;
+          }
+          w.waitingForInn = false;
           if (c.input && (this.resources[inputResource] || 0) < c.input) {
             if (!w.waitingForInput)
               this.announce(`${c.name} is waiting for ${inputResource}.`);
@@ -4153,41 +4331,66 @@ export class Village {
           if (resumedFromWaiting) this.announce(`${c.name} has ${inputResource} again.`);
           if (c.input) this.resources[inputResource] -= c.input;
           const amount = c.amount + (w.building.upgrade === "Rich soil" ? 4 : 0);
-          w.carry = { resource: c.resource, amount };
+          w.carry = {
+            resource: c.resource,
+            amount,
+            ...(w.building.type === "bakery"
+              ? { product: "bread", destinationId: inn.id }
+              : {}),
+          };
           w.workDuration = 0;
           this.showCarry(w, c.resource);
           this.setWorkerInside(w, false);
           w.phase = "deliver";
-          const depot =
-            this.buildings.find((building) => building.type === "townhall") ||
-            w.building;
+          const depot = this.deliveryTarget(w);
           const [depotX, depotZ] = this.jobPoint(depot, w);
-          w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
+          w.deliveryRetry = this.route(
+            w,
+            depotX,
+            depotZ,
+            w.workInside ? w.building : null,
+          )
+            ? 0
+            : 1.5;
         }
       } else if (w.phase === "deliver") {
         if (w.deliveryRetry > 0) {
           w.deliveryRetry -= dt;
           if (w.deliveryRetry <= 0) {
-            const depot =
-              this.buildings.find((building) => building.type === "townhall") ||
-              w.building;
-            const [depotX, depotZ] = this.jobPoint(depot, w);
-            w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
+            const depot = this.deliveryTarget(w);
+            if (depot) {
+              const [depotX, depotZ] = this.jobPoint(depot, w);
+              w.deliveryRetry = this.route(
+                w,
+                depotX,
+                depotZ,
+                w.workInside ? w.building : null,
+              )
+                ? 0
+                : 1.5;
+            } else w.deliveryRetry = 1.5;
           }
           continue;
         }
         if (w.carry) {
-          const depot =
-            this.buildings.find((building) => building.type === "townhall") ||
-            w.building;
+          const depot = this.deliveryTarget(w);
+          if (!depot) {
+            w.deliveryRetry = 1.5;
+            continue;
+          }
           this.deliveryBurst(depot, w.carry.resource, w.carry.amount);
           this.resources[w.carry.resource] = (this.resources[w.carry.resource] || 0) + w.carry.amount;
           this.delivered[w.carry.resource] =
             (this.delivered[w.carry.resource] || 0) + w.carry.amount;
           if (w.carry.resource === "wood") this.gathered += w.carry.amount;
+          const bakeryDelivery = w.building.type === "bakery" && depot.type === "inn";
+          if (bakeryDelivery)
+            depot.breadStock = Math.max(0, finiteNumber(depot.breadStock, 0)) + w.carry.amount;
           const deliveredLabel = w.carry.product || w.carry.resource;
           this.announce(
-            `${w.building.type === "bakery" ? "Bread (food)" : deliveredLabel[0].toUpperCase() + deliveredLabel.slice(1)} +${w.carry.amount} delivered to the hall.`,
+            bakeryDelivery
+              ? `Bread +${w.carry.amount} delivered from the Bakery to the Inn.`
+              : `${deliveredLabel[0].toUpperCase() + deliveredLabel.slice(1)} +${w.carry.amount} delivered to the hall.`,
           );
           w.building.cycles++;
           this.clearCarry(w);
@@ -4273,7 +4476,9 @@ export class Village {
         building.progress === 1 &&
         CATALOG[building.type]?.resource &&
         (building.type !== "farm" || this.readyGrainFields(building).length > 0) &&
-        (building.paused || building.lastRouteBlocked ||
+        (building.paused ||
+          (building.type === "bakery" && !this.completedInns().length) ||
+          building.lastRouteBlocked ||
           !this.workers.some((worker) => worker.building === building)),
     ).length;
     this.onUpdate({
@@ -4316,6 +4521,11 @@ export class Village {
               ),
             )
           : null;
+        const innDiners =
+          b.type === "inn"
+            ? assigned.filter((worker) => ["eat_travel", "eat"].includes(worker.phase))
+                .length
+            : 0;
         const status =
           b.type === "grainfield"
             ? b.claimedBy
@@ -4340,6 +4550,14 @@ export class Village {
               ? "Awaiting materials"
             : b.progress < 1
             ? "Building"
+            : b.type === "bakery" && !this.completedInns().length
+              ? "Needs an Inn"
+            : b.type === "inn" && innDiners > 0
+              ? `Serving ${innDiners} meal${innDiners === 1 ? "" : "s"}`
+            : b.type === "inn" && finiteNumber(b.breadStock, 0) > 0
+              ? `${Math.floor(b.breadStock)} bread ready`
+            : b.type === "inn"
+              ? "Waiting for bread"
             : b.lastRouteBlocked
               ? "Waiting for route"
             : assigned.some((w) => w.waitingForSpace)
@@ -4355,7 +4573,9 @@ export class Village {
               : assigned.some((w) => w.phase === "process")
                 ? "Sawing wooden planks"
               : assigned.some((w) => w.phase === "deliver")
-                ? "Delivering"
+                ? b.type === "bakery"
+                  ? "Taking bread to Inn"
+                  : "Delivering"
               : assigned.some((w) => w.phase === "travel")
                 ? "On the way"
                 : assigned.some((w) => w.phase === "harvest")
@@ -4399,6 +4619,9 @@ export class Village {
           paused: Boolean(b.paused),
           upgrade: b.upgrade,
           fieldStage,
+          ...(b.type === "inn"
+            ? { breadStock: Math.max(0, Math.floor(finiteNumber(b.breadStock, 0))) }
+            : {}),
         };
       }),
       workers: this.workers.map((w, index) => {
@@ -4407,6 +4630,7 @@ export class Village {
           id: w.id || `worker-${index}`,
           phase: w.phase,
           waitingForInput: !!w.waitingForInput,
+          ...(w.waitingForInn ? { waitingForInn: true } : {}),
           ...(w.waitingForSpace ? { waitingForSpace: true } : {}),
           deliveryRetry: w.deliveryRetry > 0,
           workerType: w.workerType || WORKER_TYPES.BUILDER,
@@ -4414,6 +4638,8 @@ export class Village {
           buildingType: w.building?.type || null,
           ...(w.insideBuilding ? { insideBuilding: true } : {}),
           carry: w.carry ? { ...w.carry } : null,
+          hunger: Math.max(0, Math.min(1, finiteNumber(w.hunger, 0))),
+          hungry: finiteNumber(w.hunger, 0) >= HUNGRY_THRESHOLD,
           workProgress: work.progress,
           workRemaining: work.remaining,
         };
@@ -4461,6 +4687,9 @@ export class Village {
         feast: this.feast,
         tutorialStep: this.tutorialStep,
         tutorialDismissed: this.tutorialDismissed,
+        workerNeeds: this.workers.map((worker) => ({
+          hunger: Math.max(0, Math.min(1, finiteNumber(worker.hunger, 0))),
+        })),
         activityLog: (Array.isArray(this.activityLog) ? this.activityLog : [])
           .slice(0, 4)
           .map(({ message }) => String(message).slice(0, 140)),
@@ -4475,7 +4704,7 @@ export class Village {
             regrowAt: tree.regrowAt,
           })),
         buildings: this.buildings.map(
-          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt }) => ({
+          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt, breadStock }) => ({
             type,
             x,
             z,
@@ -4488,6 +4717,9 @@ export class Village {
             materials: { ...materials },
             ...(type === "grainfield"
               ? { plantedAt: Math.max(0, finiteNumber(plantedAt, this.elapsed)) }
+              : {}),
+            ...(type === "inn"
+              ? { breadStock: Math.max(0, Math.floor(finiteNumber(breadStock, 0))) }
               : {}),
           }),
         ),
@@ -4685,16 +4917,21 @@ export class Village {
       const idleStride = Math.sin(cycle) * 0.08;
       const gait = stride * w.walkBlend + idleStride * (1 - w.walkBlend);
       const lift = walking ? Math.abs(stride) * 0.012 : 0;
-      const baseY = 0.004;
+      const eating = w.phase === "eat";
+      // The worker rig's hip sits at y=.38, so this places it on the .45-high
+      // outdoor bench while the bent legs remain in front of the seat.
+      const baseY = eating ? 0.08 : 0.004;
       w.m.position.y = baseY + lift;
       w.m.rotation.z = 0;
       w.m.rotation.x = 0;
       const stretch = walking ? Math.abs(stride) * 0.012 : 0;
-      w.m.scale.y += (1 + stretch - w.m.scale.y) * 0.24;
+      w.m.scale.y += ((eating ? 0.88 : 1) + stretch - w.m.scale.y) * 0.24;
       if (w.rig) {
         w.rig.rig.rotation.z = gait * 0.025;
-        w.rig.leftLeg.rotation.x += (gait * 0.42 - w.rig.leftLeg.rotation.x) * 0.35;
-        w.rig.rightLeg.rotation.x += (-gait * 0.42 - w.rig.rightLeg.rotation.x) * 0.35;
+        w.rig.leftLeg.rotation.x +=
+          ((eating ? -1.15 : gait * 0.42) - w.rig.leftLeg.rotation.x) * 0.35;
+        w.rig.rightLeg.rotation.x +=
+          ((eating ? -1.15 : -gait * 0.42) - w.rig.rightLeg.rotation.x) * 0.35;
         const chopping = w.phase === "chop";
         const harvesting =
           w.workerType === WORKER_TYPES.FARMER && w.phase === "harvest";
@@ -4708,6 +4945,8 @@ export class Village {
             ? -0.72
             : harvesting
               ? -0.92 + Math.max(0, workBeat) * 0.85
+              : eating
+                ? -0.9 + Math.sin(t * 4.2) * 0.16
               : baking
                 ? -0.48 + workBeat * 0.42
                 : -gait * 0.3) -
@@ -4718,6 +4957,8 @@ export class Village {
             ? -0.72
             : harvesting
               ? -0.5 - workBeat * 0.4
+              : eating
+                ? -0.72 - Math.sin(t * 4.2) * 0.16
               : baking
                 ? -0.58 - workBeat * 0.4
                 : gait * 0.3) -

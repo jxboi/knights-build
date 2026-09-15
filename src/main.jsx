@@ -55,6 +55,9 @@ function timeOfDay(seconds = 0) {
 }
 function workerStatus(worker) {
   if (!worker) return "Idle";
+  if (worker.phase === "eat") return "Eating bread at the Inn";
+  if (worker.phase === "eat_travel") return "Heading to the Inn";
+  if (worker.waitingForInn) return "Waiting for an Inn";
   if (worker.waitingForInput) return "Waiting for ingredients";
   if (worker.waitingForSpace) return "Waiting for space";
   if (worker.deliveryRetry) return "Waiting for route";
@@ -77,7 +80,7 @@ function workerStatus(worker) {
     harvest: "Cutting grain in the field",
     deliver: "Delivering",
     visit: "At the well",
-  }[worker.phase] || "Idle";
+  }[worker.phase] || (worker.hungry ? "Hungry — waiting for bread" : "Idle");
 }
 function AdvisorContent({ content }) {
   const parts = String(content || "").split(/(\*\*[^*]+\*\*)/g);
@@ -1386,6 +1389,21 @@ function App() {
               />
             </div>
           )}
+          {detail.type === "worker" && inspectedWorker && (
+            <div
+              className="inspector-progress hunger-progress"
+              role="progressbar"
+              aria-label="Hunger level"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow={Math.round((inspectedWorker.hunger || 0) * 100)}
+              aria-valuetext={`${Math.round((inspectedWorker.hunger || 0) * 100)}% hungry`}
+            >
+              <span
+                style={{ width: `${Math.round((inspectedWorker.hunger || 0) * 100)}%` }}
+              />
+            </div>
+          )}
           {detail.type !== "worker" && inspectedCycleProgress != null && (
             <div
               className="inspector-progress"
@@ -1428,6 +1446,10 @@ function App() {
                       : "Unassigned"}
                 </strong>
                 </span>
+                <span>
+                  Hunger
+                  <strong>{Math.round((inspectedWorker?.hunger || 0) * 100)}%</strong>
+                </span>
               </>
             ) : (
               <span>
@@ -1468,6 +1490,16 @@ function App() {
               <span>
                 Deliveries<strong>{inspected?.cycles || 0}</strong>
               </span>
+            )}
+            {detail.type !== "worker" && detail.type === "inn" && (
+              <>
+                <span>
+                  Bread in pantry<strong>{inspected?.breadStock || 0}</strong>
+                </span>
+                <span>
+                  Meals served<strong>{inspected?.cycles || 0}</strong>
+                </span>
+              </>
             )}
           </div>
           {detail.type !== "worker" && inspected && (
