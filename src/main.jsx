@@ -110,6 +110,7 @@ function App() {
     eventPeekRef = useRef(),
     eventCloseRef = useRef(),
     inspectorCloseRef = useRef(),
+    goalsButtonRef = useRef(),
     modalRef = useRef(),
     advisorInputRef = useRef(),
     advisorMessagesRef = useRef(),
@@ -154,7 +155,7 @@ function App() {
     [detail, setDetail] = useState(null),
     [toast, setToast] = useState(null),
     [help, setHelp] = useState(false),
-    [goals, setGoals] = useState(true),
+    [goals, setGoals] = useState(false),
     [grid, setGrid] = useState(false),
     [menu, setMenu] = useState(false),
     [overview, setOverview] = useState(false),
@@ -199,6 +200,11 @@ function App() {
     setMenu(false);
     if (restoreFocus)
       requestAnimationFrame(() => menuButtonRef.current?.focus());
+  };
+  const showGoals = () => {
+    setGoals(true);
+    closeMenu();
+    requestAnimationFrame(() => goalsButtonRef.current?.focus());
   };
   const closeDetail = (restoreFocus = false) => {
     const returnTarget = inspectorFocusReturn.current;
@@ -921,7 +927,10 @@ function App() {
   }, [advisorMessages, advisorLoading, advisorOpen]);
   const DayIcon = period === "Night" ? Moon : Sun;
   return (
-    <main className="game-shell" aria-busy={!loaded && !error}>
+    <main
+      className={`game-shell ${goals ? "goals-open" : ""}`}
+      aria-busy={!loaded && !error}
+    >
       <div
         ref={worldRef}
         className={`world ${selected ? "is-building" : ""}`}
@@ -1010,19 +1019,20 @@ function App() {
                 : "A humble beginning"}
           </span>
         </div>
-        <div className={`objectives parchment ${allGoals ? "complete" : ""}`}>
-          <button
-            className="objective-heading"
-            aria-controls="settlement-goals"
-            aria-expanded={goals}
-            onClick={() => setGoals(!goals)}
-          >
-            <span>
-              <Leaf size={17} /> A place to call home
-            </span>
-            <ChevronDown size={16} className={goals ? "" : "collapsed"} />
-          </button>
-          {goals && (
+        {goals && (
+          <div className={`objectives parchment ${allGoals ? "complete" : ""}`}>
+            <button
+              ref={goalsButtonRef}
+              className="objective-heading"
+              aria-controls="settlement-goals"
+              aria-expanded={goals}
+              onClick={() => setGoals(!goals)}
+            >
+              <span>
+                <Leaf size={17} /> A place to call home
+              </span>
+              <ChevronDown size={16} className={goals ? "" : "collapsed"} />
+            </button>
             <div id="settlement-goals">
               <p>
                 {allGoals
@@ -1095,10 +1105,10 @@ function App() {
                 </div>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
         <div
-        className={`settlement-status ${
+          className={`settlement-status ${
             state.speed !== 0 &&
             (state.activity || waitingForFood || waitingForRoute)
               ? "activity"
@@ -1926,6 +1936,10 @@ function App() {
           >
             <BarChart3 size={16} />
             Village overview
+          </button>
+          <button role="menuitem" onClick={showGoals}>
+            <Leaf size={16} />
+            A place to call home
           </button>
           <button
             role="menuitem"

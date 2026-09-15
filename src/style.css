@@ -3016,6 +3016,19 @@ h1 span {
   }
 }
 @media (max-width: 760px) {
+  /* A deliberate menu selection should be able to reveal the goals card even
+     while the introductory guide is still on screen. */
+  .game-shell.goals-open:has(.tutorial-card) .objectives,
+  .game-shell.goals-open:has(.tutorial-card) .settlement-status {
+    visibility: visible;
+  }
+  .game-shell.goals-open:has(.tutorial-card) .left-stack {
+    pointer-events: auto;
+  }
+  .game-shell.goals-open:has(.tutorial-card) .objectives {
+    margin-top: 135px;
+  }
+
   /* Keep the placement guidance above the build detail card instead of
      allowing the two surfaces to share the same bottom edge. */
   .game-shell .build-tooltip:not(.is-open) {
