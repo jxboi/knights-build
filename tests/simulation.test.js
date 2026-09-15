@@ -461,7 +461,7 @@ test("workers reroute when a new building blocks their next step", () => {
   assert.equal(w.path[0].z, 1);
   assert.equal(w.phase, "travel");
 });
-test("workers yield at a head-on collision instead of entering the same space", () => {
+test("workers pass a head-on collision without overlapping or deadlocking", () => {
   const v = village();
   const first = {
     id: "worker-0",
@@ -471,7 +471,9 @@ test("workers yield at a head-on collision instead of entering the same space", 
     routeTarget: { x: 1, z: 0 },
     phase: "travel",
     field: null,
-    yieldCooldown: 0,
+    spaceWait: 0,
+    repathCooldown: 0,
+    forcedYield: null,
   };
   const second = {
     id: "worker-1",
@@ -481,19 +483,91 @@ test("workers yield at a head-on collision instead of entering the same space", 
     routeTarget: { x: 0, z: 0 },
     phase: "travel",
     field: null,
-    yieldCooldown: 0,
+    spaceWait: 0,
+    repathCooldown: 0,
+    forcedYield: null,
   };
   first.m.position.set(0, 0, 0);
   second.m.position.set(1, 0, 0);
   v.workers = [first, second];
 
-  v.moveWorker(first, 0.1);
-  v.moveWorker(second, 0.1);
+  let closest = Infinity;
+  for (let tick = 0; tick < 100; tick++) {
+    for (const worker of v.workers)
+      worker.repathCooldown = Math.max(0, worker.repathCooldown - 0.05);
+    const movementOrder = [...v.workers].sort(
+      (a, b) =>
+        (b.spaceWait || 0) - (a.spaceWait || 0) ||
+        v.workerPriority(a) - v.workerPriority(b),
+    );
+    for (const worker of movementOrder) v.moveWorker(worker, 0.05);
+    closest = Math.min(
+      closest,
+      first.m.position.distanceTo(second.m.position),
+    );
+  }
 
-  assert.equal(second.waitingForSpace, true);
-  assert.equal(second.yielding, true);
-  assert.ok(second.path[0].z !== 0);
-  assert.ok(first.m.position.distanceTo(second.m.position) >= WORKER_CLEARANCE);
+  assert.ok(closest >= WORKER_CLEARANCE);
+  assert.equal(first.path.length, 0);
+  assert.equal(second.path.length, 0);
+  assert.equal(first.m.position.x, 1);
+  assert.equal(second.m.position.x, 0);
+});
+
+test("a crowded crossing clears without workers overlapping", () => {
+  const v = village();
+  for (let index = 0; index < 8; index++) {
+    const angle = (index * Math.PI) / 4;
+    const x = Math.cos(angle) * 5;
+    const z = Math.sin(angle) * 5;
+    const worker = {
+      id: `worker-${index}`,
+      movementPriority: index,
+      m: new THREE.Object3D(),
+      path: [new THREE.Vector3(-x, 0, -z)],
+      routeTarget: { x: -x, z: -z },
+      phase: "travel",
+      field: null,
+      spaceWait: 0,
+      repathCooldown: 0,
+      forcedYield: null,
+    };
+    worker.m.position.set(x, 0, z);
+    v.workers.push(worker);
+  }
+
+  let closest = Infinity;
+  for (let tick = 0; tick < 600; tick++) {
+    for (const worker of v.workers)
+      worker.repathCooldown = Math.max(0, worker.repathCooldown - 0.05);
+    const movementOrder = [...v.workers].sort(
+      (a, b) =>
+        (b.spaceWait || 0) - (a.spaceWait || 0) ||
+        v.workerPriority(a) - v.workerPriority(b),
+    );
+    for (const worker of movementOrder) v.moveWorker(worker, 0.05);
+    for (let a = 0; a < v.workers.length; a++)
+      for (let b = a + 1; b < v.workers.length; b++)
+        closest = Math.min(
+          closest,
+          v.workers[a].m.position.distanceTo(v.workers[b].m.position),
+        );
+  }
+
+  assert.ok(closest >= WORKER_CLEARANCE);
+  assert.ok(v.workers.every((worker) => worker.path.length === 0));
+});
+
+test("temporary worker occupancy does not make a destination unreachable", () => {
+  const v = village();
+  const mover = { m: new THREE.Object3D(), path: [] };
+  const occupant = { m: new THREE.Object3D(), path: [] };
+  mover.m.position.set(0, 0, 0);
+  occupant.m.position.set(4, 0, 0);
+  v.workers = [mover, occupant];
+
+  assert.equal(v.route(mover, 4, 0), true);
+  assert.deepEqual(mover.path.at(-1).toArray(), [4, 0, 0]);
 });
 test("builder completes structure and welcomes two workers", () => {
   const v = village(),
@@ -589,7 +663,7 @@ test("construction assignments collect each material from its producer", () => {
   assert.equal(w.building, site);
   assert.equal(w.phase, "material_pickup");
   assert.equal(w.materialResource, "wood");
-  assert.deepEqual(destination, v.jobPoint(lumberyard));
+  assert.deepEqual(destination, v.jobPoint(lumberyard, w));
 });
 
 test("construction material state is bounded and reports delivery progress", () => {
@@ -689,7 +763,7 @@ test("resources are credited only on delivery, not at the job site", () => {
   assert.equal(v.resources.wood, 100);
   assert.deepEqual(w.carry, { resource: "wood", amount: 8 });
   assert.equal(w.phase, "deliver");
-  assert.deepEqual(routeTarget, v.jobPoint(hall));
+  assert.deepEqual(routeTarget, v.jobPoint(hall, w));
   v.simulate(0.1);
   assert.equal(v.resources.wood, 108);
   assert.equal(v.gathered, 8);

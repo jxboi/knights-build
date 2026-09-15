@@ -25,6 +25,7 @@ const riverX = (z) => 16 + Math.sin(z * 0.13) * 1.6;
 // Workers are small on screen, but giving them a little extra room keeps their
 // hitboxes and carried goods from visually merging at a shared waypoint.
 export const WORKER_CLEARANCE = 0.78;
+const WORKER_REPATH_SECONDS = 1.1;
 const VILLAGE_EVENTS = [
   {
     id: "peddler",
@@ -1461,6 +1462,21 @@ export class Village {
           WORKER_CLEARANCE,
     );
   }
+  workerCongestion(x, z, ignore = null) {
+    let congestion = 0;
+    for (const worker of this.workers) {
+      if (worker === ignore || !worker.m?.position) continue;
+      const distance = Math.hypot(
+        x - worker.m.position.x,
+        z - worker.m.position.z,
+      );
+      if (distance < 2.4) congestion += (2.4 - distance) * 0.45;
+      const next = worker.path?.[0];
+      if (next && Math.hypot(x - next.x, z - next.z) < 0.8)
+        congestion += 0.55;
+    }
+    return congestion;
+  }
   workerSpawnPosition(preferredX, preferredZ) {
     const candidates = [[preferredX, preferredZ]];
     for (let radius = 1; radius <= 8; radius++) {
@@ -2511,7 +2527,9 @@ export class Village {
       idlePhase: rand() * Math.PI * 2,
       walkBlend: 0,
       waitingForSpace: false,
-      yieldCooldown: 0,
+      spaceWait: 0,
+      repathCooldown: 0,
+      forcedYield: null,
       rig,
     };
     m.userData.worker = w;
@@ -2707,13 +2725,6 @@ export class Village {
     w.routeTarget = { x: tx, z: tz };
     const start = `${sx},${sz}`,
       goal = `${tx},${tz}`;
-    if (
-      this.workerPositionBlocked(tx, tz, w) ||
-      this.workerTargetBlocked(tx, tz, w)
-    ) {
-      w.path = [];
-      return false;
-    }
     const queue = [],
       costs = new Map([[start, 0]]),
       parents = new Map([[start, null]]);
@@ -2741,11 +2752,13 @@ export class Village {
           nz < -30 ||
           nz > 30 ||
           nx > riverX(nz) - 0.6 ||
-          this.routeBlocked(nx, nz, ignore) ||
-          this.workerPositionBlocked(nx, nz, w)
+          this.routeBlocked(nx, nz, ignore)
         )
           continue;
-        const stepCost = this.roads.has(k) ? 0.67 : 1;
+        // Other workers are temporary congestion, not walls. The route remains
+        // valid through a crowd, but A* prefers an open lane when one exists.
+        const stepCost =
+          (this.roads.has(k) ? 0.67 : 1) + this.workerCongestion(nx, nz, w);
         const nextCost = cost + stepCost;
         if (nextCost >= (costs.get(k) ?? Infinity)) continue;
         costs.set(k, nextCost);
@@ -2766,22 +2779,28 @@ export class Village {
   }
   jobPoint(b, worker = null) {
     const n = Math.ceil((CATALOG[b.type]?.size || 4) / 2 + 0.5);
-    const pts = [
-      [b.x, b.z + n],
-      [b.x - n, b.z],
-      [b.x + n, b.z],
-      [b.x, b.z - n],
-    ];
-    return (
-      pts.find(
-        ([x, z]) =>
-          !this.routeBlocked(x, z) &&
-          !this.workerPositionBlocked(x, z, worker) &&
-          !this.workerTargetBlocked(x, z, worker) &&
-          x < riverX(z) - 0.5,
-      ) ||
-      pts[0]
+    const offsets = [0];
+    for (let offset = 1; offset < n; offset++) offsets.push(-offset, offset);
+    const pts = offsets.flatMap((offset) => [
+      [b.x + offset, b.z + n],
+      [b.x - n, b.z + offset],
+      [b.x + n, b.z - offset],
+      [b.x - offset, b.z - n],
+    ]);
+    const valid = pts.filter(
+      ([x, z]) => !this.routeBlocked(x, z) && x < riverX(z) - 0.5,
     );
+    if (!valid.length) return pts[0];
+    return valid.sort((a, candidate) => {
+      const score = ([x, z]) =>
+        (this.workerPositionBlocked(x, z, worker) ? 100 : 0) +
+        (this.workerTargetBlocked(x, z, worker) ? 25 : 0) +
+        this.workerCongestion(x, z, worker) * 4 +
+        (worker?.m?.position
+          ? Math.hypot(x - worker.m.position.x, z - worker.m.position.z) * 0.02
+          : 0);
+      return score(a) - score(candidate);
+    })[0];
   }
   nextConstructionMaterial(building) {
     return Object.entries(CATALOG[building?.type]?.cost || {}).find(
@@ -2806,6 +2825,10 @@ export class Village {
     );
   }
   assign(w) {
+    w.waitingForSpace = false;
+    w.waitingFor = null;
+    w.spaceWait = 0;
+    w.forcedYield = null;
     const workerLoad = (building) =>
       this.workers.filter((v) => v !== w && v.building === building).length;
     const distanceToJob = (building) => {
@@ -2879,7 +2902,13 @@ export class Village {
     const well = this.buildings.find(
       (building) => building.type === "well" && building.progress === 1 && !building.paused,
     );
-    if (well && this.route(w, ...this.jobPoint(well, w))) {
+    const wellVisitors = this.workers.filter(
+      (worker) =>
+        worker !== w &&
+        worker.building === well &&
+        (worker.phase === "visit" || worker.phase === "travel"),
+    ).length;
+    if (well && wellVisitors < 4 && this.route(w, ...this.jobPoint(well, w))) {
       w.building = well;
       w.phase = "visit";
       w.timer = 3.5;
@@ -2891,64 +2920,73 @@ export class Village {
     w.waitingForSpace = false;
     w.timer = candidates.length ? 2 : 0;
   }
-  rerouteForSpace(worker) {
+  workerHasRightOfWay(worker, blocker) {
+    const workerWait = worker.spaceWait || 0;
+    const blockerWait = blocker.spaceWait || 0;
+    if (Math.abs(workerWait - blockerWait) > 0.35)
+      return workerWait > blockerWait;
+    return this.workerPriority(worker) < this.workerPriority(blocker);
+  }
+  workerMoveBlocker(worker, candidate) {
+    return this.workers.find(
+      (other) =>
+        other !== worker &&
+        other.m?.position &&
+        candidate.distanceTo(other.m.position) < WORKER_CLEARANCE,
+    );
+  }
+  workerCanStepTo(worker, candidate) {
+    return (
+      candidate.x >= -30 &&
+      candidate.z >= -30 &&
+      candidate.z <= 30 &&
+      candidate.x <= riverX(candidate.z) - 0.6 &&
+      !this.routeBlocked(candidate.x, candidate.z, worker.field || null) &&
+      !this.workerMoveBlocker(worker, candidate)
+    );
+  }
+  avoidanceStep(worker, direction, step) {
+    const side = this.workerPriority(worker) % 2 === 0 ? 1 : -1;
+    const angles = worker.forcedYield
+      ? [side * Math.PI / 2, -side * Math.PI / 2, side * 0.75 * Math.PI, Math.PI]
+      : [side * Math.PI / 3, -side * Math.PI / 3, side * Math.PI / 2, -side * Math.PI / 2];
+    for (const angle of angles) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const x = direction.x * cos - direction.z * sin;
+      const z = direction.x * sin + direction.z * cos;
+      const candidate = worker.m.position.clone();
+      candidate.x += x * step;
+      candidate.z += z * step;
+      if (!this.workerCanStepTo(worker, candidate)) continue;
+      worker.m.position.copy(candidate);
+      worker.m.rotation.y = Math.atan2(x, z);
+      worker.forcedYield = null;
+      worker.waitingForSpace = false;
+      worker.spaceWait = Math.max(0, (worker.spaceWait || 0) - step);
+      return true;
+    }
+    return false;
+  }
+  repathWorker(worker) {
     if (
-      !worker?.routeTarget ||
-      worker.yieldCooldown > 0 ||
-      !worker.path?.length
+      !worker.routeTarget ||
+      worker.repathCooldown > 0 ||
+      (worker.spaceWait || 0) < WORKER_REPATH_SECONDS
     )
       return false;
+    const target = { ...worker.routeTarget };
     const previousPath = worker.path;
-    const originalTarget = { ...worker.routeTarget };
     const routed = this.route(
       worker,
-      originalTarget.x,
-      originalTarget.z,
+      target.x,
+      target.z,
       worker.field || null,
     );
-    if (routed) {
-      worker.yieldCooldown = 0.5;
-      return true;
-    }
-    worker.path = previousPath;
-    worker.routeTarget = originalTarget;
-
-    const originX = Math.round(worker.m.position.x);
-    const originZ = Math.round(worker.m.position.z);
-    const next = worker.path[0];
-    const movingAlongX =
-      next && Math.abs(next.x - worker.m.position.x) >= Math.abs(next.z - worker.m.position.z);
-    const detours = movingAlongX
-      ? [
-          [originX, originZ + 1],
-          [originX, originZ - 1],
-          [originX + 1, originZ],
-          [originX - 1, originZ],
-        ]
-      : [
-          [originX + 1, originZ],
-          [originX - 1, originZ],
-          [originX, originZ + 1],
-          [originX, originZ - 1],
-        ];
-    for (const [x, z] of detours) {
-      if (
-        Math.hypot(x - worker.m.position.x, z - worker.m.position.z) <
-          WORKER_CLEARANCE ||
-        this.routeBlocked(x, z, worker.field || null) ||
-        this.workerPositionBlocked(x, z, worker) ||
-        this.workerTargetBlocked(x, z, worker)
-      )
-        continue;
-      if (!this.route(worker, x, z, worker.field || null)) continue;
-      worker.routeTarget = originalTarget;
-      worker.yielding = true;
-      worker.yieldCooldown = 0.5;
-      return true;
-    }
-    worker.path = previousPath;
-    worker.routeTarget = originalTarget;
-    return false;
+    if (!routed) worker.path = previousPath;
+    worker.routeTarget = target;
+    worker.repathCooldown = 0.75;
+    return routed;
   }
   moveWorker(w, dt) {
     if (!w.path?.length) return false;
@@ -2972,7 +3010,8 @@ export class Village {
     }
     const delta = next.clone().sub(w.m.position);
     delta.y = 0;
-    if (!delta.lengthSq()) {
+    const distance = delta.length();
+    if (!distance) {
       w.path.shift();
       w.waitingForSpace = false;
       return true;
@@ -2984,31 +3023,30 @@ export class Village {
       : 1;
     // The cap keeps a large simulation tick from jumping through a neighbour.
     const step = Math.min(dt * 1.5 * fast, WORKER_CLEARANCE * 0.62);
+    const direction = delta.multiplyScalar(1 / distance);
     const candidate = w.m.position
       .clone()
-      .addScaledVector(delta.normalize(), Math.min(delta.length(), step));
-    const blocker = this.workers.find(
-      (other) =>
-        other !== w &&
-        other.m?.position &&
-        candidate.distanceTo(other.m.position) < WORKER_CLEARANCE,
-    );
+      .addScaledVector(direction, Math.min(distance, step));
+    const blocker = this.workerMoveBlocker(w, candidate);
     if (blocker) {
-      const wPriority = this.workerPriority(w);
-      const blockerPriority = this.workerPriority(blocker);
-      const yieldWorker = wPriority < blockerPriority ? blocker : w;
-      // The earlier worker has right of way. The other worker takes a clear
-      // detour when one exists; otherwise it remains stopped until the lane is
-      // clear. This also prevents head-on paths from swapping positions.
-      const yielded = this.rerouteForSpace(yieldWorker);
+      w.spaceWait = (w.spaceWait || 0) + dt;
       w.waitingForSpace = true;
       w.waitingFor = blocker.id || null;
-      if (yielded && yieldWorker === w) w.waitingForSpace = true;
+      const hasRightOfWay = this.workerHasRightOfWay(w, blocker);
+      if (hasRightOfWay && blocker.path?.length) blocker.forcedYield = w.id;
+      if (
+        (!hasRightOfWay || w.forcedYield || !blocker.path?.length) &&
+        this.avoidanceStep(w, direction, Math.max(0.12, step * 0.9))
+      )
+        return true;
+      this.repathWorker(w);
       return false;
     }
     w.waitingForSpace = false;
     w.waitingFor = null;
-    if (delta.length() <= step) {
+    w.forcedYield = null;
+    w.spaceWait = 0;
+    if (distance <= step) {
       w.m.position.copy(next);
       w.path.shift();
     } else {
@@ -3033,10 +3071,12 @@ export class Village {
       if (this.activityTime === 0) this.activity = "";
     }
     for (const w of this.workers) {
-      w.yieldCooldown = Math.max(0, (w.yieldCooldown || 0) - dt);
+      w.repathCooldown = Math.max(0, (w.repathCooldown || 0) - dt);
     }
     const movementOrder = [...this.workers].sort(
-      (a, b) => this.workerPriority(a) - this.workerPriority(b),
+      (a, b) =>
+        (b.spaceWait || 0) - (a.spaceWait || 0) ||
+        this.workerPriority(a) - this.workerPriority(b),
     );
     for (const w of movementOrder) {
       if (
@@ -3050,20 +3090,13 @@ export class Village {
         w.phase = "idle";
         w.timer = 0;
         w.path = [];
+        w.waitingForSpace = false;
+        w.waitingFor = null;
+        w.spaceWait = 0;
+        w.forcedYield = null;
       }
       if (w.path.length) {
         this.moveWorker(w, dt);
-        continue;
-      }
-      if (w.yielding) {
-        w.yielding = false;
-        if (
-          w.routeTarget &&
-          this.route(w, w.routeTarget.x, w.routeTarget.z, w.field || null)
-        )
-          continue;
-        w.waitingForSpace = true;
-        w.timer = 0.25;
         continue;
       }
       if (w.phase === "idle") {
