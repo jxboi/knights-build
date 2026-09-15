@@ -3116,4 +3116,10 @@ h1 span {
   .game-shell:has(.inspector) .inspector {
     right: 54px;
   }
+  /* The placement detail card uses this lane on mobile. Hide the persistent
+     goals card while placing so the two surfaces never compete. */
+  .game-shell:has(.world.is-building) .objectives {
+    visibility: hidden;
+    pointer-events: none;
+  }
 }
