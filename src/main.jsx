@@ -159,7 +159,10 @@ function App() {
     [help, setHelp] = useState(false),
     [goals, setGoals] = useState(false),
     [grid, setGrid] = useState(false),
-    [paletteOpen, setPaletteOpen] = useState(false),
+    [paletteOpen, setPaletteOpen] = useState(() => {
+      if (typeof window === "undefined") return true;
+      return !window.matchMedia("(max-width: 760px)").matches;
+    }),
     [menu, setMenu] = useState(false),
     [overview, setOverview] = useState(false),
     [reset, setReset] = useState(false),
