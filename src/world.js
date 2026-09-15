@@ -116,6 +116,12 @@ export const treeRegrowthProgress = (regrowAt, elapsed) => {
   const remaining = Math.max(0, finiteNumber(regrowAt, 0) - finiteNumber(elapsed, 0));
   return Math.max(0, Math.min(1, 1 - remaining / TREE_REGROW_SECONDS));
 };
+export const treeGrowthStage = (progress) => {
+  const value = Math.max(0, Math.min(1, finiteNumber(progress, 0)));
+  if (value < 0.18) return "stump";
+  if (value < 0.58) return "sapling";
+  return "full";
+};
 export const sanitizeVillageName = (value, fallback = DEFAULT_VILLAGE_NAME) => {
   if (typeof value !== "string") return fallback;
   const name = value.trim().replace(/\s+/g, " ").slice(0, 24);
@@ -936,7 +942,11 @@ export class Village {
         m.scale.setScalar(s);
         m.rotation.y = rand() * 6;
         const tree = type === "tree";
+        const treeMeshes = [];
         if (tree) {
+          m.traverse((part) => {
+            if (part.isMesh) treeMeshes.push(part);
+          });
           m.userData.baseZ = 0;
           m.userData.phase = rand() * Math.PI * 2;
           m.userData.speed = 0.55 + rand() * 0.3;
@@ -957,7 +967,20 @@ export class Village {
           regrowAt: tree ? finiteNumber(savedTree?.regrowAt, null) : null,
           baseScale: s,
           baseRotation: m.rotation.z,
+          trunkMeshes: tree
+            ? treeMeshes.filter((part) => /trunk|stump|wood/i.test(part.name))
+            : [],
+          canopyMeshes: tree
+            ? treeMeshes.filter((part) => /pine|leaf|canopy|foliage|crown/i.test(part.name))
+            : [],
         });
+        const placedTree = this.decor[this.decor.length - 1];
+        if (tree && !placedTree.trunkMeshes.length && treeMeshes.length) {
+          placedTree.trunkMeshes = [treeMeshes[0]];
+        }
+        if (tree && !placedTree.canopyMeshes.length && treeMeshes.length > 1) {
+          placedTree.canopyMeshes = treeMeshes.slice(1);
+        }
         if (tree) this.updateTreeVisual(this.decor[this.decor.length - 1]);
       }
       for (let i = 0; i < 350; i++) {
@@ -1248,13 +1271,19 @@ export class Village {
   updateTreeVisual(tree) {
     if (!tree?.m || tree.type !== "tree") return;
     const progress = this.treeGrowthProgress(tree);
+    const isIntact = tree.state === "available" || tree.state === "chopping";
+    const stage = isIntact ? "full" : treeGrowthStage(progress);
+    const height = isIntact ? 1 : stage === "stump" ? 0.24 : 0.24 + progress * 0.76;
+    for (const part of tree.trunkMeshes || []) part.visible = true;
+    for (const part of tree.canopyMeshes || []) part.visible = stage !== "stump";
     tree.m.visible = true;
     tree.m.scale.set(
       tree.baseScale || 1,
-      (tree.baseScale || 1) * (0.12 + progress * 0.88),
+      (tree.baseScale || 1) * height,
       tree.baseScale || 1,
     );
-    tree.m.position.y = tree.state === "regrowing" ? 0.02 : 0;
+    tree.m.position.y = 0;
+    tree.m.userData.growthStage = stage;
   }
   updateTrees() {
     for (const tree of this.decor || []) {

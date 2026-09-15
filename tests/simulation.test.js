@@ -24,6 +24,7 @@ import {
   TREE_LOG_AMOUNT,
   LUMBERYARD_PROCESS_SECONDS,
   treeRegrowthProgress,
+  treeGrowthStage,
   WORKER_CLEARANCE,
   Village,
 } from "../src/world.js";
@@ -415,6 +416,49 @@ test("grain fields grow through readable stages and cap at ripe", () => {
   assert.equal(grainGrowthStage(10, 10 + GRAIN_GROW_SECONDS * 0.7), "growing");
   assert.equal(grainGrowthStage(10, 10 + GRAIN_GROW_SECONDS), "ripe");
   assert.equal(grainGrowthProgress(10, 1000), 1);
+});
+
+test("tree regrowth uses stump, sapling, and full stages", () => {
+  assert.equal(treeGrowthStage(0), "stump");
+  assert.equal(treeGrowthStage(0.3), "sapling");
+  assert.equal(treeGrowthStage(1), "full");
+});
+
+test("tree visuals hide the canopy at the stump and restore it while growing", () => {
+  const v = village();
+  const m = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  trunk.name = "Trunk";
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(1));
+  canopy.name = "Pine";
+  m.add(trunk, canopy);
+  const tree = {
+    type: "tree",
+    state: "regrowing",
+    regrowAt: TREE_REGROW_SECONDS,
+    baseScale: 1,
+    m,
+    trunkMeshes: [trunk],
+    canopyMeshes: [canopy],
+  };
+
+  v.updateTreeVisual(tree);
+  assert.equal(tree.m.userData.growthStage, "stump");
+  assert.equal(trunk.visible, true);
+  assert.equal(canopy.visible, false);
+  assert.equal(tree.m.scale.y, 0.24);
+
+  v.elapsed = TREE_REGROW_SECONDS * 0.3;
+  v.updateTreeVisual(tree);
+  assert.equal(tree.m.userData.growthStage, "sapling");
+  assert.equal(canopy.visible, true);
+  assert.ok(tree.m.scale.y > 0.24 && tree.m.scale.y < 1);
+
+  v.elapsed = TREE_REGROW_SECONDS;
+  v.updateTreeVisual(tree);
+  assert.equal(tree.m.userData.growthStage, "full");
+  assert.equal(canopy.visible, true);
+  assert.equal(tree.m.scale.y, 1);
 });
 
 test("grain plots must connect to a completed farmhouse and can extend as a chain", () => {
