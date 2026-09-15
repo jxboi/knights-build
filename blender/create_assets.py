@@ -54,30 +54,37 @@ def house():
  cube('Crate',(-1,-1.4,.23),(.4,.4,.46),'timber')
  for z in [.1,.35]:cube('Crate band',(-1,-1.61,z),(.43,.035,.045),'cut')
 def bakery():
- # Stone oven workshop, timber upper floor, golden thatch and tall flue.
+ # Open-sided stone oven workshop with a visible prep area, timber frame,
+ # golden thatch and tall flue.
  cube('Stone foundation',(0,0,.12),(2.7,2.5,.24),'stone')
- cube('Oven walls',(0,0,.75),(2.5,2.2,1.25),'stoneLight')
- for row in range(4):
-  for col in range(7):
-   x=-1.1+col*.36
-   cube('Masonry block',(x,-1.12,.28+row*.28),(.33,.07,.24),'stone' if (row+col)%3==0 else 'stoneLight')
- cube('Upper plaster',(0,0,1.95),(2.5,2.2,1.15),'plaster')
- for x in [-1.2,0,1.2]:
-  cube('Timber upright',(x,-1.14,1.96),(.13,.13,1.23),'wood')
- for z in [1.37,2.5]:cube('Crossbeam',(0,-1.15,z),(2.6,.16,.14),'wood')
+ cube('Open bakery floor',(0,0,.27),(2.5,2.2,.12),'cut')
+ # A shallow rear service wall keeps the building grounded while the front
+ # and right-hand sides remain completely open to the camera.
+ cube('Rear service wall',(0,1.03,1.15),(1.25,.10,1.05),'plaster')
+ for x in [-1.2,1.2]:
+  cube('Timber corner post',(x,-1.14,1.36),(.13,.13,1.1),'wood')
+  cube('Timber rear post',(x,1.04,1.36),(.13,.13,1.1),'wood')
+ for z in [1.37,2.5]:cube('Open front crossbeam',(0,-1.15,z),(2.6,.16,.14),'wood')
+ cube('Open side beam',(1.26,0,1.37),(.13,2.1,.14),'wood')
  roof(2.95,2.7,2.55,1.13,'cut')
  beam('Gable brace',(-1.15,-1.15,2.55),(0,-1.15,3.53),.12,'wood')
  beam('Gable brace',(1.15,-1.15,2.55),(0,-1.15,3.53),.12,'wood')
- cube('Loft window',(.55,-1.17,2.04),(.47,.04,.58),'dark')
- cube('Window mullion',(.55,-1.2,2.04),(.045,.04,.58),'cream')
- cube('Oven mouth',(-.45,-1.18,.68),(.76,.1,.78),'dark')
- ico('Oven embers',(-.45,-1.25,.4),(.27,.08,.12),'roof')
- cube('Bakery door',(.9,-1.17,.68),(.46,.08,1.05),'wood')
- cube('Bread counter',(-.43,-1.55,.62),(1.3,.55,.12),'cut')
- for x in [-.97,.1]:cube('Counter legs',(x,-1.55,.31),(.1,.12,.62),'wood')
- for x in [-.83,-.46,-.09]:
-  ico('Fresh loaf',(x,-1.55,.77),(.16,.22,.1),'wheatLight')
-  beam('Loaf score',(x-.08,-1.58,.855),(x+.06,-1.53,.855),.025,'cream')
+ # Standalone oven at the back-left, with its mouth turned toward the open
+ # workspace so the fire and trays are readable from outside.
+ cube('Oven body',(-.62,.52,.76),(.72,.52,.66),'stoneLight')
+ cube('Oven mouth',(-.62,-.01,.78),(.52,.08,.42),'dark')
+ ico('Oven embers',(-.62,-.12,.61),(.25,.08,.10),'roof')
+ cube('Oven hearth',(-.62,-.10,.45),(.66,.20,.10),'stone')
+ for x in [-.92,-.62,-.32]:
+  ico('Oven bread tray',(x,-.09,.82),(.10,.13,.07),'wheatLight')
+ # Low prep table and ingredient shelf make the baker's task legible.
+ cube('Baker prep table',(.27,-.42,.72),(1.12,.42,.11),'cut')
+ for x in [-.65,.65]:cube('Prep table leg',(.27+x*.7,-.42,.40),(.09,.10,.40),'wood')
+ ico('Dough on prep table',(.27,-.48,.87),(.42,.20,.12),'cream')
+ cube('Ingredient shelf',(.98,.28,1.08),(.10,.62,.08),'cut')
+ for y in [-.12,.22,.55]:cyl('Ingredient jar',(.98,y,1.30),.11,.22,'cream',8)
+ cube('Bakery tool rack',(.98,.88,1.56),(.07,.16,.52),'wood')
+ for z in [1.42,1.70]:cube('Baking tool',(.90,.83,z),(.025,.05,.15),'stone')
  cube('Tall stone chimney',(.78,.55,3.2),(.53,.58,2.4),'stone')
  for z in [2.4,2.8,3.2,3.6,4.0]:cube('Chimney course',(.78,.245,z),(.55,.035,.08),'stoneLight')
  cube('Chimney rim',(.78,.55,4.43),(.66,.7,.16),'stoneLight')

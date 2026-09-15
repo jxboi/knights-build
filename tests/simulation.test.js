@@ -649,7 +649,7 @@ test("a baker enters the bakery before starting a production cycle", () => {
   v.simulate(0.1);
   assert.equal(worker.phase, "work");
   assert.equal(worker.insideBuilding, true);
-  assert.equal(worker.m.visible, false);
+  assert.equal(worker.m.visible, true);
 });
 
 test("worker assignment falls back when the preferred site is unreachable", () => {

@@ -3307,8 +3307,16 @@ export class Village {
   setWorkerInside(worker, inside) {
     if (!worker) return;
     worker.insideBuilding = Boolean(inside);
-    if (worker.m) worker.m.visible = !inside;
-    if (worker.contactShadow) worker.contactShadow.visible = !inside;
+    const openBakery = inside && worker.building?.type === "bakery";
+    if (worker.m) {
+      worker.m.visible = !inside || openBakery;
+      if (openBakery) {
+        // Keep the baker in the open prep area instead of hiding them at the
+        // building origin behind the roof and shell.
+        worker.m.position.set(worker.building.x + 0.25, 0, worker.building.z - 0.42);
+      }
+    }
+    if (worker.contactShadow) worker.contactShadow.visible = !inside || openBakery;
   }
   createWorkEffect(type) {
     const group = new THREE.Group();
@@ -3394,9 +3402,13 @@ export class Village {
       worker.workEffect = this.createWorkEffect(worker.building.type === "farm" ? "farm" : "bakery");
     }
     const effect = worker.workEffect;
-    // Float the work vignette just above the roofline so the activity remains
-    // readable even while the worker itself is inside the building.
-    effect.position.set(worker.building.x, 1.1, worker.building.z);
+    // Keep the bakery work vignette on the prep table so it remains readable
+    // through the open side instead of floating behind the roof.
+    effect.position.set(
+      worker.building.x + (effect.userData.type === "bakery" ? 0.25 : 0),
+      effect.userData.type === "bakery" ? 0.12 : 1.1,
+      worker.building.z + (effect.userData.type === "bakery" ? -0.52 : 0),
+    );
     effect.visible = true;
     if (effect.userData.type === "farm") {
       const swing = motion * Math.sin(time * 6.5 + (worker.walkPhase || 0));
