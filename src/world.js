@@ -478,9 +478,6 @@ export class Village {
     this.down = (e) => {
       this.startPointer = [e.clientX, e.clientY];
       this.pathStart = null;
-      if (e.button === 0 && this.selected) {
-        this.container.setPointerCapture?.(e.pointerId);
-      }
       if (
         e.button === 0 &&
         (this.selected === "road" || this.selected === "grainfield")
@@ -507,14 +504,10 @@ export class Village {
       } else if (distance < 6) this.click(e);
       this.pathStart = null;
       this.startPointer = null;
-      if (this.container.hasPointerCapture?.(e.pointerId))
-        this.container.releasePointerCapture(e.pointerId);
     };
     this.cancelPointer = (e) => {
       this.pathStart = null;
       this.startPointer = null;
-      if (this.container.hasPointerCapture?.(e.pointerId))
-        this.container.releasePointerCapture(e.pointerId);
     };
     container.addEventListener("pointermove", this.move);
     container.addEventListener("pointerdown", this.down);
