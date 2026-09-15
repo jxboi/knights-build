@@ -956,19 +956,32 @@ h1 span {
   border: 1px solid #eee3c282;
   border-radius: 50%;
   color: #fff6d8;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+  display: block;
+  padding: 0;
   background: #7b86551a;
   text-shadow: 0 1px 3px #58643d;
 }
 .compass span {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  z-index: 1;
+  transform: translateX(-50%);
   font:
     10px "Lora",
     Georgia,
     serif;
-  margin-bottom: 1px;
+  margin: 0;
+}
+.compass svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 38px;
+  height: 38px;
+  display: block;
+  transform: translate(-50%, -50%);
 }
 .compass:hover {
   background: #f4eed832;
@@ -998,8 +1011,13 @@ h1 span {
 .zoom-controls button {
   height: 32px;
   width: 31px;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.zoom-controls button svg {
+  display: block;
 }
 .zoom-controls button:hover {
   background: #e7dcc4;
@@ -2688,6 +2706,7 @@ h1 span {
   }
   .compass svg {
     width: 27px;
+    height: 27px;
   }
   .compass span {
     font-size: 7px;
