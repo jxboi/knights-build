@@ -287,7 +287,7 @@ export class Village {
     this.birds = [];
     this.roads = new Set();
     this.baseRoads = new Set();
-    this.resources = { wood: 140, stone: 95, food: 80 };
+    this.resources = { wood: 140, stone: 95, food: 80, wheat: 0 };
     this.name = DEFAULT_VILLAGE_NAME;
     this.elapsed = 0;
     this.speed = 1;
@@ -302,7 +302,7 @@ export class Village {
     this.storageAvailable = true;
     this.storageConflict = false;
     this.gathered = 0;
-    this.delivered = { wood: 0, stone: 0, food: 0 };
+    this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0 };
     this.chapterRewards = {};
     this.tutorialStep = 0;
     this.tutorialDismissed = false;
@@ -310,7 +310,7 @@ export class Village {
     this.event = null;
     this.nextEventAt = 70;
     this.trendSample = { elapsed: 0, resources: { ...this.resources } };
-    this.trends = { wood: 0, stone: 0, food: 0 };
+    this.trends = { wood: 0, stone: 0, food: 0, wheat: 0 };
     this.activity = "";
     this.activityTime = 0;
     this.activityLog = [];
@@ -743,6 +743,7 @@ export class Village {
         "house",
         "well",
         "farm",
+        "bakery",
         "grainfield",
         "grainfield_sown",
         "grainfield_sprout",
@@ -2475,7 +2476,8 @@ export class Village {
     return {
       wood: "#b97943",
       stone: "#9ca8a3",
-      food: "#e1b74e",
+      food: "#c98a43",
+      wheat: "#e1b74e",
     }[resource] || "#d6bd7c";
   }
   showCarry(w, resource) {
@@ -2818,8 +2820,8 @@ export class Village {
     w.timer = candidates.length ? 2 : 0;
   }
   simulate(dt) {
-    if (!this.delivered) this.delivered = { wood: 0, stone: 0, food: 0 };
-    if (!this.trends) this.trends = { wood: 0, stone: 0, food: 0 };
+    if (!this.delivered) this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0 };
+    if (!this.trends) this.trends = { wood: 0, stone: 0, food: 0, wheat: 0 };
     this.elapsed += dt;
     this.updateGrainFields();
     if (!this.event && this.elapsed >= (this.nextEventAt || 70)) {
@@ -3023,10 +3025,10 @@ export class Village {
           this.updateGrainFieldVisual(field, true);
           const amount =
             CATALOG.farm.amount + (farm.upgrade === "Rich soil" ? 4 : 0);
-          w.carry = { resource: "food", amount };
+          w.carry = { resource: "wheat", amount };
           w.field = null;
           w.workDuration = 0;
-          this.showCarry(w, "food");
+          this.showCarry(w, "wheat");
           w.phase = "deliver";
           const depot =
             this.buildings.find((building) => building.type === "townhall") ||
@@ -3039,9 +3041,10 @@ export class Village {
         w.timer -= dt;
         if (w.timer <= 0) {
           const c = CATALOG[w.building.type];
-          if (c.input && this.resources.food < c.input) {
+          const inputResource = c.inputResource || "food";
+          if (c.input && (this.resources[inputResource] || 0) < c.input) {
             if (!w.waitingForInput)
-              this.announce(`${c.name} is waiting for food.`);
+              this.announce(`${c.name} is waiting for ${inputResource}.`);
             w.waitingForInput = true;
             w.workDuration = 0;
             w.timer = 4;
@@ -3049,8 +3052,8 @@ export class Village {
           }
           const resumedFromWaiting = w.waitingForInput;
           w.waitingForInput = false;
-          if (resumedFromWaiting) this.announce(`${c.name} has food again.`);
-          if (c.input) this.resources.food -= c.input;
+          if (resumedFromWaiting) this.announce(`${c.name} has ${inputResource} again.`);
+          if (c.input) this.resources[inputResource] -= c.input;
           const amount = c.amount + (w.building.upgrade === "Rich soil" ? 4 : 0);
           w.carry = { resource: c.resource, amount };
           w.workDuration = 0;
@@ -3079,12 +3082,12 @@ export class Village {
             this.buildings.find((building) => building.type === "townhall") ||
             w.building;
           this.deliveryBurst(depot, w.carry.resource, w.carry.amount);
-          this.resources[w.carry.resource] += w.carry.amount;
+          this.resources[w.carry.resource] = (this.resources[w.carry.resource] || 0) + w.carry.amount;
           this.delivered[w.carry.resource] =
             (this.delivered[w.carry.resource] || 0) + w.carry.amount;
           if (w.carry.resource === "wood") this.gathered += w.carry.amount;
           this.announce(
-            `${w.carry.resource[0].toUpperCase()}${w.carry.resource.slice(1)} +${w.carry.amount} delivered to the hall.`,
+            `${w.building.type === "bakery" ? "Bread (food)" : w.carry.resource[0].toUpperCase() + w.carry.resource.slice(1)} +${w.carry.amount} delivered to the hall.`,
           );
           w.building.cycles++;
           this.clearCarry(w);
@@ -3236,7 +3239,7 @@ export class Village {
                 : assigned.some((w) => w.phase === "harvest")
                   ? "Harvesting"
                 : assigned.some((w) => w.waitingForInput)
-                  ? "Waiting for food"
+                  ? `Waiting for ${CATALOG[b.type]?.inputResource || "food"}`
                 : assigned.some((w) => w.phase === "work")
                   ? "Working"
                   : b.type === "farm" && !farmFields.length

@@ -30,7 +30,7 @@ import {
 function village() {
   const v = Object.create(Village.prototype);
   Object.assign(v, {
-    resources: { wood: 100, stone: 100, food: 100 },
+    resources: { wood: 100, stone: 100, food: 100, wheat: 0 },
     buildings: [],
     workers: [],
     decor: [],
@@ -382,12 +382,12 @@ test("a farmer harvests only ripe connected grain and carries it to the hall", (
   assert.equal(worker.phase, "harvest");
   v.simulate(4);
   assert.equal(worker.phase, "deliver");
-  assert.deepEqual(worker.carry, { resource: "food", amount: 8 });
+  assert.deepEqual(worker.carry, { resource: "wheat", amount: 8 });
   assert.equal(field.claimedBy, null);
   assert.equal(field.cycles, 1);
   assert.equal(grainGrowthStage(field.plantedAt, v.elapsed), "sown");
   v.simulate(0.1);
-  assert.equal(v.resources.food, 108);
+  assert.equal(v.resources.wheat, 8);
   assert.equal(farm.cycles, 1);
 });
 
@@ -826,7 +826,7 @@ test("save keeps delivery history as safe whole-number building totals", () => {
     Object.assign(v, {
       ready: true,
       name: "Willowbrook",
-      resources: { wood: 100, stone: 100, food: 100 },
+      resources: { wood: 100, stone: 100, food: 100, wheat: 0 },
       workers: [],
       elapsed: 12,
       created: {},
@@ -1206,7 +1206,7 @@ test("stale tabs refuse rename and path mutations", () => {
     storageConflict: true,
     name: "Willowbrook",
     roads: new Set(),
-    resources: { wood: 100, stone: 100, food: 100 },
+    resources: { wood: 100, stone: 100, food: 100, wheat: 0 },
     notify(message) {
       notice = message;
     },
@@ -1418,4 +1418,31 @@ test("feasts spend food and pause controls release current workers", () => {
   assert.equal(v.setPaused("farm-1", true), true);
   assert.equal(worker.building, null);
   assert.equal(building.paused, true);
+});
+
+
+test("bakery waits for wheat, consumes one recipe, and delivers bread as food", () => {
+  const v = village();
+  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0 };
+  const worker = { m: new THREE.Object3D(), path: [], phase: "work", timer: 0, building: bakery };
+  v.buildings = [bakery];
+  v.workers = [worker];
+  v.route = () => true;
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+  v.simulate(1);
+  assert.equal(worker.waitingForInput, true);
+  assert.equal(worker.carry, undefined);
+  assert.equal(v.resources.food, 100);
+  v.resources.wheat = 8;
+  v.simulate(4);
+  assert.equal(worker.waitingForInput, false);
+  assert.equal(v.resources.wheat, 4);
+  assert.deepEqual(worker.carry, { resource: "food", amount: 8 });
+  assert.equal(v.resources.food, 100);
+  v.simulate(.1);
+  assert.equal(v.resources.food, 108);
+  assert.equal(v.resources.wheat, 4);
+  assert.equal(bakery.cycles, 1);
 });

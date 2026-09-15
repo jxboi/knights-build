@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Wheat,
+  Croissant,
   Trees,
   Mountain,
   Users,
@@ -42,7 +43,7 @@ import { CATALOG } from "./catalog.js";
 import { completedPlayerMilestone } from "./progression.js";
 import HealthCheck from "./health-check.jsx";
 import "./style.css";
-const resourceIcons = { wood: Trees, stone: Mountain, food: Wheat };
+const resourceIcons = { wood: Trees, stone: Mountain, food: Croissant, wheat: Wheat };
 const formatCount = (value) =>
   Math.floor(Number(value) || 0).toLocaleString("en-US");
 function timeOfDay(seconds = 0) {
@@ -55,7 +56,7 @@ function timeOfDay(seconds = 0) {
 }
 function workerStatus(worker) {
   if (!worker) return "Idle";
-  if (worker.waitingForInput) return "Waiting for food";
+  if (worker.waitingForInput) return "Waiting for ingredients";
   if (worker.deliveryRetry) return "Waiting for route";
   return {
     travel: "On the way",
@@ -124,7 +125,7 @@ function App() {
     previousSpeed = useRef(1);
   const [state, setState] = useState({
     name: "Willowbrook",
-    resources: { wood: 140, stone: 95, food: 80 },
+    resources: { wood: 140, stone: 95, food: 80, wheat: 0 },
     population: 8,
     capacity: 16,
     day: 1,
@@ -139,8 +140,8 @@ function App() {
     saveAvailable: true,
     hasSaved: false,
     saveConflict: false,
-    delivered: { wood: 0, stone: 0, food: 0 },
-    trends: { wood: 0, stone: 0, food: 0 },
+    delivered: { wood: 0, stone: 0, food: 0, wheat: 0 },
+    trends: { wood: 0, stone: 0, food: 0, wheat: 0 },
     inTransit: 0,
     blockedSites: 0,
     chapterGoals: [],
@@ -763,7 +764,7 @@ function App() {
     (building) => building.progress < 1 || building.workers > 0,
   ).length;
   const waitingForFood = state.buildings.some(
-    (building) => building.status === "Waiting for food",
+    (building) => building.status === "Waiting for food" || building.status === "Waiting for wheat",
   );
   const waitingForRoute = state.buildings.some(
     (building) => building.status === "Waiting for route",
@@ -790,6 +791,7 @@ function App() {
       wood: Math.floor(state.resources.wood || 0),
       stone: Math.floor(state.resources.stone || 0),
       food: Math.floor(state.resources.food || 0),
+      wheat: Math.floor(state.resources.wheat || 0),
     },
     buildings: state.buildings.map((building) => ({
       name: CATALOG[building.type]?.name || building.type,
@@ -1035,6 +1037,7 @@ function App() {
         <div className="resources">
           <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} />
           <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} />
+          <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} />
           <Resource type="food" value={state.resources.food} trend={state.trends.food} />
           <div
             className={`resource population ${housingFull ? "at-capacity" : ""}`}
@@ -1207,7 +1210,7 @@ function App() {
               (waitingForRoute
                   ? "A worker is waiting for a clear route."
                   : waitingForFood
-                    ? "The windmill needs food to keep working."
+                    ? "A producer needs ingredients. Farms supply wheat for bakeries."
                     : state.buildings.some((b) => b.progress < 1)
                       ? "Your builders are at work."
                     : housingFull
@@ -2456,7 +2459,7 @@ function App() {
                   <div>
                     <strong>Grow a thriving settlement</strong>
                     <span>
-                      Farms produce food, lumberyards supply wood, and mines
+                      Farms produce wheat, bakeries bake it into bread (food), lumberyards supply wood, and mines
                       gather stone. Windmills turn 2 food into 8. Paths speed up
                       travel.
                     </span>

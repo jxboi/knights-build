@@ -16,7 +16,7 @@ export const CHAPTER_GOALS = [
   {
     id: "thriving-market",
     title: "A thriving market",
-    description: "Deliver 32 food to the town hall through farms and windmills.",
+    description: "Deliver 32 food to the town hall through bakeries and windmills.",
     metric: "foodDelivered",
     target: 32,
     reward: "Market pennant",

@@ -53,6 +53,38 @@ def house():
   for z in [.23,.49]:cube('Garden rail',(x,-.07,z),(.08,2.95,.08),'timber')
  cube('Crate',(-1,-1.4,.23),(.4,.4,.46),'timber')
  for z in [.1,.35]:cube('Crate band',(-1,-1.61,z),(.43,.035,.045),'cut')
+def bakery():
+ # Stone oven workshop, timber upper floor, golden thatch and tall flue.
+ cube('Stone foundation',(0,0,.12),(2.7,2.5,.24),'stone')
+ cube('Oven walls',(0,0,.75),(2.5,2.2,1.25),'stoneLight')
+ for row in range(4):
+  for col in range(7):
+   x=-1.1+col*.36
+   cube('Masonry block',(x,-1.12,.28+row*.28),(.33,.07,.24),'stone' if (row+col)%3==0 else 'stoneLight')
+ cube('Upper plaster',(0,0,1.95),(2.5,2.2,1.15),'plaster')
+ for x in [-1.2,0,1.2]:
+  cube('Timber upright',(x,-1.14,1.96),(.13,.13,1.23),'wood')
+ for z in [1.37,2.5]:cube('Crossbeam',(0,-1.15,z),(2.6,.16,.14),'wood')
+ roof(2.95,2.7,2.55,1.13,'cut')
+ beam('Gable brace',(-1.15,-1.15,2.55),(0,-1.15,3.53),.12,'wood')
+ beam('Gable brace',(1.15,-1.15,2.55),(0,-1.15,3.53),.12,'wood')
+ cube('Loft window',(.55,-1.17,2.04),(.47,.04,.58),'dark')
+ cube('Window mullion',(.55,-1.2,2.04),(.045,.04,.58),'cream')
+ cube('Oven mouth',(-.45,-1.18,.68),(.76,.1,.78),'dark')
+ ico('Oven embers',(-.45,-1.25,.4),(.27,.08,.12),'roof')
+ cube('Bakery door',(.9,-1.17,.68),(.46,.08,1.05),'wood')
+ cube('Bread counter',(-.43,-1.55,.62),(1.3,.55,.12),'cut')
+ for x in [-.97,.1]:cube('Counter legs',(x,-1.55,.31),(.1,.12,.62),'wood')
+ for x in [-.83,-.46,-.09]:
+  ico('Fresh loaf',(x,-1.55,.77),(.16,.22,.1),'wheatLight')
+  beam('Loaf score',(x-.08,-1.58,.855),(x+.06,-1.53,.855),.025,'cream')
+ cube('Tall stone chimney',(.78,.55,3.2),(.53,.58,2.4),'stone')
+ for z in [2.4,2.8,3.2,3.6,4.0]:cube('Chimney course',(.78,.245,z),(.55,.035,.08),'stoneLight')
+ cube('Chimney rim',(.78,.55,4.43),(.66,.7,.16),'stoneLight')
+ cube('Flue opening',(.78,.55,4.52),(.39,.43,.02),'dark')
+ beam('Sign bracket',(1.2,-1.15,2.4),(1.2,-1.77,2.4),.07,'wood')
+ cube('Red bakery sign',(1.2,-1.75,2.12),(.45,.08,.43),'roof')
+ ico('Sign loaf',(1.2,-1.81,2.12),(.17,.025,.075),'cream')
 def tree():
  cyl('Trunk',(0,0,.65),.19,1.3,'wood',6)
  for z,r,d in [(1.4,.93,1.45),(2.07,.74,1.35),(2.66,.48,1.2)]:cyl('Pine',(0,0,z),r,d,'leaf' if z<2 else 'leafLight',5,0)
@@ -142,7 +174,9 @@ def worker():
  cube('Tunic',(0,0,.51),(.23,.16,.3),'blue');ico('Head',(0,0,.79),(.115,.1,.13),'skin');cyl('Cap',(0,0,.9),.13,.12,'cream',6,.11)
  for x in [-.075,.075]:beam('Leg',(x,0,.10),(x,0,.38),.08,'dark');cube('Shoe',(x,-.035,.07),(.09,.17,.09),'wood')
  for x in [-.16,.16]:beam('Arm',(x,0,.62),(x,-.02,.36),.07,'cream');ico('Hand',(x,-.02,.33),(.055,.055,.06),'skin')
-assets={'tree':tree,'rock':rock,'fence':fence,'house':house,'well':well,'farm':farm,'grainfield':lambda:grainfield('ripe'),'grainfield_sown':lambda:grainfield('sown'),'grainfield_sprout':lambda:grainfield('sprout'),'grainfield_growing':lambda:grainfield('growing'),'grainfield_ripe':lambda:grainfield('ripe'),'lumberyard':lumberyard,'mine':mine,'windmill':windmill,'watchtower':watchtower,'townhall':townhall,'worker':worker}
+assets={'tree':tree,'rock':rock,'fence':fence,'house':house,'bakery':bakery,'well':well,'farm':farm,'grainfield':lambda:grainfield('ripe'),'grainfield_sown':lambda:grainfield('sown'),'grainfield_sprout':lambda:grainfield('sprout'),'grainfield_growing':lambda:grainfield('growing'),'grainfield_ripe':lambda:grainfield('ripe'),'lumberyard':lumberyard,'mine':mine,'windmill':windmill,'watchtower':watchtower,'townhall':townhall,'worker':worker}
+only_asset=os.environ.get("ONLY_ASSET")
+if only_asset: assets={only_asset:assets[only_asset]}
 for name,fn in assets.items():
  bpy.ops.object.select_all(action='DESELECT');before=set(bpy.data.objects);fn();objects=list(set(bpy.data.objects)-before)
  # Merge static geometry by material to keep browser draw calls low.
@@ -171,5 +205,5 @@ for screen in bpy.data.screens:
    area.spaces.active.region_3d.view_distance=32
    area.spaces.active.region_3d.view_location=(10,8,1)
    area.spaces.active.shading.color_type='MATERIAL'
-bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT,'blender','village-assets.blend'))
+if not only_asset: bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT,'blender','village-assets.blend'))
 print(f'All {len(assets)} assets exported.')
