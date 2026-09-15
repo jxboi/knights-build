@@ -2519,4 +2519,5 @@ function App() {
   );
 }
 const isHealthCheck = window.location.pathname.replace(/\/$/, "") === "/health-check";
+if (isHealthCheck) document.title = "Performance health check — Hearth & Hamlet";
 createRoot(document.getElementById("root")).render(isHealthCheck ? <HealthCheck /> : <App />);

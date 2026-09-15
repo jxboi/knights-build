@@ -197,7 +197,7 @@ function HealthCheck() {
         <MetricCard icon={HardDrive} label="Game payload" value={bytesToLabel(totalEncoded)} detail="Compressed bytes requested by the game" tone="terra" />
         <MetricCard icon={Clock3} label="Ready to play" value={msToLabel(metrics?.ready)} detail="Document start → 3D world ready" tone="green" />
         <MetricCard icon={Gauge} label="Frame rate" value={metricState(frameRate, " fps")} detail="Live 5-second requestAnimationFrame sample" tone="blue" />
-        <MetricCard icon={Cpu} label="Long tasks" value={metricState(longTasks, " tasks")} detail="Main-thread tasks over 50 ms during sample" tone="gold" />
+        <MetricCard icon={Cpu} label="Long tasks" value={metricState(longTasks, " tasks")} detail={Number.isFinite(runtime?.longestTask) ? `Longest task ${msToLabel(runtime.longestTask)}` : "Main-thread tasks over 50 ms during sample"} tone="gold" />
       </section>
 
       <section className="health-grid health-grid-secondary">
