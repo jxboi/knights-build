@@ -159,6 +159,7 @@ function App() {
     [help, setHelp] = useState(false),
     [goals, setGoals] = useState(false),
     [grid, setGrid] = useState(false),
+    [paletteOpen, setPaletteOpen] = useState(false),
     [menu, setMenu] = useState(false),
     [overview, setOverview] = useState(false),
     [reset, setReset] = useState(false),
@@ -283,6 +284,7 @@ function App() {
     }
     const next = type === selected ? null : type;
     if (next) {
+      setPaletteOpen(true);
       const active = document.activeElement;
       placementFocusReturn.current =
         focusReturn ||
@@ -1645,7 +1647,7 @@ function App() {
           <span>How to play</span>
         </button>
       </div>
-      <div className="build-area">
+      <div className={`build-area ${paletteOpen ? "palette-open" : "palette-collapsed"}`}>
         {active && (
           <div
             id="build-details"
@@ -1770,12 +1772,26 @@ function App() {
           <div className="build-title">
             <span />
             <Hammer size={14} />
-            <span>MAKE YOURSELF AT HOME</span>
+            <button
+              type="button"
+              className="palette-toggle"
+              aria-expanded={paletteOpen}
+              aria-controls="building-palette"
+              aria-label={paletteOpen ? "Collapse building menu" : "Expand building menu"}
+              title={paletteOpen ? "Collapse building menu" : "Expand building menu"}
+              onClick={() => setPaletteOpen((open) => !open)}
+            >
+              <span>MAKE YOURSELF AT HOME</span>
+              <ChevronDown size={13} aria-hidden="true" />
+            </button>
             <span />
           </div>
         )}
         <nav
-          className="build-palette parchment"
+          id="building-palette"
+          className={`build-palette parchment ${paletteOpen ? "is-open" : "is-collapsed"}`}
+          aria-hidden={!paletteOpen}
+          inert={!paletteOpen}
           aria-label="Village building and path tools. On small screens, scroll horizontally to see every tool."
         >
           <span className="palette-scroll-hint" aria-hidden="true">

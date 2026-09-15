@@ -739,6 +739,9 @@ h1 span {
   transform: translateX(-50%);
   width: min(830px, calc(100% - 220px));
 }
+.build-area.palette-collapsed .build-title {
+  margin-bottom: 4px;
+}
 .build-title {
   display: flex;
   align-items: center;
@@ -749,6 +752,27 @@ h1 span {
   font-size: 8px;
   letter-spacing: 1.9px;
   margin-bottom: 13px;
+}
+.palette-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 5px;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+.palette-toggle:hover,
+.palette-toggle:focus-visible {
+  background: #f5f0d925;
+}
+.palette-toggle svg {
+  transition: transform 0.2s ease;
+}
+.palette-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 .build-title > span:first-child,
 .build-title > span:last-child {
@@ -766,6 +790,26 @@ h1 span {
   gap: 4px;
   background: linear-gradient(135deg, #fbf7ebef, #eee4cef7);
   box-shadow: 0 7px 30px #30331c28;
+  max-height: 150px;
+  opacity: 1;
+  overflow: hidden;
+  transition:
+    max-height 0.24s ease,
+    opacity 0.18s ease,
+    padding 0.24s ease,
+    border-width 0.24s ease,
+    box-shadow 0.24s ease,
+    transform 0.24s ease;
+}
+.build-palette.is-collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+  box-shadow: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
 }
 .palette-scroll-hint {
   display: none;
