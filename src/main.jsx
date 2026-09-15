@@ -62,9 +62,9 @@ function workerStatus(worker) {
   if (worker.deliveryRetry) return "Waiting for route";
   if (worker.insideBuilding) {
     return {
-      farm: "Working inside Farmhouse",
-      bakery: "Working inside Bakery",
-      windmill: "Working inside Windmill",
+      farm: "Cutting grain inside Farmhouse",
+      bakery: "Processing wheat inside Bakery",
+      windmill: "Processing wheat inside Windmill",
     }[worker.buildingType] || "Working inside building";
   }
   return {

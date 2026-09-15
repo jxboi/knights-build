@@ -2805,6 +2805,31 @@ export class Village {
     const pickaxe = makeTool(0.2, 0.045);
     pickaxe.rotation.z = -0.95;
     rightArm.add(pickaxe);
+    const sickle = new THREE.Group();
+    const sickleHandle = part(
+      new THREE.BoxGeometry(0.03, 0.2, 0.03),
+      materials.wood,
+    );
+    sickleHandle.position.y = -0.1;
+    const sickleBlade = part(
+      new THREE.TorusGeometry(0.075, 0.014, 5, 10, Math.PI * 0.82),
+      materials.metal,
+    );
+    sickleBlade.position.set(0.035, 0.02, 0);
+    sickleBlade.rotation.z = -0.45;
+    sickle.add(sickleHandle, sickleBlade);
+    sickle.position.set(0, -0.29, -0.06);
+    sickle.rotation.z = -0.5;
+    sickle.visible = false;
+    leftArm.add(sickle);
+    const rollingPin = part(
+      new THREE.CylinderGeometry(0.035, 0.035, 0.22, 8),
+      materials.wood,
+    );
+    rollingPin.rotation.z = Math.PI / 2;
+    rollingPin.position.set(0, -0.3, -0.07);
+    rollingPin.visible = false;
+    rightArm.add(rollingPin);
     const farmerBrim = part(
       new THREE.CylinderGeometry(0.18, 0.18, 0.035, 8),
       materials.cream,
@@ -2862,6 +2887,8 @@ export class Village {
       axe,
       hammer,
       pickaxe,
+      sickle,
+      rollingPin,
       farmerBrim,
       bakerApron,
       roleHeadgear,
@@ -2939,6 +2966,8 @@ export class Village {
     worker.rig.axe.visible = false;
     worker.rig.hammer.visible = workerType === WORKER_TYPES.BUILDER;
     worker.rig.pickaxe.visible = workerType === WORKER_TYPES.MINER;
+    worker.rig.sickle.visible = workerType === WORKER_TYPES.FARMER;
+    worker.rig.rollingPin.visible = workerType === WORKER_TYPES.BAKER;
     Object.values(worker.rig.roleHeadgear).forEach((headgear) => {
       headgear.visible = false;
     });
@@ -2986,6 +3015,7 @@ export class Village {
       building: null,
       workInside: false,
       insideBuilding: false,
+      workEffect: null,
       carry: null,
       tree: null,
       waitingForInput: false,
@@ -3286,6 +3316,105 @@ export class Village {
     worker.insideBuilding = Boolean(inside);
     if (worker.m) worker.m.visible = !inside;
     if (worker.contactShadow) worker.contactShadow.visible = !inside;
+  }
+  createWorkEffect(type) {
+    const group = new THREE.Group();
+    group.renderOrder = 8;
+    const part = (geometry, color) => {
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({
+          color,
+          roughness: 0.86,
+          flatShading: true,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      );
+      mesh.renderOrder = 8;
+      group.add(mesh);
+      return mesh;
+    };
+    if (type === "farm") {
+      const action = new THREE.Group();
+      const handle = new THREE.Mesh(
+        new THREE.BoxGeometry(0.035, 0.34, 0.035),
+        new THREE.MeshStandardMaterial({ color: "#70452b", roughness: 0.9, flatShading: true, depthTest: false, depthWrite: false }),
+      );
+      const blade = new THREE.Mesh(
+        new THREE.TorusGeometry(0.1, 0.018, 5, 12, Math.PI * 0.82),
+        new THREE.MeshStandardMaterial({ color: "#d7d4bd", roughness: 0.76, flatShading: true, depthTest: false, depthWrite: false }),
+      );
+      handle.position.y = -0.15;
+      blade.position.set(0.055, 0.02, 0);
+      blade.rotation.z = -0.45;
+      action.add(handle, blade);
+      action.position.set(0.15, 1.48, -0.05);
+      group.add(action);
+      const grain = new THREE.Group();
+      for (const x of [-0.18, 0, 0.18]) {
+        const stalk = part(new THREE.BoxGeometry(0.025, 0.28, 0.025), "#e2bf54");
+        stalk.position.set(x, 1.05 + Math.abs(x) * 0.25, 0.02);
+        stalk.rotation.z = x * 0.8;
+        grain.add(stalk);
+      }
+      group.add(grain);
+      group.userData = { type, action, grain };
+    } else {
+      const action = new THREE.Group();
+      const pin = part(new THREE.CylinderGeometry(0.045, 0.045, 0.3, 8), "#d9a66d");
+      pin.rotation.z = Math.PI / 2;
+      pin.position.set(0, 1.28, -0.05);
+      action.add(pin);
+      const bread = part(new THREE.SphereGeometry(0.11, 8, 5), "#d7924b");
+      bread.scale.set(1.25, 0.55, 0.8);
+      bread.position.set(0.08, 1.56, -0.05);
+      action.add(bread);
+      const flour = new THREE.Group();
+      for (const [x, y, z] of [[-0.12, 1.72, 0], [0, 1.84, -0.03], [0.12, 1.7, 0.02]]) {
+        const puff = part(new THREE.SphereGeometry(0.055, 7, 5), "#fff1bd");
+        puff.position.set(x, y, z);
+        flour.add(puff);
+      }
+      group.add(action, flour);
+      group.userData = { type: "bakery", action, flour };
+    }
+    group.visible = false;
+    this.scene.add(group);
+    return group;
+  }
+  updateWorkerWorkEffect(worker, time, motion = 1) {
+    const active =
+      worker?.insideBuilding &&
+      worker.building &&
+      (worker.phase === "harvest" || worker.phase === "work") &&
+      ["farm", "bakery", "windmill"].includes(worker.building.type);
+    if (!active) {
+      if (worker?.workEffect) worker.workEffect.visible = false;
+      return;
+    }
+    const effectType = worker.building.type === "farm" ? "farm" : "bakery";
+    const effectMatches =
+      worker.workEffect?.userData.type === effectType;
+    if (!effectMatches) {
+      this.disposeOwnedObject(worker.workEffect);
+      worker.workEffect = this.createWorkEffect(worker.building.type === "farm" ? "farm" : "bakery");
+    }
+    const effect = worker.workEffect;
+    // Float the work vignette just above the roofline so the activity remains
+    // readable even while the worker itself is inside the building.
+    effect.position.set(worker.building.x, 1.1, worker.building.z);
+    effect.visible = true;
+    if (effect.userData.type === "farm") {
+      const swing = motion * Math.sin(time * 6.5 + (worker.walkPhase || 0));
+      effect.userData.action.rotation.z = -0.42 + swing * 0.62;
+      effect.userData.grain.rotation.z = swing * 0.08;
+    } else {
+      const roll = motion * Math.sin(time * 5.5 + (worker.walkPhase || 0));
+      effect.userData.action.rotation.z = roll * 0.28;
+      effect.userData.flour.position.y = Math.max(0, roll) * 0.08;
+      effect.userData.flour.rotation.y = time * 0.7;
+    }
   }
   nextConstructionMaterial(building) {
     return Object.entries(CATALOG[building?.type]?.cost || {}).find(
@@ -4627,12 +4756,39 @@ export class Village {
         w.rig.leftLeg.rotation.x += (gait * 0.42 - w.rig.leftLeg.rotation.x) * 0.35;
         w.rig.rightLeg.rotation.x += (-gait * 0.42 - w.rig.rightLeg.rotation.x) * 0.35;
         const chopping = w.phase === "chop";
+        const harvesting =
+          w.workerType === WORKER_TYPES.FARMER && w.phase === "harvest";
+        const baking =
+          w.workerType === WORKER_TYPES.BAKER &&
+          w.phase === "work" &&
+          w.insideBuilding;
+        const workBeat = Math.sin(t * (baking ? 5.5 : 7) + (w.walkPhase || 0));
         w.rig.leftArm.rotation.x +=
-          ((chopping ? -0.72 : -gait * 0.3) - w.rig.leftArm.rotation.x) *
+          ((chopping
+            ? -0.72
+            : harvesting
+              ? -0.92 + Math.max(0, workBeat) * 0.85
+              : baking
+                ? -0.48 + workBeat * 0.42
+                : -gait * 0.3) -
+            w.rig.leftArm.rotation.x) *
           0.35;
         w.rig.rightArm.rotation.x +=
-          ((chopping ? -0.72 : gait * 0.3) - w.rig.rightArm.rotation.x) *
+          ((chopping
+            ? -0.72
+            : harvesting
+              ? -0.5 - workBeat * 0.4
+              : baking
+                ? -0.58 - workBeat * 0.4
+                : gait * 0.3) -
+            w.rig.rightArm.rotation.x) *
           0.35;
+        if (w.rig.sickle) {
+          w.rig.sickle.rotation.z = harvesting ? -0.9 + workBeat * 1.2 : -0.5;
+        }
+        if (w.rig.rollingPin) {
+          w.rig.rollingPin.rotation.y = baking ? workBeat * 0.75 : 0;
+        }
         if (w.rig.axe) {
           w.rig.axe.visible = w.workerType === WORKER_TYPES.WOODCUTTER;
           if (chopping) {
@@ -4649,6 +4805,7 @@ export class Village {
           ? 0.18 + Math.abs(stride) * 0.035
           : 0.18;
       }
+      this.updateWorkerWorkEffect(w, t, motion);
     }
     for (const m of this.ripples) {
       const phase = m.userData.phase || 0;
