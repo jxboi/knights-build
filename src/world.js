@@ -27,6 +27,9 @@ const riverX = (z) => 16 + Math.sin(z * 0.13) * 1.6;
 export const WORKER_CLEARANCE = 0.78;
 const WORKER_REPATH_SECONDS = 1.1;
 const WORKER_PASS_SECONDS = 1;
+const WORKER_DEADLOCK_SECONDS = 1.8;
+const WORKER_DEADLOCK_YIELD_SECONDS = 2.4;
+const WORKER_DEADLOCK_RADIUS = 1.65;
 const VILLAGE_EVENTS = [
   {
     id: "peddler",
@@ -2533,6 +2536,9 @@ export class Village {
       forcedYield: null,
       avoidanceTarget: null,
       avoidanceTime: 0,
+      deadlockLeaderTime: 0,
+      deadlockYieldTime: 0,
+      deadlockYieldTo: null,
       rig,
     };
     m.userData.worker = w;
@@ -2950,6 +2956,100 @@ export class Village {
       !this.workerMoveBlocker(worker, candidate)
     );
   }
+  deadlockEscapeTarget(worker, clusterCenter) {
+    const away = worker.m.position.clone().sub(clusterCenter);
+    away.y = 0;
+    if (away.lengthSq() < 0.01) {
+      const angle = (this.workerPriority(worker) * 2.399963229728653) % (Math.PI * 2);
+      away.set(Math.cos(angle), 0, Math.sin(angle));
+    } else away.normalize();
+    const candidates = [];
+    for (const radius of [1.15, 1.55, 2]) {
+      for (const turn of [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI]) {
+        const direction = away.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), turn);
+        const target = worker.m.position.clone().addScaledVector(direction, radius);
+        let clear = true;
+        const samples = Math.ceil(radius / (WORKER_CLEARANCE * 0.35));
+        for (let sample = 1; sample <= samples; sample++) {
+          const probe = worker.m.position
+            .clone()
+            .addScaledVector(direction, (radius * sample) / samples);
+          if (!this.workerCanStepTo(worker, probe)) {
+            clear = false;
+            break;
+          }
+        }
+        if (!clear) continue;
+        const congestion = this.workers.reduce(
+          (score, other) =>
+            other === worker
+              ? score
+              : score + Math.max(0, 2.5 - target.distanceTo(other.m.position)),
+          0,
+        );
+        candidates.push({ target, score: congestion + Math.abs(turn) * 0.2 - radius * 0.1 });
+      }
+    }
+    candidates.sort((a, b) => a.score - b.score);
+    return candidates[0]?.target || null;
+  }
+  resolveWorkerDeadlocks() {
+    const stuck = this.workers.filter(
+      (worker) =>
+        worker.path?.length &&
+        (worker.spaceWait || 0) >= WORKER_DEADLOCK_SECONDS &&
+        !worker.deadlockYieldTime &&
+        !worker.deadlockLeaderTime,
+    );
+    const remaining = new Set(stuck);
+    while (remaining.size) {
+      const first = remaining.values().next().value;
+      const cluster = [first];
+      remaining.delete(first);
+      for (let index = 0; index < cluster.length; index++) {
+        const current = cluster[index];
+        for (const candidate of [...remaining]) {
+          if (current.m.position.distanceTo(candidate.m.position) <= WORKER_DEADLOCK_RADIUS) {
+            cluster.push(candidate);
+            remaining.delete(candidate);
+          }
+        }
+      }
+      if (cluster.length < 2) continue;
+      const nearby = this.workers.filter((worker) =>
+        cluster.some(
+          (member) => member.m.position.distanceTo(worker.m.position) <= WORKER_DEADLOCK_RADIUS,
+        ),
+      );
+      if (nearby.some((worker) => worker.deadlockLeaderTime > 0)) continue;
+      const center = cluster
+        .reduce((sum, worker) => sum.add(worker.m.position), new THREE.Vector3())
+        .multiplyScalar(1 / cluster.length);
+      const options = cluster
+        .map((worker) => ({ worker, target: this.deadlockEscapeTarget(worker, center) }))
+        .filter(({ target }) => target)
+        .sort(
+          (a, b) =>
+            (b.worker.spaceWait || 0) - (a.worker.spaceWait || 0) ||
+            this.workerPriority(a.worker) - this.workerPriority(b.worker),
+        );
+      if (!options.length) continue;
+      const { worker: leader, target } = options[0];
+      leader.avoidanceTarget = target;
+      leader.avoidanceTime = WORKER_DEADLOCK_YIELD_SECONDS;
+      leader.deadlockLeaderTime = WORKER_DEADLOCK_YIELD_SECONDS;
+      leader.deadlockYieldTime = 0;
+      leader.deadlockYieldTo = null;
+      leader.forcedYield = null;
+      for (const worker of nearby) {
+        if (worker === leader) continue;
+        worker.deadlockYieldTime = WORKER_DEADLOCK_YIELD_SECONDS;
+        worker.deadlockYieldTo = leader.id;
+        worker.avoidanceTarget = null;
+        worker.avoidanceTime = 0;
+      }
+    }
+  }
   startAvoidance(worker, direction) {
     // Everyone prefers the same passing side, so a dense crossing circulates
     // instead of forming an alternating ring of workers yielding into one
@@ -3029,6 +3129,11 @@ export class Village {
   }
   moveWorker(w, dt) {
     if (!w.path?.length) return false;
+    if ((w.deadlockYieldTime || 0) > 0) {
+      w.waitingForSpace = true;
+      w.waitingFor = w.deadlockYieldTo || null;
+      return false;
+    }
     const next = w.path[0];
     if (
       this.routeTargetBlocked(next) &&
@@ -3117,9 +3222,14 @@ export class Village {
     }
     for (const w of this.workers) {
       w.repathCooldown = Math.max(0, (w.repathCooldown || 0) - dt);
+      w.deadlockLeaderTime = Math.max(0, (w.deadlockLeaderTime || 0) - dt);
+      w.deadlockYieldTime = Math.max(0, (w.deadlockYieldTime || 0) - dt);
+      if (!w.deadlockYieldTime) w.deadlockYieldTo = null;
     }
+    this.resolveWorkerDeadlocks();
     const movementOrder = [...this.workers].sort(
       (a, b) =>
+        Number(Boolean(b.deadlockLeaderTime)) - Number(Boolean(a.deadlockLeaderTime)) ||
         (b.spaceWait || 0) - (a.spaceWait || 0) ||
         this.workerPriority(a) - this.workerPriority(b),
     );
@@ -3141,6 +3251,9 @@ export class Village {
         w.forcedYield = null;
         w.avoidanceTarget = null;
         w.avoidanceTime = 0;
+        w.deadlockLeaderTime = 0;
+        w.deadlockYieldTime = 0;
+        w.deadlockYieldTo = null;
       }
       if (w.path.length) {
         this.moveWorker(w, dt);

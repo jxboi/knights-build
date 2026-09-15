@@ -564,6 +564,65 @@ test("a crowded crossing clears without workers overlapping", () => {
   assert.ok(v.workers.every((worker) => worker.path.length === 0));
 });
 
+test("a cramped worker group elects one escape leader and clears", () => {
+  const v = village();
+  for (let index = 0; index < 5; index++) {
+    const angle = (index * Math.PI * 2) / 5;
+    const x = Math.cos(angle) * 1.15;
+    const z = Math.sin(angle) * 1.15;
+    const worker = {
+      id: `worker-${index}`,
+      movementPriority: index,
+      m: new THREE.Object3D(),
+      path: [new THREE.Vector3(-x * 3, 0, -z * 3)],
+      routeTarget: { x: -x * 3, z: -z * 3 },
+      phase: "travel",
+      field: null,
+      spaceWait: 2,
+      repathCooldown: 0,
+      forcedYield: null,
+    };
+    worker.m.position.set(x, 0, z);
+    v.workers.push(worker);
+  }
+
+  let usedCoordinator = false;
+  let closest = Infinity;
+  for (let tick = 0; tick < 700; tick++) {
+    for (const worker of v.workers) {
+      worker.repathCooldown = Math.max(0, worker.repathCooldown - 0.05);
+      worker.deadlockLeaderTime = Math.max(0, (worker.deadlockLeaderTime || 0) - 0.05);
+      worker.deadlockYieldTime = Math.max(0, (worker.deadlockYieldTime || 0) - 0.05);
+      if (!worker.deadlockYieldTime) worker.deadlockYieldTo = null;
+    }
+    v.resolveWorkerDeadlocks();
+    const leaders = v.workers.filter((worker) => worker.deadlockLeaderTime > 0);
+    const yielding = v.workers.filter((worker) => worker.deadlockYieldTime > 0);
+    if (leaders.length) {
+      usedCoordinator = true;
+      assert.equal(leaders.length, 1);
+      assert.ok(yielding.length >= 1);
+    }
+    const movementOrder = [...v.workers].sort(
+      (a, b) =>
+        Number(Boolean(b.deadlockLeaderTime)) - Number(Boolean(a.deadlockLeaderTime)) ||
+        (b.spaceWait || 0) - (a.spaceWait || 0) ||
+        v.workerPriority(a) - v.workerPriority(b),
+    );
+    for (const worker of movementOrder) v.moveWorker(worker, 0.05);
+    for (let a = 0; a < v.workers.length; a++)
+      for (let b = a + 1; b < v.workers.length; b++)
+        closest = Math.min(
+          closest,
+          v.workers[a].m.position.distanceTo(v.workers[b].m.position),
+        );
+  }
+
+  assert.equal(usedCoordinator, true);
+  assert.ok(closest >= WORKER_CLEARANCE);
+  assert.ok(v.workers.every((worker) => worker.path.length === 0));
+});
+
 test("temporary worker occupancy does not make a destination unreachable", () => {
   const v = village();
   const mover = { m: new THREE.Object3D(), path: [] };
