@@ -2649,6 +2649,21 @@ export class Village {
       cream: sourceMaterial("arm", "#e1c386"),
       dark: sourceMaterial("leg", "#201d19"),
       wood: sourceMaterial("shoe", "#70452b"),
+      accent: new THREE.MeshStandardMaterial({
+        color: "#f0b94b",
+        roughness: 0.9,
+        flatShading: true,
+      }),
+      light: new THREE.MeshStandardMaterial({
+        color: "#fff1bd",
+        roughness: 0.86,
+        flatShading: true,
+      }),
+      metal: new THREE.MeshStandardMaterial({
+        color: "#7b858c",
+        roughness: 0.8,
+        flatShading: true,
+      }),
     };
     const part = (geometry, material) => {
       const mesh = new THREE.Mesh(geometry, material);
@@ -2666,7 +2681,54 @@ export class Village {
     rig.add(head);
     const cap = part(new THREE.CylinderGeometry(0.13, 0.11, 0.12, 6), materials.cream);
     cap.position.y = 0.9;
+    cap.visible = false;
     rig.add(cap);
+    const roleHeadgear = {};
+    const addHeadgear = (type, meshes) => {
+      const group = new THREE.Group();
+      meshes.forEach((mesh) => group.add(mesh));
+      group.visible = false;
+      rig.add(group);
+      roleHeadgear[type] = group;
+      return group;
+    };
+    const builderHelmet = addHeadgear(WORKER_TYPES.BUILDER, [
+      part(new THREE.CylinderGeometry(0.145, 0.13, 0.095, 8), materials.accent),
+      part(new THREE.BoxGeometry(0.19, 0.035, 0.19), materials.accent),
+    ]);
+    builderHelmet.children[0].position.y = 0.9;
+    builderHelmet.children[1].position.set(0, 0.865, -0.01);
+    const woodcutterHat = addHeadgear(WORKER_TYPES.WOODCUTTER, [
+      part(new THREE.CylinderGeometry(0.16, 0.135, 0.075, 8), materials.wood),
+      part(new THREE.CylinderGeometry(0.22, 0.22, 0.035, 8), materials.accent),
+      part(new THREE.BoxGeometry(0.16, 0.035, 0.025), materials.dark),
+    ]);
+    woodcutterHat.children[0].position.y = 0.93;
+    woodcutterHat.children[1].position.y = 0.885;
+    woodcutterHat.children[2].position.set(0, 0.92, -0.135);
+    const minerHelmet = addHeadgear(WORKER_TYPES.MINER, [
+      part(new THREE.CylinderGeometry(0.155, 0.135, 0.08, 8), materials.metal),
+      part(new THREE.BoxGeometry(0.2, 0.035, 0.18), materials.metal),
+      part(new THREE.SphereGeometry(0.042, 8, 6), materials.light),
+    ]);
+    minerHelmet.children[0].position.y = 0.91;
+    minerHelmet.children[1].position.set(0, 0.875, -0.015);
+    minerHelmet.children[2].position.set(0, 0.89, -0.145);
+    const farmerHat = addHeadgear(WORKER_TYPES.FARMER, [
+      part(new THREE.ConeGeometry(0.115, 0.11, 8), materials.cream),
+      part(new THREE.CylinderGeometry(0.22, 0.22, 0.035, 10), materials.accent),
+      part(new THREE.TorusGeometry(0.135, 0.018, 5, 8), materials.dark),
+    ]);
+    farmerHat.children[0].position.y = 0.95;
+    farmerHat.children[1].position.y = 0.895;
+    farmerHat.children[2].position.set(0, 0.94, 0);
+    farmerHat.children[2].rotation.x = Math.PI / 2;
+    const bakerToque = addHeadgear(WORKER_TYPES.BAKER, [
+      part(new THREE.CylinderGeometry(0.12, 0.14, 0.14, 8), materials.light),
+      part(new THREE.SphereGeometry(0.1, 8, 5), materials.light),
+    ]);
+    bakerToque.children[0].position.y = 0.96;
+    bakerToque.children[1].position.y = 1.035;
     const makeArm = (x) => {
       const pivot = new THREE.Group();
       pivot.position.set(x, 0.62, 0);
@@ -2744,13 +2806,44 @@ export class Village {
     rig.add(farmerBrim);
     const bakerApron = part(
       new THREE.BoxGeometry(0.18, 0.21, 0.025),
-      materials.cream,
+      materials.light,
     );
     bakerApron.position.set(0, 0.51, -0.09);
     bakerApron.visible = false;
     rig.add(bakerApron);
+    const builderBelt = part(
+      new THREE.BoxGeometry(0.255, 0.055, 0.19),
+      materials.accent,
+    );
+    builderBelt.position.set(0, 0.45, 0);
+    builderBelt.visible = false;
+    rig.add(builderBelt);
+    const woodcutterSash = part(
+      new THREE.BoxGeometry(0.045, 0.3, 0.025),
+      materials.accent,
+    );
+    woodcutterSash.position.set(-0.07, 0.52, -0.095);
+    woodcutterSash.rotation.z = -0.26;
+    woodcutterSash.visible = false;
+    rig.add(woodcutterSash);
+    const minerLamp = part(
+      new THREE.SphereGeometry(0.055, 8, 6),
+      materials.light,
+    );
+    minerLamp.position.set(0, 0.89, -0.19);
+    minerLamp.visible = false;
+    rig.add(minerLamp);
+    const farmerOveralls = part(
+      new THREE.BoxGeometry(0.19, 0.18, 0.03),
+      materials.accent,
+    );
+    farmerOveralls.position.set(0, 0.54, -0.095);
+    farmerOveralls.visible = false;
+    rig.add(farmerOveralls);
     const leftLeg = makeLeg(-0.075);
     const rightLeg = makeLeg(0.075);
+    // Keep the role silhouettes readable at the game's normal isometric zoom.
+    rig.scale.setScalar(1.16);
     m.add(rig);
     return {
       rig,
@@ -2763,6 +2856,11 @@ export class Village {
       pickaxe,
       farmerBrim,
       bakerApron,
+      roleHeadgear,
+      builderBelt,
+      woodcutterSash,
+      minerLamp,
+      farmerOveralls,
       cap,
       materials,
     };
@@ -2782,30 +2880,35 @@ export class Village {
         cap: "#e1c386",
         dark: "#201d19",
         shoe: "#70452b",
+        accent: "#f0b94b",
       },
       [WORKER_TYPES.WOODCUTTER]: {
         tunic: "#7c4e31",
         cap: "#d2a261",
         dark: "#29231d",
         shoe: "#5c3824",
+        accent: "#d44d37",
       },
       [WORKER_TYPES.MINER]: {
         tunic: "#5f666e",
         cap: "#b4bbb6",
         dark: "#30343a",
         shoe: "#45484a",
+        accent: "#98a3a8",
       },
       [WORKER_TYPES.FARMER]: {
         tunic: "#6e8651",
         cap: "#d6b04e",
         dark: "#3e3a25",
         shoe: "#67482b",
+        accent: "#e2bf54",
       },
       [WORKER_TYPES.BAKER]: {
         tunic: "#b85f55",
         cap: "#f0d8b5",
         dark: "#43302c",
         shoe: "#70452b",
+        accent: "#b85f55",
       },
     }[workerType];
     const materials = worker.rig.materials;
@@ -2813,6 +2916,13 @@ export class Village {
     materials.cream.color.set(palette.cap);
     materials.dark.color.set(palette.dark);
     materials.wood.color.set(palette.shoe);
+    materials.accent.color.set(palette.accent);
+    materials.light.color.set(
+      workerType === WORKER_TYPES.BAKER ? "#fff7df" : "#fff1bd",
+    );
+    materials.metal.color.set(
+      workerType === WORKER_TYPES.MINER ? "#98a3a8" : "#7b858c",
+    );
     worker.rig.cap.scale.set(
       workerType === WORKER_TYPES.MINER ? 1.12 : 1,
       workerType === WORKER_TYPES.FARMER ? 0.86 : 1,
@@ -2821,8 +2931,18 @@ export class Village {
     worker.rig.axe.visible = false;
     worker.rig.hammer.visible = workerType === WORKER_TYPES.BUILDER;
     worker.rig.pickaxe.visible = workerType === WORKER_TYPES.MINER;
-    worker.rig.farmerBrim.visible = workerType === WORKER_TYPES.FARMER;
+    Object.values(worker.rig.roleHeadgear).forEach((headgear) => {
+      headgear.visible = false;
+    });
+    worker.rig.roleHeadgear[workerType].visible = true;
+    worker.rig.farmerBrim.visible = false;
     worker.rig.bakerApron.visible = workerType === WORKER_TYPES.BAKER;
+    worker.rig.builderBelt.visible = workerType === WORKER_TYPES.BUILDER;
+    worker.rig.woodcutterSash.visible = workerType === WORKER_TYPES.WOODCUTTER;
+    worker.rig.minerLamp.visible = workerType === WORKER_TYPES.MINER;
+    worker.rig.farmerOveralls.visible = workerType === WORKER_TYPES.FARMER;
+    worker.rig.axe.visible = workerType === WORKER_TYPES.WOODCUTTER;
+    worker.rig.pickaxe.visible = workerType === WORKER_TYPES.MINER;
     worker.workerType = workerType;
     return workerType;
   }
@@ -4461,8 +4581,7 @@ export class Village {
           ((chopping ? -0.72 : gait * 0.3) - w.rig.rightArm.rotation.x) *
           0.35;
         if (w.rig.axe) {
-          w.rig.axe.visible =
-            w.workerType === WORKER_TYPES.WOODCUTTER && chopping;
+          w.rig.axe.visible = w.workerType === WORKER_TYPES.WOODCUTTER;
           if (chopping) {
             const swing = Math.max(0, Math.sin(t * 7.5 + w.walkPhase));
             w.rig.axe.rotation.z = -0.7 + swing * 1.75;
