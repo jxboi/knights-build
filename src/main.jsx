@@ -26,6 +26,7 @@ import {
   Hammer,
   ChevronDown,
   BarChart3,
+  Gauge,
   Route,
   MessageCircle,
   Send,
@@ -39,6 +40,7 @@ import {
 } from "lucide-react";
 import { CATALOG } from "./catalog.js";
 import { completedPlayerMilestone } from "./progression.js";
+import HealthCheck from "./health-check.jsx";
 import "./style.css";
 const resourceIcons = { wood: Trees, stone: Mountain, food: Wheat };
 const formatCount = (value) =>
@@ -61,6 +63,7 @@ function workerStatus(worker) {
     material_delivery: "Delivering materials",
     construct: "Building",
     work: "Working",
+    harvest: "Harvesting grain",
     deliver: "Delivering",
     visit: "At the well",
   }[worker.phase] || "Idle";
@@ -250,6 +253,46 @@ function App() {
     setGrid(false);
   };
   useEffect(() => {
+    const healthCheck = new URLSearchParams(window.location.search).has("healthcheck");
+    if (!healthCheck || window.parent === window) return;
+    window.performance.setResourceTimingBufferSize?.(1000);
+    const startedAt = performance.now();
+    const longTasks = [];
+    let frames = 0;
+    let raf;
+    let observer;
+    const sample = (now) => {
+      frames += 1;
+      if (now - startedAt < 5000) {
+        raf = requestAnimationFrame(sample);
+        return;
+      }
+      window.parent.postMessage(
+        {
+          type: "hearth-hamlet-health-runtime",
+          fps: frames / ((now - startedAt) / 1000),
+          longTasks: longTasks.length,
+          longestTask: longTasks.reduce((longest, task) => Math.max(longest, task.duration), 0),
+          sampleMs: now - startedAt,
+        },
+        window.location.origin,
+      );
+    };
+    if ("PerformanceObserver" in window) {
+      try {
+        observer = new PerformanceObserver((list) => {
+          longTasks.push(...list.getEntries());
+        });
+        observer.observe({ type: "longtask", buffered: true });
+      } catch {}
+    }
+    raf = requestAnimationFrame(sample);
+    return () => {
+      cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, []);
+  useEffect(() => {
     let cancelled = false;
     import("./world")
       .then(({ Village }) => {
@@ -263,6 +306,16 @@ function App() {
             setThumbs(images);
             setError(err);
             setLoaded(true);
+            if (window.parent !== window && new URLSearchParams(window.location.search).has("healthcheck")) {
+              window.parent.postMessage(
+                {
+                  type: err ? "hearth-hamlet-health-error" : "hearth-hamlet-health-ready",
+                  readyAt: performance.now(),
+                  message: err ? String(err) : undefined,
+                },
+                window.location.origin,
+              );
+            }
           },
           syncPlacementComplete,
         );
@@ -563,12 +616,15 @@ function App() {
       : CATALOG[activeType];
   const moving = selected?.startsWith("move:");
   const pathPlacement = selected === "road";
+  const grainPlacement = selected === "grainfield";
   const pathRemoval = selected === "road-remove" || activeType === "road-remove";
-  const pathMode = pathPlacement || pathRemoval;
+  const tileMode = pathPlacement || grainPlacement || pathRemoval;
   const placementHint =
     state.placement?.reason ||
     (pathPlacement
       ? "Click or drag to lay a path · Esc to cancel"
+      : grainPlacement
+        ? "Click or drag beside a farmhouse to plant grain · Esc to cancel"
       : pathRemoval
         ? "Choose one of your path tiles to remove · Esc to cancel"
         : moving
@@ -695,7 +751,7 @@ function App() {
   };
   const housingFull = state.population >= state.capacity;
   const completedBuildings = state.buildings.filter(
-    (building) => building.progress === 1,
+    (building) => building.progress === 1 && building.type !== "grainfield",
   ).length;
   const activeJobs = state.buildings.filter(
     (building) => building.progress < 1 || building.workers > 0,
@@ -832,7 +888,10 @@ function App() {
         summary: {
           name: typeof parsed.name === "string" ? parsed.name : "Unnamed village",
           population: Math.max(0, Math.floor(Number(parsed.population) || 0)),
-          buildings: parsed.buildings.filter((building) => building?.type !== "road").length,
+          buildings: parsed.buildings.filter(
+            (building) =>
+              building?.type !== "road" && building?.type !== "grainfield",
+          ).length,
           paths: Array.isArray(parsed.roads) ? parsed.roads.length : 0,
         },
       });
@@ -1402,11 +1461,11 @@ function App() {
             <div
               className="inspector-progress"
               role="progressbar"
-              aria-label="Production cycle progress"
+              aria-label={detail.type === "grainfield" ? "Grain growth progress" : "Production cycle progress"}
               aria-valuemin="0"
               aria-valuemax="100"
               aria-valuenow={Math.round(inspectedCycleProgress * 100)}
-              aria-valuetext={`${Math.round(inspectedCycleProgress * 100)}% of current production cycle`}
+              aria-valuetext={`${Math.round(inspectedCycleProgress * 100)}% of ${detail.type === "grainfield" ? "grain growth" : "current production cycle"}`}
             >
               <span
                 style={{ width: `${Math.round(inspectedCycleProgress * 100)}%` }}
@@ -1459,7 +1518,8 @@ function App() {
             )}
             {detail.type !== "worker" && inspectedNextDelivery != null && (
               <span>
-                Next delivery<strong>~{inspectedNextDelivery}s</strong>
+                {detail.type === "grainfield" ? "Fully grown" : "Next delivery"}
+                <strong>{inspectedNextDelivery > 0 ? `~${inspectedNextDelivery}s` : "Ready"}</strong>
               </span>
             )}
             {inspectedRemaining && (
@@ -1508,7 +1568,7 @@ function App() {
                   <X size={14} /> Cancel construction
                 </button>
               )}
-              {inspected.progress === 1 && detail.type !== "townhall" && (
+              {inspected.progress === 1 && detail.type !== "townhall" && detail.type !== "grainfield" && (
                 <button
                   className="inspector-control"
                   onClick={() => {
@@ -1519,6 +1579,16 @@ function App() {
                   }}
                 >
                   <Move size={14} /> Relocate building
+                </button>
+              )}
+              {detail.type === "grainfield" && (
+                <button
+                  className="inspector-control danger"
+                  onClick={() => {
+                    if (game.current?.removeBuilding(inspected.id)) closeDetail();
+                  }}
+                >
+                  <X size={14} /> Clear grain field
                 </button>
               )}
               {inspected.progress === 1 && CATALOG[detail.type]?.upgrade && !inspected.upgrade && (
@@ -1740,7 +1810,7 @@ function App() {
               <Info size={13} />
               <span>{buildDetailsOpen ? "Hide details" : "Details"}</span>
             </button>
-            {!pathMode && (
+            {!tileMode && (
               <button
                 aria-label="Rotate building"
                 onClick={() => game.current?.rotate()}
@@ -1750,7 +1820,7 @@ function App() {
                 <kbd>R</kbd>
               </button>
             )}
-            {!pathMode && (
+            {!tileMode && (
               <button
                 className="placement-confirm"
                 aria-label={moving ? "Confirm building relocation" : "Confirm placement"}
@@ -1764,7 +1834,7 @@ function App() {
               </button>
             )}
             <button
-              aria-label={pathMode ? "Cancel path tool" : "Cancel building placement"}
+              aria-label={tileMode ? "Cancel tile tool" : "Cancel building placement"}
               onClick={cancel}
             >
               <X size={14} />
@@ -1818,7 +1888,7 @@ function App() {
               const shortcut = i < 9 ? String(i + 1).padStart(2, "0") : null;
               const costSummary = Object.entries(c.cost)
                 .map(([resource, amount]) => `${amount} ${resource}`)
-                .join(" · ") + (type === "road" ? " per tile" : "");
+                .join(" · ") + (c.tileTool || type === "road" ? " per tile" : "");
               const shortcutHint = shortcut
                 ? ` Keyboard shortcut ${Number(shortcut)}`
                 : "";
@@ -2000,6 +2070,10 @@ function App() {
             <BarChart3 size={16} />
             Village overview
           </button>
+          <a role="menuitem" href="/health-check" target="_blank" rel="noreferrer">
+            <Gauge size={16} />
+            Performance health check
+          </a>
           <button role="menuitem" onClick={showGoals}>
             <Leaf size={16} />
             A place to call home
@@ -2438,4 +2512,5 @@ function App() {
     </main>
   );
 }
-createRoot(document.getElementById("root")).render(<App />);
+const isHealthCheck = window.location.pathname.replace(/\/$/, "") === "/health-check";
+createRoot(document.getElementById("root")).render(isHealthCheck ? <HealthCheck /> : <App />);

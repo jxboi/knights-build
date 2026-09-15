@@ -65,11 +65,32 @@ def well():
  for x in [-.68,.68]:cube('Well post',(x,0,1.05),(.13,.15,1.8),'wood')
  roof(1.85,1.25,1.9,.55,'blue');beam('Spindle',(-.65,0,1.25),(.65,0,1.25),.13,'timber');beam('Rope',(0,0,.5),(0,0,1.35),.025,'cream')
 def farm():
- cube('Tilled soil',(0,0,.025),(3.6,3.6,.06),'soil');fence(3.75,3.75)
- for x in range(11):
-  for y in range(11):
-   xx=-1.5+x*.29+random.uniform(-.045,.045);yy=-1.5+y*.29;h=random.uniform(.45,.8)
-   cyl('Wheat stalk',(xx,yy,h/2),.018,h,'wheat',3);cyl('Grain',(xx,yy,h),.105,.37,'wheatLight' if random.random()>.4 else 'wheat',4,.01)
+ # The farm is now the farmhouse that anchors player-planted grain plots.
+ cube('Foundation',(0,0,.13),(2.85,2.5,.26),'stoneLight');cube('Farmhouse walls',(0,0,1.0),(2.65,2.3,1.75),'plaster');roof(3.05,2.75,1.9,1.15,'timber')
+ for x in [-1.26,1.26]:
+  for y in [-1.12,1.12]:cube('Oak corner',(x,y,.98),(.13,.13,1.82),'wood')
+ cube('Stable door',(.42,-1.18,.62),(.72,.06,1.12),'timber');beam('Door brace',(-.23,-1.25,.18),(1.05,-1.25,1.04),.055,'cut')
+ cube('Loft window',(-.62,-1.19,1.35),(.42,.05,.46),'dark');cube('Loft sill',(-.62,-1.24,1.08),(.52,.08,.08),'wood')
+ cube('Awning post',(-1.58,-.92,.65),(.11,.11,1.3),'wood');cube('Awning post',(-1.58,.92,.65),(.11,.11,1.3),'wood')
+ beam('Awning',(-1.62,-1.05,1.32),(-1.62,1.05,1.32),.12,'timber')
+ for row in range(2):
+  for col in range(3):
+   sack=ico('Grain sack',(-1.72,-.55+col*.5,.24+row*.28),(.23,.3,.22),'cream');sack.rotation_euler.z=.12*(col-1)
+ cube('Farm crate',(.98,-1.46,.24),(.45,.42,.48),'cut')
+
+def grainfield(stage='ripe'):
+ cube('Tilled soil',(0,0,.025),(.96,.96,.05),'soil')
+ for x in [-.63,-.21,.21,.63]:cube('Furrow',(x,0,.065),(.045,.86,.035),'cut' if stage=='sown' else 'soil')
+ if stage=='sown':return
+ rows=4 if stage=='sprout' else 5
+ cols=4 if stage=='sprout' else 5
+ height={'sprout':.18,'growing':.43,'ripe':.68}[stage]
+ for x in range(rows):
+  for y in range(cols):
+   xx=-.62+x*(1.24/max(1,rows-1))+random.uniform(-.025,.025);yy=-.62+y*(1.24/max(1,cols-1))+random.uniform(-.02,.02)
+   color='leafLight' if stage=='sprout' else ('wheat' if stage=='growing' else ('wheatLight' if random.random()>.38 else 'wheat'))
+   cyl('Grain stalk',(xx,yy,height/2+.07),.014 if stage=='sprout' else .02,height,color,3)
+   if stage!='sprout':cyl('Grain head',(xx,yy,height+.05),.055 if stage=='growing' else .075,.16 if stage=='growing' else .23,color,4,.01)
 def lumberyard():
  for x in [-1.15,1.15]:
   for y in [-.9,.9]:cube('Posts',(x,y,1.05),(.18,.18,2.1),'timber')
@@ -121,7 +142,7 @@ def worker():
  cube('Tunic',(0,0,.51),(.23,.16,.3),'blue');ico('Head',(0,0,.79),(.115,.1,.13),'skin');cyl('Cap',(0,0,.9),.13,.12,'cream',6,.11)
  for x in [-.075,.075]:beam('Leg',(x,0,.10),(x,0,.38),.08,'dark');cube('Shoe',(x,-.035,.07),(.09,.17,.09),'wood')
  for x in [-.16,.16]:beam('Arm',(x,0,.62),(x,-.02,.36),.07,'cream');ico('Hand',(x,-.02,.33),(.055,.055,.06),'skin')
-assets={'tree':tree,'rock':rock,'fence':fence,'house':house,'well':well,'farm':farm,'lumberyard':lumberyard,'mine':mine,'windmill':windmill,'watchtower':watchtower,'townhall':townhall,'worker':worker}
+assets={'tree':tree,'rock':rock,'fence':fence,'house':house,'well':well,'farm':farm,'grainfield':lambda:grainfield('ripe'),'grainfield_sown':lambda:grainfield('sown'),'grainfield_sprout':lambda:grainfield('sprout'),'grainfield_growing':lambda:grainfield('growing'),'grainfield_ripe':lambda:grainfield('ripe'),'lumberyard':lumberyard,'mine':mine,'windmill':windmill,'watchtower':watchtower,'townhall':townhall,'worker':worker}
 for name,fn in assets.items():
  bpy.ops.object.select_all(action='DESELECT');before=set(bpy.data.objects);fn();objects=list(set(bpy.data.objects)-before)
  # Merge static geometry by material to keep browser draw calls low.
@@ -151,4 +172,4 @@ for screen in bpy.data.screens:
    area.spaces.active.region_3d.view_location=(10,8,1)
    area.spaces.active.shading.color_type='MATERIAL'
 bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT,'blender','village-assets.blend'))
-print('All 12 assets exported.')
+print(f'All {len(assets)} assets exported.')

@@ -50,12 +50,13 @@ The numbered cards match the keyboard shortcuts:
 | --- | --- | --- | --- |
 | 1 | Cottage | 30 wood · 10 stone | +4 housing capacity; welcomes up to 2 villagers when complete |
 | 2 | Well | 15 wood · 25 stone | Village gathering place |
-| 3 | Farm | 25 wood · 5 stone | +8 food per harvest |
-| 4 | Lumberyard | 20 wood · 10 stone | +8 wood per delivery |
-| 5 | Stone mine | 35 wood · 15 stone | +6 stone per delivery |
-| 6 | Windmill | 50 wood · 35 stone | Converts 2 food into 8 food per cycle |
-| 7 | Watchtower | 45 wood · 20 stone | Expands the buildable boundary by 3 tiles |
-| 8 | Path | 1 stone per tile | Villagers move 50% faster on paths |
+| 3 | Farmhouse | 25 wood · 5 stone | Farmers harvest connected ripe fields |
+| 4 | Grain field | 1 food per tile | Grows in 30 seconds, then yields 8 food |
+| 5 | Lumberyard | 20 wood · 10 stone | +8 wood per delivery |
+| 6 | Stone mine | 35 wood · 15 stone | +6 stone per delivery |
+| 7 | Windmill | 50 wood · 35 stone | Converts 2 food into 8 food per cycle |
+| 8 | Watchtower | 45 wood · 20 stone | Expands the buildable boundary by 3 tiles |
+| 9 | Path | 1 stone per tile | Villagers move 50% faster on paths |
 
 The starter village includes a town hall and several completed structures. Player-built cottages, farms, and delivered timber count toward the three starter milestones. Completing all three produces a one-time flourishing acknowledgement.
 
@@ -85,7 +86,7 @@ Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment ser
 - Drag: pan. Right-drag: orbit. Scroll or +/-: zoom. Compass: reset camera.
 - Click a completed building: inspect its role, current worker status, assignments, and deliveries. Click a villager to inspect their current task, work-cycle progress, next delivery estimate, and carried goods. Connected paths influence worker routing as well as movement speed.
 - When housing is full, the population indicator and settlement status call out that another cottage is needed.
-- Choose a palette item, then click valid terrain to build. Drag while Path is selected to lay a connected segment; diagonal drags choose the clearer Manhattan turn around obstacles. Green preview = valid; red = blocked.
+- Choose a palette item, then click valid terrain to build. Grain fields must start beside a completed farmhouse and may then extend from another connected plot. Drag while Grain field or Path is selected to lay a connected segment; diagonal drags choose the clearer Manhattan turn around obstacles. Grain advances from tilled soil to shoots, green-gold stalks, and ripe wheat before a farmer harvests it. Green preview = valid; red = blocked.
 - **R:** rotate preview. **Esc:** cancel. **B:** cottage. **G:** grid.
 - **1–9:** choose a building from the palette; use the palette directly for the remaining decorative actions.
 - **Arrow keys:** pan the camera.

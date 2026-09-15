@@ -83,7 +83,24 @@ function popPriority(heap) {
 }
 export const DEFAULT_VILLAGE_NAME = "Willowbrook";
 export const MAX_POPULATION = 24;
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
+export const GRAIN_GROW_SECONDS = 30;
+export const grainGrowthProgress = (plantedAt, elapsed) =>
+  Math.max(
+    0,
+    Math.min(
+      1,
+      (finiteNumber(elapsed, 0) - finiteNumber(plantedAt, 0)) /
+        GRAIN_GROW_SECONDS,
+    ),
+  );
+export const grainGrowthStage = (plantedAt, elapsed) => {
+  const progress = grainGrowthProgress(plantedAt, elapsed);
+  if (progress >= 1) return "ripe";
+  if (progress >= 0.58) return "growing";
+  if (progress >= 0.24) return "sprout";
+  return "sown";
+};
 export const sanitizeVillageName = (value, fallback = DEFAULT_VILLAGE_NAME) => {
   if (typeof value !== "string") return fallback;
   const name = value.trim().replace(/\s+/g, " ").slice(0, 24);
@@ -197,7 +214,10 @@ export const summarizeVillageSave = (record = {}) => {
       MAX_POPULATION,
       Math.max(0, Math.floor(finiteNumber(record.population, 0))),
     ),
-    buildings: buildings.filter((building) => building?.type !== "road").length,
+    buildings: buildings.filter(
+      (building) =>
+        building?.type !== "road" && building?.type !== "grainfield",
+    ).length,
     paths: Array.isArray(record.roads) ? record.roads.length : 0,
   };
 };
@@ -408,7 +428,10 @@ export class Village {
       if (e.button === 0 && this.selected) {
         this.container.setPointerCapture?.(e.pointerId);
       }
-      if (e.button === 0 && this.selected === "road") {
+      if (
+        e.button === 0 &&
+        (this.selected === "road" || this.selected === "grainfield")
+      ) {
         this.pointerMove(e);
         if (this.placement)
           this.pathStart = { x: this.placement.x, z: this.placement.z };
@@ -420,9 +443,14 @@ export class Village {
         e.clientX - this.startPointer[0],
         e.clientY - this.startPointer[1],
       );
-      if (this.selected === "road" && this.pathStart && distance >= 6) {
+      if (
+        (this.selected === "road" || this.selected === "grainfield") &&
+        this.pathStart &&
+        distance >= 6
+      ) {
         this.pointerMove(e);
-        this.paintRoad(this.pathStart, this.placement);
+        if (this.selected === "road") this.paintRoad(this.pathStart, this.placement);
+        else this.paintGrainField(this.pathStart, this.placement);
       } else if (distance < 6) this.click(e);
       this.pathStart = null;
       this.startPointer = null;
@@ -711,6 +739,11 @@ export class Village {
         "house",
         "well",
         "farm",
+        "grainfield",
+        "grainfield_sown",
+        "grainfield_sprout",
+        "grainfield_growing",
+        "grainfield_ripe",
         "lumberyard",
         "mine",
         "windmill",
@@ -790,7 +823,11 @@ export class Village {
           ? [
               savedTownhall,
               ...savedBuildingRecords.filter(
-                (building) => building !== savedTownhall,
+                (building) =>
+                  building !== savedTownhall && building.type !== "grainfield",
+              ),
+              ...savedBuildingRecords.filter(
+                (building) => building.type === "grainfield",
               ),
             ]
           : [];
@@ -799,6 +836,11 @@ export class Village {
           const progress = normalizedBuildingProgress(b.type, b.progress);
           const cycles = Math.max(0, Math.floor(finiteNumber(b.cycles, 0)));
           if (!savedBuildingFits(b, this.buildings)) continue;
+          if (
+            b.type === "grainfield" &&
+            !this.grainFieldConnected(Number(b.x), Number(b.z))
+          )
+            continue;
           this.addBuilding(
             b.type,
             Number(b.x),
@@ -810,6 +852,7 @@ export class Village {
             b.paused,
             b.upgrade,
             b.materials,
+            b.plantedAt,
           );
         }
         if (!this.buildings.some((building) => building.type === "townhall"))
@@ -1013,6 +1056,7 @@ export class Village {
     paused = false,
     upgrade = null,
     materials = null,
+    plantedAt = null,
   ) {
     const m = this.model(type, x, z);
     m.rotation.y = rotation;
@@ -1031,10 +1075,23 @@ export class Village {
       paused: Boolean(paused),
       upgrade: upgrade ? String(upgrade) : null,
       materials: normalizedConstructionMaterials(type, materials, progress),
+      plantedAt:
+        type === "grainfield"
+          ? Math.min(
+              this.elapsed,
+              Math.max(0, finiteNumber(plantedAt, this.elapsed)),
+            )
+          : null,
+      fieldStage: type === "grainfield" ? "sown" : null,
+      claimedBy: null,
       pop: 0,
     };
     m.userData.building = b;
     this.buildings.push(b);
+    if (type === "grainfield") {
+      this.updateGrainFieldVisual(b, true);
+      return b;
+    }
     if (progress < 1) {
       const ready = constructionMaterialsReady(b);
       m.visible = ready;
@@ -1046,6 +1103,87 @@ export class Village {
         this.addLanterns(b);
     }
     return b;
+  }
+  farmTouchesGrainField(farm, x, z) {
+    if (!farm || farm.type !== "farm" || farm.progress < 1) return false;
+    const half = Math.ceil((CATALOG.farm?.size || 4) / 2);
+    const edge = half + 1;
+    const dx = Math.abs(Math.round(x) - Math.round(farm.x));
+    const dz = Math.abs(Math.round(z) - Math.round(farm.z));
+    return (dx === edge && dz <= half) || (dz === edge && dx <= half);
+  }
+  grainFieldConnected(x, z, extraFields = new Set()) {
+    if (
+      this.buildings.some((building) =>
+        this.farmTouchesGrainField(building, x, z),
+      )
+    )
+      return true;
+    const adjacent = [
+      `${x + 1},${z}`,
+      `${x - 1},${z}`,
+      `${x},${z + 1}`,
+      `${x},${z - 1}`,
+    ];
+    return adjacent.some(
+      (key) =>
+        extraFields.has(key) ||
+        this.buildings.some(
+          (building) =>
+            building.type === "grainfield" &&
+            `${building.x},${building.z}` === key,
+        ),
+    );
+  }
+  grainFieldsForFarm(farm) {
+    if (!farm || farm.type !== "farm" || farm.progress < 1) return [];
+    const fields = this.buildings.filter(
+      (building) => building.type === "grainfield",
+    );
+    const connected = [];
+    const visited = new Set();
+    const queue = fields.filter((field) =>
+      this.farmTouchesGrainField(farm, field.x, field.z),
+    );
+    while (queue.length) {
+      const field = queue.shift();
+      const key = `${field.x},${field.z}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      connected.push(field);
+      for (const candidate of fields) {
+        const candidateKey = `${candidate.x},${candidate.z}`;
+        if (
+          !visited.has(candidateKey) &&
+          Math.abs(candidate.x - field.x) + Math.abs(candidate.z - field.z) === 1
+        )
+          queue.push(candidate);
+      }
+    }
+    return connected;
+  }
+  readyGrainFields(farm) {
+    return this.grainFieldsForFarm(farm).filter(
+      (field) =>
+        grainGrowthStage(field.plantedAt, this.elapsed) === "ripe" &&
+        !field.claimedBy,
+    );
+  }
+  updateGrainFieldVisual(field, force = false) {
+    if (!field || field.type !== "grainfield") return;
+    const stage = grainGrowthStage(field.plantedAt, this.elapsed);
+    if (!force && field.fieldStage === stage) return;
+    const previous = field.m;
+    const next = this.model(`grainfield_${stage}`, field.x, field.z);
+    next.rotation.y = field.rotation || 0;
+    next.userData.building = field;
+    field.m = next;
+    field.fieldStage = stage;
+    if (previous) this.scene.remove(previous);
+  }
+  updateGrainFields() {
+    for (const field of this.buildings)
+      if (field.type === "grainfield") this.updateGrainFieldVisual(field);
   }
   addSmoke(b) {
     if (b.smoke || !this.scene?.add) return;
@@ -1268,7 +1406,18 @@ export class Village {
     );
   }
   routeBlocked(x, z, ignore = null) {
-    if (this.blocked(x, z, 0.1, ignore)) return true;
+    if (
+      this.buildings.some(
+        (building) =>
+          building !== ignore &&
+          building.type !== "grainfield" &&
+          Math.abs(x - building.x) <
+            (CATALOG[building.type]?.size || 4) / 2 + 0.1 &&
+          Math.abs(z - building.z) <
+            (CATALOG[building.type]?.size || 4) / 2 + 0.1,
+      )
+    )
+      return true;
     return Boolean(
       this.decor?.some(
         (decor) =>
@@ -1301,7 +1450,13 @@ export class Village {
     if (typeof type !== "string" || !type.startsWith("move:")) return null;
     return this.buildings.find((building) => building.id === type.slice(5)) || null;
   }
-  valid(x, z, type, ignore = this.movingBuilding(type)) {
+  valid(
+    x,
+    z,
+    type,
+    ignore = this.movingBuilding(type),
+    extraGrainFields = new Set(),
+  ) {
     if (type === "road-remove") {
       return this.roads.has(`${x},${z}`) && !this.baseRoads.has(`${x},${z}`)
         ? { ok: true, reason: "Remove this path · 1 stone returned" }
@@ -1359,6 +1514,14 @@ export class Village {
     )
       return { ok: false, reason: "Trees or rocks are in the way." };
     if (
+      buildingType === "grainfield" &&
+      !this.grainFieldConnected(x, z, extraGrainFields)
+    )
+      return {
+        ok: false,
+        reason: "Plant beside a completed farmhouse or connected grain field.",
+      };
+    if (
       !ignore &&
       Object.entries(catalog.cost).some(([r, v]) => this.resources[r] < v)
     )
@@ -1377,6 +1540,8 @@ export class Village {
       reason:
         buildingType === "road"
           ? "Click or drag to lay a path · Esc to cancel"
+          : buildingType === "grainfield"
+            ? "Click or drag to plant grain · Esc to cancel"
           : ignore
             ? "Choose a new spot · click to move · Esc to cancel"
           : "Click to place · R to rotate · Esc to cancel",
@@ -1398,7 +1563,9 @@ export class Village {
               new THREE.BoxGeometry(1, 0.1, 1),
               new THREE.MeshStandardMaterial({ color: "#a8d580" }),
             )
-          : this.models[buildingType].clone(true);
+          : (
+              this.models[buildingType] || this.makeDecorationModel(buildingType)
+            ).clone(true);
       this.ghostGeometryOwned = buildingType === "road" || type === "road-remove";
       this.ghost.traverse((o) => {
         if (o.isMesh) {
@@ -1670,8 +1837,10 @@ export class Village {
         CATALOG[type].decoration ? 1 : 0,
       );
       this.created[type] = (this.created[type] || 0) + 1;
-      const plannedMessage = CATALOG[type].decoration
-        ? `${CATALOG[type].name} placed.`
+      const plannedMessage = type === "grainfield"
+        ? "Grain planted. The first shoots will appear soon."
+        : CATALOG[type].decoration
+          ? `${CATALOG[type].name} placed.`
         : `${CATALOG[type].name} planned. Workers will deliver materials before construction.`;
       this.announce(plannedMessage);
       this.notify(plannedMessage);
@@ -1681,7 +1850,7 @@ export class Village {
         if (guideWorker) this.highlightWorker(guideWorker);
       }
     }
-    if (type !== "road") {
+    if (type !== "road" && !CATALOG[type].tileTool) {
       this.select(null);
       this.onPlacementComplete?.();
     }
@@ -1826,6 +1995,86 @@ export class Village {
     this.save();
     this.emit();
   }
+  paintGrainField(start, end) {
+    if (!start || !end) return;
+    if (this.storageConflict) {
+      this.notify("This village changed in another tab. Reload to continue.");
+      return;
+    }
+    const makePoints = (horizontalFirst) => {
+      const points = [[start.x, start.z]];
+      let x = start.x;
+      let z = start.z;
+      const moveX = () => {
+        while (x !== end.x) {
+          x += Math.sign(end.x - x);
+          points.push([x, z]);
+        }
+      };
+      const moveZ = () => {
+        while (z !== end.z) {
+          z += Math.sign(end.z - z);
+          points.push([x, z]);
+        }
+      };
+      if (horizontalFirst) {
+        moveX();
+        moveZ();
+      } else {
+        moveZ();
+        moveX();
+      }
+      return points;
+    };
+    const traces = [true, false].map((horizontalFirst) => {
+      const usable = [];
+      const virtualFields = new Set();
+      let blockedReason = "";
+      for (const [x, z] of makePoints(horizontalFirst)) {
+        if (
+          this.buildings.some(
+            (building) =>
+              building.type === "grainfield" &&
+              building.x === x &&
+              building.z === z,
+          )
+        )
+          continue;
+        const spot = this.valid(x, z, "grainfield", null, virtualFields);
+        if (!spot.ok) {
+          blockedReason = spot.reason;
+          break;
+        }
+        virtualFields.add(`${x},${z}`);
+        usable.push([x, z]);
+      }
+      return { usable, blockedReason };
+    });
+    const best = traces.sort((a, b) => b.usable.length - a.usable.length)[0];
+    if (!best.usable.length) {
+      if (best.blockedReason) this.notify(best.blockedReason);
+      return;
+    }
+    let planted = 0;
+    for (const [x, z] of best.usable) {
+      const spot = this.valid(x, z, "grainfield");
+      if (!spot.ok) {
+        if (!planted) this.notify(spot.reason || best.blockedReason);
+        break;
+      }
+      for (const [resource, amount] of Object.entries(CATALOG.grainfield.cost))
+        this.resources[resource] -= amount;
+      this.addBuilding("grainfield", x, z, 0, 1);
+      this.created.grainfield = (this.created.grainfield || 0) + 1;
+      planted++;
+    }
+    if (!planted) return;
+    const message = `${planted} grain plot${planted === 1 ? "" : "s"} planted.`;
+    this.announce(message);
+    this.notify(message);
+    this.save();
+    this.emit();
+  }
   removeRoad(x, z) {
     const key = `${x},${z}`;
     if (!this.roads.has(key) || this.baseRoads.has(key)) {
@@ -1849,6 +2098,30 @@ export class Village {
   removeBuilding(id) {
     if (this.blockedByStorageConflict()) return false;
     const building = this.buildings.find((candidate) => candidate.id === id);
+    if (building?.type === "grainfield") {
+      for (const worker of this.workers) {
+        if (worker.field !== building) continue;
+        worker.field = null;
+        worker.building = null;
+        worker.phase = "idle";
+        worker.timer = 0;
+        worker.path = [];
+      }
+      this.scene.remove(building.m);
+      this.buildings = this.buildings.filter(
+        (candidate) => candidate !== building,
+      );
+      this.created.grainfield = Math.max(
+        0,
+        (this.created.grainfield || 1) - 1,
+      );
+      this.resources.food += CATALOG.grainfield.cost.food;
+      this.announce("Grain field cleared. 1 food returned.");
+      this.notify("Grain field cleared. 1 food returned.");
+      this.save();
+      this.emit();
+      return true;
+    }
     if (!building || building.progress >= 1 || building.type === "townhall") return false;
     const refundRate = Math.max(0, Math.min(1, 1 - building.progress));
     Object.entries(CATALOG[building.type]?.cost || {}).forEach(([resource, amount]) => {
@@ -1880,7 +2153,17 @@ export class Village {
   beginMove(id) {
     if (this.blockedByStorageConflict()) return false;
     const building = this.buildings.find((candidate) => candidate.id === id);
-    if (!building || building.progress < 1 || building.type === "townhall") return false;
+    if (
+      !building ||
+      building.progress < 1 ||
+      building.type === "townhall" ||
+      building.type === "grainfield"
+    )
+      return false;
+    if (building.type === "farm" && this.grainFieldsForFarm(building).length) {
+      this.notify("Clear its connected grain fields before moving this farmhouse.");
+      return false;
+    }
     if (this.workers.some((worker) => worker.building === building && worker.carry)) {
       this.notify("Let this building finish its delivery before moving it.");
       return false;
@@ -1912,6 +2195,8 @@ export class Village {
         worker.phase === "material_delivery"
       )
         continue;
+      if (worker.field) worker.field.claimedBy = null;
+      worker.field = null;
       worker.building = null;
       worker.phase = "idle";
       worker.timer = 0;
@@ -2354,7 +2639,17 @@ export class Village {
     const workerLoad = (building) =>
       this.workers.filter((v) => v !== w && v.building === building).length;
     const distanceToJob = (building) => {
-      const [x, z] = this.jobPoint(building);
+      const ripeField =
+        building.type === "farm"
+          ? this.readyGrainFields(building).sort(
+              (a, b) =>
+                Math.hypot(w.m.position.x - a.x, w.m.position.z - a.z) -
+                Math.hypot(w.m.position.x - b.x, w.m.position.z - b.z),
+            )[0]
+          : null;
+      const [x, z] = ripeField
+        ? [ripeField.x, ripeField.z]
+        : this.jobPoint(building);
       return Math.hypot(w.m.position.x - x, w.m.position.z - z);
     };
     const compareJobs = (a, b) =>
@@ -2370,7 +2665,11 @@ export class Village {
       )
       .sort(compareJobs);
     const sites = this.buildings.filter(
-      (b) => b.progress === 1 && CATALOG[b.type]?.resource && !b.paused,
+      (b) =>
+        b.progress === 1 &&
+        CATALOG[b.type]?.resource &&
+        !b.paused &&
+        (b.type !== "farm" || this.readyGrainFields(b).length > 0),
     );
     const candidates = [...construction, ...sites.sort(compareJobs)];
     for (const b of candidates) {
@@ -2380,13 +2679,28 @@ export class Village {
         b.lastRouteBlocked = true;
         continue;
       }
-      const [x, z] = this.jobPoint(destination);
-      if (!this.route(w, x, z)) {
+      const field =
+        !material && b.type === "farm"
+          ? this.readyGrainFields(b).sort(
+              (a, candidate) =>
+                Math.hypot(w.m.position.x - a.x, w.m.position.z - a.z) -
+                Math.hypot(
+                  w.m.position.x - candidate.x,
+                  w.m.position.z - candidate.z,
+                ),
+            )[0]
+          : null;
+      const [x, z] = field
+        ? [field.x, field.z]
+        : this.jobPoint(destination);
+      if (!this.route(w, x, z, field)) {
         b.lastRouteBlocked = true;
         continue;
       }
       b.lastRouteBlocked = false;
       w.building = b;
+      w.field = field || null;
+      if (field) field.claimedBy = w.id;
       w.materialResource = material;
       w.phase = material ? "material_pickup" : "travel";
       return;
@@ -2408,6 +2722,7 @@ export class Village {
     if (!this.delivered) this.delivered = { wood: 0, stone: 0, food: 0 };
     if (!this.trends) this.trends = { wood: 0, stone: 0, food: 0 };
     this.elapsed += dt;
+    this.updateGrainFields();
     if (!this.event && this.elapsed >= (this.nextEventAt || 70)) {
       const event = VILLAGE_EVENTS[Math.floor(this.elapsed / 70) % VILLAGE_EVENTS.length];
       this.event = event;
@@ -2424,6 +2739,8 @@ export class Village {
         w.phase !== "deliver" &&
         w.phase !== "material_delivery"
       ) {
+        if (w.field) w.field.claimedBy = null;
+        w.field = null;
         w.building = null;
         w.phase = "idle";
         w.timer = 0;
@@ -2440,6 +2757,8 @@ export class Village {
           if (w.phase === "deliver" || w.phase === "material_delivery")
             w.deliveryRetry = 1.5;
           else {
+            if (w.field) w.field.claimedBy = null;
+            w.field = null;
             w.phase = "idle";
             w.building = null;
             w.timer = 2;
@@ -2539,7 +2858,11 @@ export class Village {
           w.timer = 0.35;
         }
       } else if (w.phase === "travel") {
-        if (w.building.progress < 1) {
+        if (w.field) {
+          w.phase = "harvest";
+          w.workDuration = 3.5;
+          w.timer = w.workDuration;
+        } else if (w.building.progress < 1) {
           w.phase = "construct";
           w.workDuration = 0;
           w.timer = 5 + rand() * 3;
@@ -2593,6 +2916,35 @@ export class Village {
           this.playSound("complete");
           this.notify(readyMessage);
           this.save();
+        }
+      } else if (w.phase === "harvest") {
+        w.timer -= dt;
+        if (w.timer <= 0) {
+          const field = w.field;
+          const farm = w.building;
+          if (!field || !farm) {
+            w.phase = "idle";
+            w.building = null;
+            w.field = null;
+            continue;
+          }
+          field.plantedAt = this.elapsed;
+          field.claimedBy = null;
+          field.cycles = (field.cycles || 0) + 1;
+          this.updateGrainFieldVisual(field, true);
+          const amount =
+            CATALOG.farm.amount + (farm.upgrade === "Rich soil" ? 4 : 0);
+          w.carry = { resource: "food", amount };
+          w.field = null;
+          w.workDuration = 0;
+          this.showCarry(w, "food");
+          w.phase = "deliver";
+          const depot =
+            this.buildings.find((building) => building.type === "townhall") ||
+            farm;
+          const [depotX, depotZ] = this.jobPoint(depot);
+          w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
+          this.announce("A farmer has gathered a ripe grain field.");
         }
       } else if (w.phase === "work") {
         w.timer -= dt;
@@ -2652,6 +3004,7 @@ export class Village {
         }
         w.phase = "idle";
         w.workDuration = 0;
+        w.field = null;
         w.building = null;
       }
     }
@@ -2691,7 +3044,11 @@ export class Village {
     return this.routeBlocked(point.x, point.z);
   }
   workSnapshot(w) {
-    if (!w || w.phase !== "work" || !(w.workDuration > 0))
+    if (
+      !w ||
+      (w.phase !== "work" && w.phase !== "harvest") ||
+      !(w.workDuration > 0)
+    )
       return { progress: null, remaining: null };
     return {
       progress: Math.max(0, Math.min(1, 1 - w.timer / w.workDuration)),
@@ -2715,6 +3072,7 @@ export class Village {
       (building) =>
         building.progress === 1 &&
         CATALOG[building.type]?.resource &&
+        (building.type !== "farm" || this.readyGrainFields(building).length > 0) &&
         (building.paused || building.lastRouteBlocked ||
           !this.workers.some((worker) => worker.building === building)),
     ).length;
@@ -2727,13 +3085,44 @@ export class Village {
       speed: this.speed,
       name: this.name,
       buildings: this.buildings.map((b) => {
-        const assigned = this.workers.filter((w) => w.building === b);
+        const assigned = this.workers.filter(
+          (w) => w.building === b || w.field === b,
+        );
         const materialsReady = constructionMaterialsReady(b);
         const work = this.workSnapshot(
-          assigned.find((w) => w.phase === "work" && w.workDuration > 0),
+          assigned.find(
+            (w) =>
+              (w.phase === "work" || w.phase === "harvest") &&
+              w.workDuration > 0,
+          ),
         );
+        const fieldProgress =
+          b.type === "grainfield"
+            ? grainGrowthProgress(b.plantedAt, this.elapsed)
+            : null;
+        const fieldStage =
+          b.type === "grainfield"
+            ? grainGrowthStage(b.plantedAt, this.elapsed)
+            : null;
+        const farmFields = b.type === "farm" ? this.grainFieldsForFarm(b) : [];
+        const nextFarmGrowth = farmFields.length
+          ? Math.max(
+              ...farmFields.map((field) =>
+                grainGrowthProgress(field.plantedAt, this.elapsed),
+              ),
+            )
+          : null;
         const status =
-          b.paused
+          b.type === "grainfield"
+            ? b.claimedBy
+              ? "Harvesting"
+              : {
+                  sown: "Freshly planted",
+                  sprout: "Sprouting",
+                  growing: "Growing",
+                  ripe: "Ripe",
+                }[fieldStage]
+            : b.paused
             ? "Paused"
             : b.progress < 1 &&
                 !materialsReady &&
@@ -2755,10 +3144,16 @@ export class Village {
                 ? "Delivering"
               : assigned.some((w) => w.phase === "travel")
                 ? "On the way"
+                : assigned.some((w) => w.phase === "harvest")
+                  ? "Harvesting"
                 : assigned.some((w) => w.waitingForInput)
                   ? "Waiting for food"
                 : assigned.some((w) => w.phase === "work")
                   ? "Working"
+                  : b.type === "farm" && !farmFields.length
+                    ? "Needs grain fields"
+                  : b.type === "farm" && !this.readyGrainFields(b).length
+                    ? "Waiting for grain"
                   : assigned.length
                     ? "Assigned"
                     : "Idle";
@@ -2771,12 +3166,25 @@ export class Village {
           materialsReady,
           workers: assigned.length,
           cycles: b.cycles,
-          cycleProgress: work.progress,
-          nextDelivery: work.remaining,
+          cycleProgress:
+            b.type === "grainfield"
+              ? fieldProgress
+              : b.type === "farm" && work.progress == null
+                ? nextFarmGrowth
+                : work.progress,
+          nextDelivery:
+            b.type === "grainfield"
+              ? fieldProgress >= 1
+                ? work.remaining
+                : Math.ceil((1 - fieldProgress) * GRAIN_GROW_SECONDS)
+              : b.type === "farm" && work.remaining == null && nextFarmGrowth != null
+                ? Math.ceil((1 - nextFarmGrowth) * GRAIN_GROW_SECONDS)
+                : work.remaining,
           status,
           priority: b.priority,
           paused: Boolean(b.paused),
           upgrade: b.upgrade,
+          fieldStage,
         };
       }),
       workers: this.workers.map((w, index) => {
@@ -2846,7 +3254,7 @@ export class Village {
         view: this.viewRecord(),
         roads: [...this.roads].filter((key) => !this.baseRoads?.has(key)),
         buildings: this.buildings.map(
-          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials }) => ({
+          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt }) => ({
             type,
             x,
             z,
@@ -2857,6 +3265,9 @@ export class Village {
             paused: Boolean(paused),
             upgrade: upgrade ? String(upgrade) : null,
             materials: { ...materials },
+            ...(type === "grainfield"
+              ? { plantedAt: Math.max(0, finiteNumber(plantedAt, this.elapsed)) }
+              : {}),
           }),
         ),
       });

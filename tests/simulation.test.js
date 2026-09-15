@@ -17,6 +17,9 @@ import {
   normalizedConstructionMaterials,
   constructionMaterialsReady,
   constructionMaterialProgress,
+  GRAIN_GROW_SECONDS,
+  grainGrowthProgress,
+  grainGrowthStage,
   Village,
 } from "../src/world.js";
 import {
@@ -105,6 +108,35 @@ test("successful building placement clears the active placement tool", () => {
   assert.equal(placementComplete, 1);
   assert.equal(v.selected, null);
   assert.equal(v.placement, null);
+});
+test("decorative building tools create a placement ghost without a loaded GLB", () => {
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    models: {},
+    selected: null,
+    placement: null,
+    rotation: 0,
+    ghost: null,
+    footprint: null,
+    previewOutline: null,
+    boundaryPreview: null,
+    ghostGeometryOwned: false,
+    buildings: [],
+    workers: [],
+    decor: [],
+    resources: { wood: 100, stone: 100 },
+    grid: { visible: false },
+    renderer: { domElement: { style: {} } },
+    controls: { mouseButtons: {}, touches: {} },
+    scene: new THREE.Scene(),
+    clearGhost() {},
+    updatePlacement() {},
+  });
+
+  v.select("flowerbed");
+
+  assert.ok(v.ghost);
+  assert.equal(v.ghost.children.length, 4);
 });
 test("focusing a villager frames them, selects them, and advances the introduction", () => {
   const worker = { id: "worker-1", m: new THREE.Object3D(), building: null };
@@ -259,7 +291,7 @@ test("worker routing prefers a longer connected road", () => {
 test("worker assignment prefers the closest equally staffed work site", () => {
   const v = village();
   const near = {
-    type: "farm",
+    type: "lumberyard",
     progress: 1,
     x: 2,
     z: 0,
@@ -288,6 +320,75 @@ test("worker assignment prefers the closest equally staffed work site", () => {
   v.simulate(0.1);
   assert.equal(w.building, near);
   assert.equal(w.phase, "travel");
+});
+
+test("grain fields grow through readable stages and cap at ripe", () => {
+  assert.equal(grainGrowthStage(10, 10), "sown");
+  assert.equal(grainGrowthStage(10, 10 + GRAIN_GROW_SECONDS * 0.3), "sprout");
+  assert.equal(grainGrowthStage(10, 10 + GRAIN_GROW_SECONDS * 0.7), "growing");
+  assert.equal(grainGrowthStage(10, 10 + GRAIN_GROW_SECONDS), "ripe");
+  assert.equal(grainGrowthProgress(10, 1000), 1);
+});
+
+test("grain plots must connect to a completed farmhouse and can extend as a chain", () => {
+  const v = village();
+  v.buildings = [{ type: "farm", progress: 1, x: 6, z: 6 }];
+  assert.equal(v.valid(9, 6, "grainfield").ok, true);
+  assert.match(v.valid(12, 6, "grainfield").reason, /beside a completed farmhouse/);
+  v.buildings.push({ type: "grainfield", progress: 1, x: 9, z: 6 });
+  assert.equal(v.valid(10, 6, "grainfield").ok, true);
+  v.buildings[0].progress = 0.5;
+  v.buildings.splice(1);
+  assert.equal(v.valid(9, 6, "grainfield").ok, false);
+});
+
+test("a farmer harvests only ripe connected grain and carries it to the hall", () => {
+  const v = village();
+  const hall = { type: "townhall", progress: 1, x: 0, z: 0 };
+  const farm = { type: "farm", progress: 1, x: 6, z: 6, cycles: 0 };
+  const field = {
+    type: "grainfield",
+    progress: 1,
+    x: 9,
+    z: 6,
+    plantedAt: 0,
+    claimedBy: null,
+    cycles: 0,
+  };
+  const worker = {
+    id: "worker-farmer",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    workDuration: 0,
+    building: null,
+  };
+  worker.m.position.set(4, 0, 6);
+  v.buildings = [hall, farm, field];
+  v.workers = [worker];
+  v.elapsed = GRAIN_GROW_SECONDS;
+  v.route = () => true;
+  v.updateGrainFieldVisual = () => {};
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+  v.assign(worker);
+  assert.equal(worker.building, farm);
+  assert.equal(worker.field, field);
+  assert.equal(field.claimedBy, worker.id);
+  worker.path = [];
+  v.simulate(0.1);
+  assert.equal(worker.phase, "harvest");
+  v.simulate(4);
+  assert.equal(worker.phase, "deliver");
+  assert.deepEqual(worker.carry, { resource: "food", amount: 8 });
+  assert.equal(field.claimedBy, null);
+  assert.equal(field.cycles, 1);
+  assert.equal(grainGrowthStage(field.plantedAt, v.elapsed), "sown");
+  v.simulate(0.1);
+  assert.equal(v.resources.food, 108);
+  assert.equal(farm.cycles, 1);
 });
 
 test("worker assignment falls back when the preferred site is unreachable", () => {
