@@ -62,7 +62,7 @@ function workerStatus(worker) {
   if (worker.deliveryRetry) return "Waiting for route";
   if (worker.insideBuilding) {
     return {
-      farm: "Cutting grain inside Farmhouse",
+      farm: "Cutting grain in the field",
       bakery: "Processing wheat inside Bakery",
       windmill: "Processing wheat inside Windmill",
     }[worker.buildingType] || "Working inside building";
@@ -76,7 +76,7 @@ function workerStatus(worker) {
     material_delivery: "Delivering materials",
     construct: "Building",
     work: "Working",
-    harvest: "Harvesting grain",
+    harvest: "Cutting grain in the field",
     deliver: "Delivering",
     visit: "At the well",
   }[worker.phase] || "Idle";

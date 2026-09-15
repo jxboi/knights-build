@@ -590,7 +590,10 @@ test("a farmer harvests only ripe connected grain and carries it to the hall", (
   v.buildings = [hall, farm, field];
   v.workers = [worker];
   v.elapsed = GRAIN_GROW_SECONDS;
-  v.route = () => true;
+  v.route = (candidate, x, z) => {
+    candidate.routeTarget = { x, z };
+    return true;
+  };
   v.updateGrainFieldVisual = () => {};
   v.showCarry = () => {};
   v.clearCarry = () => {};
@@ -598,13 +601,14 @@ test("a farmer harvests only ripe connected grain and carries it to the hall", (
   v.assign(worker);
   assert.equal(worker.building, farm);
   assert.equal(worker.field, field);
-  assert.equal(worker.workInside, true);
+  assert.equal(worker.workInside, false);
+  assert.deepEqual(worker.routeTarget, { x: field.x, z: field.z });
   assert.equal(field.claimedBy, worker.id);
   worker.path = [];
   v.simulate(0.1);
   assert.equal(worker.phase, "harvest");
-  assert.equal(worker.insideBuilding, true);
-  assert.equal(worker.m.visible, false);
+  assert.equal(worker.insideBuilding, false);
+  assert.equal(worker.m.visible, true);
   v.simulate(4);
   assert.equal(worker.phase, "deliver");
   assert.equal(worker.insideBuilding, false);

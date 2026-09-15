@@ -3524,8 +3524,10 @@ export class Village {
                 ),
             )[0]
           : null;
+      // Farmers work at the actual grain plot so the player can see them
+      // cutting the crop. Processing buildings keep their indoor work loop.
       const workInside =
-        !material && ["farm", "bakery", "windmill"].includes(b.type);
+        !material && ["bakery", "windmill"].includes(b.type);
       w.workInside = workInside;
       const [x, z] = tree
         ? [tree.x, tree.z]
@@ -4012,7 +4014,7 @@ export class Village {
           w.timer = w.workDuration;
           this.announce("A worker is chopping down a tree for the lumberyard.");
         } else if (w.field) {
-          if (w.workInside) this.setWorkerInside(w, true);
+          this.setWorkerInside(w, false);
           w.phase = "harvest";
           w.workDuration = 3.5;
           w.timer = w.workDuration;
