@@ -16,18 +16,20 @@ def ico(n,p,s,m):
  bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1,radius=1,location=p); o=bpy.context.object; o.scale=s; return finish(o,n,m)
 def beam(n,a,b,w,m):
  a,b=Vector(a),Vector(b); o=cube(n,(a+b)/2,(w,w,(b-a).length),m); o.rotation_euler=(b-a).to_track_quat('Z','Y').to_euler(); return o
-def roof(w,d,z,h,m='roof'):
- verts=[(-w/2,-d/2,z),(w/2,-d/2,z),(0,-d/2,z+h),(-w/2,d/2,z),(w/2,d/2,z),(0,d/2,z+h)]
- mesh=bpy.data.meshes.new('gable');mesh.from_pydata(verts,[],[(0,1,2),(5,4,3),(0,2,5,3),(2,1,4,5),(3,4,1,0)]);o=bpy.data.objects.new('Roof',mesh);bpy.context.collection.objects.link(o);finish(o,'Roof',m)
+def roof(w,d,z,h,m='roof',cy=0,open_front=False):
+ verts=[(-w/2,cy-d/2,z),(w/2,cy-d/2,z),(0,cy-d/2,z+h),(-w/2,cy+d/2,z),(w/2,cy+d/2,z),(0,cy+d/2,z+h)]
+ faces=[(5,4,3),(0,2,5,3),(2,1,4,5),(3,4,1,0)]
+ if not open_front: faces.insert(0,(0,1,2))
+ mesh=bpy.data.meshes.new('gable');mesh.from_pydata(verts,[],faces);o=bpy.data.objects.new('Roof',mesh);bpy.context.collection.objects.link(o);finish(o,'Roof',m)
  # fine tile courses running down each roof slope
  for side in [-1,1]:
   for row in range(1,5):
    x=side*w/2*row/5; zz=z+h*(1-row/5)+.025
    beam('Tile course',(x,-d/2,zz),(x,d/2,zz),.027,'tile' if m=='roof' else 'blueLight' if m=='blue' else 'cut')
   for col in range(1,7):
-   y=-d/2+d*col/7
+   y=cy-d/2+d*col/7
    beam('Tile seam',(0,y,z+h+.02),(side*w/2,y,z+.02),.016,'tile' if m=='roof' else m)
- for y in [-d/2,d/2]:
+ for y in [cy-d/2,cy+d/2]:
   beam('Bargeboard',(-w/2,y,z),(0,y,z+h),.11,'timber');beam('Bargeboard',(0,y,z+h),(w/2,y,z),.11,'timber')
 def fence(w=3,d=3):
  for y in [-d/2,d/2]:
@@ -54,44 +56,57 @@ def house():
  cube('Crate',(-1,-1.4,.23),(.4,.4,.46),'timber')
  for z in [.1,.35]:cube('Crate band',(-1,-1.61,z),(.43,.035,.045),'cut')
 def bakery():
- # Open-sided stone oven workshop with a visible prep area, timber frame,
- # golden thatch and tall flue.
+ # A compact open-front bakery.  The building reads as a real oven room from
+ # the back, but the viewer-facing half stays open so the baker and bread
+ # production are always legible from the game's standard isometric camera.
  cube('Stone foundation',(0,0,.12),(2.7,2.5,.24),'stone')
- cube('Open bakery floor',(0,0,.27),(2.5,2.2,.12),'cut')
- # A shallow rear service wall keeps the building grounded while the front
- # and right-hand sides remain completely open to the camera.
- cube('Rear service wall',(0,1.03,1.15),(1.25,.10,1.05),'plaster')
- for x in [-1.2,1.2]:
-  cube('Timber corner post',(x,-1.14,1.36),(.13,.13,1.1),'wood')
-  cube('Timber rear post',(x,1.04,1.36),(.13,.13,1.1),'wood')
- for z in [1.37,2.5]:cube('Open front crossbeam',(0,-1.15,z),(2.6,.16,.14),'wood')
- cube('Open side beam',(1.26,0,1.37),(.13,2.1,.14),'wood')
- roof(2.95,2.7,2.55,1.13,'cut')
- beam('Gable brace',(-1.15,-1.15,2.55),(0,-1.15,3.53),.12,'wood')
- beam('Gable brace',(1.15,-1.15,2.55),(0,-1.15,3.53),.12,'wood')
- # Standalone oven at the back-left, with its mouth turned toward the open
- # workspace so the fire and trays are readable from outside.
- cube('Oven body',(-.62,.52,.76),(.72,.52,.66),'stoneLight')
- cube('Oven mouth',(-.62,-.01,.78),(.52,.08,.42),'dark')
- ico('Oven embers',(-.62,-.12,.61),(.25,.08,.10),'roof')
- cube('Oven hearth',(-.62,-.10,.45),(.66,.20,.10),'stone')
- for x in [-.92,-.62,-.32]:
-  ico('Oven bread tray',(x,-.09,.82),(.10,.13,.07),'wheatLight')
- # Low prep table and ingredient shelf make the baker's task legible.
- cube('Baker prep table',(.27,-.42,.72),(1.12,.42,.11),'cut')
- for x in [-.65,.65]:cube('Prep table leg',(.27+x*.7,-.42,.40),(.09,.10,.40),'wood')
- ico('Dough on prep table',(.27,-.48,.87),(.42,.20,.12),'cream')
- cube('Ingredient shelf',(.98,.28,1.08),(.10,.62,.08),'cut')
- for y in [-.12,.22,.55]:cyl('Ingredient jar',(.98,y,1.30),.11,.22,'cream',8)
- cube('Bakery tool rack',(.98,.88,1.56),(.07,.16,.52),'wood')
- for z in [1.42,1.70]:cube('Baking tool',(.90,.83,z),(.025,.05,.15),'stone')
- cube('Tall stone chimney',(.78,.55,3.2),(.53,.58,2.4),'stone')
- for z in [2.4,2.8,3.2,3.6,4.0]:cube('Chimney course',(.78,.245,z),(.55,.035,.08),'stoneLight')
- cube('Chimney rim',(.78,.55,4.43),(.66,.7,.16),'stoneLight')
- cube('Flue opening',(.78,.55,4.52),(.39,.43,.02),'dark')
- beam('Sign bracket',(1.2,-1.15,2.4),(1.2,-1.77,2.4),.07,'wood')
- cube('Red bakery sign',(1.2,-1.75,2.12),(.45,.08,.43),'roof')
- ico('Sign loaf',(1.2,-1.81,2.12),(.17,.025,.075),'cream')
+ cube('Bakery floor',(0,0,.27),(2.5,2.2,.12),'cut')
+ cube('Rear plaster wall',(0,1.04,1.18),(1.25,.12,1.00),'plaster')
+ # The left wall gives the workshop a sheltered, grounded silhouette.  The
+ # right side and front are intentionally free of rails and full-height walls.
+ cube('Left half wall',(-1.18,.34,.76),(.12,.78,.48),'plaster')
+ for x,y in [(-1.2,-1.08),(1.2,-1.08),(-1.2,1.04),(1.2,1.04)]:
+  cube('Bakery timber post',(x,y,1.32),(.13,.13,1.10),'wood')
+ cube('Open front lintel',(0,-1.08,2.32),(2.55,.13,.13),'wood')
+ cube('Rear eave beam',(0,1.06,2.32),(2.55,.13,.13),'wood')
+ beam('Left roof brace',(-1.20,-1.07,1.32),(-1.20,-.28,2.32),.075,'timber')
+ # This short rear roof is a deliberate cutaway: it protects the oven while
+ # the broad front opening frames the prep bench, worker and work effect.
+ roof(2.95,1.62,2.31,1.05,'cut',.48,True)
+ beam('Front gable brace',(-1.15,-.33,2.31),(0,-.33,3.36),.105,'wood')
+ beam('Front gable brace',(1.15,-.33,2.31),(0,-.33,3.36),.105,'wood')
+ # A proper masonry oven is attached to the rear wall; its flue now rises
+ # directly from the oven rather than appearing as a detached tower.
+ cube('Oven hearth',(-.68,.49,.45),(.72,.62,.11),'stone')
+ cube('Oven base',(-.68,.62,.78),(.67,.55,.55),'stoneLight')
+ cyl('Oven dome',(-.68,.62,1.22),.68,.70,'stoneLight',8,.50)
+ cube('Oven mouth',(-.68,.035,.82),(.43,.07,.34),'dark')
+ ico('Oven embers',(-.68,-.05,.62),(.24,.07,.09),'roof')
+ for x in [-.94,-.68,-.42]:
+  ico('Fresh bread',(x,-.055,.86),(.10,.10,.065),'wheatLight')
+ cube('Oven mantle',(-.68,.00,1.19),(.61,.10,.09),'stone')
+ cube('Oven chimney',(-.68,.72,2.87),(.43,.45,2.25),'stone')
+ for z in [2.05,2.48,2.91,3.34,3.77]:
+  cube('Chimney course',(-.68,.49,z),(.47,.035,.07),'stoneLight')
+ cube('Chimney cap',(-.68,.72,4.04),(.56,.58,.13),'stoneLight')
+ cube('Flue opening',(-.68,.72,4.115),(.34,.36,.02),'dark')
+ # The open work zone is intentionally placed at the front-right corner.
+ cube('Baker prep table',(.33,-.48,.76),(1.02,.38,.11),'cut')
+ for x in [-.58,.58]:
+  cube('Prep table leg',(.33+x,-.48,.42),(.075,.085,.36),'wood')
+ ico('Dough on prep table',(.33,-.49,.90),(.40,.18,.10),'cream')
+ for x in [.06,.33,.60]:
+  ico('Loaf on counter',(x,-.66,.91),(.12,.09,.055),'wheatLight')
+ cube('Bread shelf',(.99,.36,1.02),(.10,.58,.07),'cut')
+ for y in [-.06,.25,.54]:
+  cyl('Ingredient jar',(.99,y,1.23),.10,.22,'cream',8)
+ cube('Tool rack',(1.02,.88,1.48),(.07,.13,.42),'wood')
+ for z in [1.34,1.57]:
+  cube('Baking tool',(.94,.82,z),(.022,.04,.14),'stone')
+ # A modest hanging sign identifies the shop without fencing off the view.
+ beam('Sign bracket',(1.19,-1.06,2.18),(1.19,-1.55,2.18),.06,'wood')
+ cube('Bakery sign',(1.19,-1.57,1.94),(.34,.07,.30),'roof')
+ ico('Sign loaf',(1.19,-1.65,1.94),(.14,.022,.06),'cream')
 def tree():
  cyl('Trunk',(0,0,.65),.19,1.3,'wood',6)
  for z,r,d in [(1.4,.93,1.45),(2.07,.74,1.35),(2.66,.48,1.2)]:cyl('Pine',(0,0,z),r,d,'leaf' if z<2 else 'leafLight',5,0)
