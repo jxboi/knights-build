@@ -101,6 +101,14 @@ function HealthCheck() {
   const [lastError, setLastError] = useState("");
 
   useEffect(() => {
+    const previousTitle = document.title;
+    document.title = "Performance health check — Hearth & Hamlet";
+    return () => {
+      document.title = previousTitle;
+    };
+  }, []);
+
+  useEffect(() => {
     const onMessage = (event) => {
       if (event.origin !== window.location.origin || event.source !== frameRef.current?.contentWindow) return;
       if (event.data?.type === "hearth-hamlet-health-ready") {
