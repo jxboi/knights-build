@@ -57,6 +57,8 @@ function workerStatus(worker) {
   if (worker.deliveryRetry) return "Waiting for route";
   return {
     travel: "On the way",
+    material_pickup: "Collecting materials",
+    material_delivery: "Delivering materials",
     construct: "Building",
     work: "Working",
     deliver: "Delivering",
@@ -237,6 +239,12 @@ function App() {
     }
     setDetail(nextDetail);
   };
+  const syncPlacementComplete = () => {
+    setSelected(null);
+    setBuildDetailsOpen(false);
+    setHover(null);
+    setGrid(false);
+  };
   useEffect(() => {
     let cancelled = false;
     import("./world")
@@ -252,6 +260,7 @@ function App() {
             setError(err);
             setLoaded(true);
           },
+          syncPlacementComplete,
         );
       })
       .catch((loadError) => {
@@ -516,6 +525,7 @@ function App() {
   const inspectedRemaining =
     detail?.type !== "worker" &&
     inspected?.progress < 1 &&
+    inspected?.materialsReady &&
     CATALOG[detail?.type]?.seconds
       ? Math.max(
           1,
@@ -526,6 +536,10 @@ function App() {
       : null;
   const inspectedCycleProgress =
     detail?.type !== "worker" ? inspected?.cycleProgress : null;
+  const inspectedMaterialProgress =
+    detail?.type !== "worker" && inspected?.progress < 1
+      ? inspected?.materialProgress
+      : null;
   const inspectedNextDelivery =
     detail?.type !== "worker" ? inspected?.nextDelivery : null;
   const movingId = selected?.startsWith("move:") ? selected.slice(5) : null;
@@ -713,7 +727,7 @@ function App() {
     buildings: state.buildings.map((building) => ({
       name: CATALOG[building.type]?.name || building.type,
       type: building.type,
-      status: building.progress < 1 ? "Building" : building.status || "Complete",
+      status: building.status || (building.progress < 1 ? "Building" : "Complete"),
       progress: building.progress,
       workers: building.workers || 0,
       cycles: building.cycles || 0,
@@ -1333,7 +1347,25 @@ function App() {
                   : "Ready for a new task"
               : detail.effect}
           </div>
-          {detail.type !== "worker" && inspected?.progress < 1 && (
+          {detail.type !== "worker" &&
+            inspected?.progress < 1 &&
+            !inspected?.materialsReady && (
+            <div
+              className="inspector-progress"
+              role="progressbar"
+              aria-label="Material delivery progress"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow={Math.floor((inspectedMaterialProgress || 0) * 100)}
+              aria-valuetext={`${Math.floor((inspectedMaterialProgress || 0) * 100)}% of materials delivered`}
+              title="Materials delivered to this construction site"
+            >
+              <span style={{ width: `${Math.floor((inspectedMaterialProgress || 0) * 100)}%` }} />
+            </div>
+          )}
+          {detail.type !== "worker" &&
+            inspected?.progress < 1 &&
+            inspected?.materialsReady && (
             <div
               className="inspector-progress"
               role="progressbar"
@@ -1384,8 +1416,6 @@ function App() {
               <strong>
                 {detail.type === "worker"
                   ? inspectedWorkerStatus
-                  : inspected?.progress < 1
-                  ? `Building · ${Math.floor(inspected.progress * 100)}%`
                   : inspected?.status || "Complete"}
               </strong>
             </span>
@@ -1403,6 +1433,20 @@ function App() {
                 Assigned workers<strong>{inspected?.workers || 0}</strong>
               </span>
             )}
+            {detail.type !== "worker" &&
+              inspected?.progress < 1 &&
+              !inspected?.materialsReady && (
+                <span>
+                  Site materials
+                  <strong>
+                    {Object.entries(CATALOG[detail.type]?.cost || {})
+                      .map(([resource, required]) =>
+                        `${Math.floor(inspected?.materials?.[resource] || 0)}/${required} ${resource}`,
+                      )
+                      .join(" · ")}
+                  </strong>
+                </span>
+              )}
             {detail.type === "worker" && inspectedWorker?.workRemaining != null && (
               <span>
                 Next delivery<strong>~{inspectedWorker.workRemaining}s</strong>

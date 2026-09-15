@@ -83,7 +83,7 @@ function popPriority(heap) {
 }
 export const DEFAULT_VILLAGE_NAME = "Willowbrook";
 export const MAX_POPULATION = 24;
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 export const sanitizeVillageName = (value, fallback = DEFAULT_VILLAGE_NAME) => {
   if (typeof value !== "string") return fallback;
   const name = value.trim().replace(/\s+/g, " ").slice(0, 24);
@@ -143,6 +143,45 @@ export const normalizedBuildingProgress = (type, value) =>
   type === "townhall"
     ? 1
     : Math.min(1, Math.max(0, finiteNumber(value, 1)));
+export const normalizedConstructionMaterials = (
+  type,
+  materials,
+  progress = 0,
+) => {
+  const cost = CATALOG[type]?.cost || {};
+  const restored = materials && typeof materials === "object";
+  return Object.fromEntries(
+    Object.entries(cost).map(([resource, required]) => [
+      resource,
+      Math.min(
+        required,
+        Math.max(
+          0,
+          finiteNumber(
+            restored ? materials[resource] : undefined,
+            progress > 0 ? required : 0,
+          ),
+        ),
+      ),
+    ]),
+  );
+};
+export const constructionMaterialsReady = (building) =>
+  Object.entries(CATALOG[building?.type]?.cost || {}).every(
+    ([resource, required]) =>
+      finiteNumber(building?.materials?.[resource], 0) >= required,
+  );
+export const constructionMaterialProgress = (building) => {
+  const cost = CATALOG[building?.type]?.cost || {};
+  const required = Object.values(cost).reduce((total, amount) => total + amount, 0);
+  if (!required) return 1;
+  const delivered = Object.entries(cost).reduce(
+    (total, [resource, amount]) =>
+      total + Math.min(amount, finiteNumber(building?.materials?.[resource], 0)),
+    0,
+  );
+  return Math.max(0, Math.min(1, delivered / required));
+};
 export const reconcileRoadCount = (created = {}, roads = new Set()) => ({
   ...created,
   road: roads instanceof Set ? roads.size : 0,
@@ -209,12 +248,13 @@ export const savedBuildingFits = (building, existing = []) => {
   );
 };
 export class Village {
-  constructor(container, onUpdate, onNotify, onSelect, onLoaded) {
+  constructor(container, onUpdate, onNotify, onSelect, onLoaded, onPlacementComplete) {
     this.container = container;
     this.onUpdate = onUpdate;
     this.notify = onNotify;
     this.onSelect = onSelect;
     this.onLoaded = onLoaded;
+    this.onPlacementComplete = onPlacementComplete;
     this.buildings = [];
     this.workers = [];
     this.nextWorkerId = 0;
@@ -769,6 +809,7 @@ export class Village {
             b.priority,
             b.paused,
             b.upgrade,
+            b.materials,
           );
         }
         if (!this.buildings.some((building) => building.type === "townhall"))
@@ -971,6 +1012,7 @@ export class Village {
     priority = "normal",
     paused = false,
     upgrade = null,
+    materials = null,
   ) {
     const m = this.model(type, x, z);
     m.rotation.y = rotation;
@@ -988,12 +1030,15 @@ export class Village {
       priority: priority === "priority" ? "priority" : "normal",
       paused: Boolean(paused),
       upgrade: upgrade ? String(upgrade) : null,
+      materials: normalizedConstructionMaterials(type, materials, progress),
       pop: 0,
     };
     m.userData.building = b;
     this.buildings.push(b);
     if (progress < 1) {
-      m.scale.set(1, 0.1, 1);
+      const ready = constructionMaterialsReady(b);
+      m.visible = ready;
+      m.scale.set(1, ready ? 0.1 + progress * 0.9 : 0.1, 1);
       this.scaffold(b);
     } else {
       if (type === "house" || type === "townhall") this.addSmoke(b);
@@ -1105,18 +1150,71 @@ export class Village {
       opacity: 0.82,
       roughness: 0.9,
     });
-    for (let x of [-n, n])
-      for (let z of [-n, n]) {
-        const o = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.5, 0.1), mat);
-        o.position.set(x, 1.25, z);
-        b.scaffolding.add(o);
-      }
-    for (let z of [-n, n])
-      for (let y of [0.65, 1.8]) {
-        const o = new THREE.Mesh(new THREE.BoxGeometry(n * 2, 0.08, 0.1), mat);
-        o.position.set(0, y, z);
-        b.scaffolding.add(o);
+    for (const [x, z] of [
+      [-n, -n], [0, -n], [n, -n],
+      [-n, n], [0, n], [n, n],
+      [-n, 0], [n, 0],
+    ]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.9, 0.13), mat);
+      post.position.set(x, 0.45, z);
+      b.scaffolding.add(post);
     }
+    for (const edge of [-n, n]) {
+      for (const y of [0.3, 0.67]) {
+        const horizontal = new THREE.Mesh(
+          new THREE.BoxGeometry(n * 2, 0.1, 0.12),
+          mat,
+        );
+        horizontal.position.set(0, y, edge);
+        b.scaffolding.add(horizontal);
+        const vertical = new THREE.Mesh(
+          new THREE.BoxGeometry(0.12, 0.1, n * 2),
+          mat,
+        );
+        vertical.position.set(edge, y, 0);
+        b.scaffolding.add(vertical);
+      }
+    }
+    b.materialPiles = new THREE.Group();
+    const pileSlots = Math.max(4, Math.min(8, Math.ceil(n * 2)));
+    for (let i = 0; i < pileSlots; i++) {
+      const log = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.105, 0.105, 0.72, 8),
+        new THREE.MeshStandardMaterial({
+          color: this.carryColor("wood"),
+          roughness: 0.88,
+          flatShading: true,
+        }),
+      );
+      log.rotation.z = Math.PI / 2;
+      log.position.set(
+        -n * 0.36,
+        0.14 + Math.floor(i / 3) * 0.18,
+        -0.42 + (i % 3) * 0.3,
+      );
+      log.userData.materialResource = "wood";
+      log.userData.materialIndex = i;
+      b.materialPiles.add(log);
+      const stone = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.16, 0),
+        new THREE.MeshStandardMaterial({
+          color: this.carryColor("stone"),
+          roughness: 0.9,
+          flatShading: true,
+        }),
+      );
+      stone.position.set(
+        n * 0.34 + (i % 2) * 0.2,
+        0.13 + Math.floor(i / 4) * 0.2,
+        -0.35 + (i % 4) * 0.23,
+      );
+      stone.rotation.y = i * 0.7;
+      stone.userData.materialResource = "stone";
+      stone.userData.materialIndex = i;
+      b.materialPiles.add(stone);
+    }
+    b.scaffolding.add(b.materialPiles);
+    this.updateSiteMaterials(b);
     b.scaffolding.position.set(b.x, 0, b.z);
     this.scene.add(b.scaffolding);
     b.siteRing = new THREE.Mesh(
@@ -1133,6 +1231,33 @@ export class Village {
     b.siteRing.position.set(b.x, 0.035, b.z);
     b.siteRing.userData.phase = rand() * Math.PI * 2;
     this.scene.add(b.siteRing);
+  }
+  updateSiteMaterials(b) {
+    if (!b?.materialPiles) return;
+    const cost = CATALOG[b.type]?.cost || {};
+    const totals = {};
+    for (const resource of ["wood", "stone"]) {
+      const required = cost[resource] || 0;
+      const delivered = Math.min(
+        required,
+        finiteNumber(b.materials?.[resource], 0),
+      );
+      totals[resource] = required ? delivered / required : 0;
+    }
+    const slots = {};
+    b.materialPiles.children.forEach((item) => {
+      const resource = item.userData.materialResource;
+      slots[resource] = Math.max(
+        slots[resource] || 0,
+        item.userData.materialIndex + 1,
+      );
+    });
+    b.materialPiles.children.forEach((item) => {
+      const resource = item.userData.materialResource;
+      item.visible =
+        item.userData.materialIndex <
+        Math.ceil((slots[resource] || 0) * totals[resource]);
+    });
   }
   blocked(x, z, padding = 0.2, ignore = null) {
     return this.buildings.some(
@@ -1523,6 +1648,7 @@ export class Village {
       this.announce(`${CATALOG[type].name} moved. Workers are finding their way again.`);
       this.notify(`${CATALOG[type].name} moved.`);
       this.select(null);
+      this.onPlacementComplete?.();
       this.save();
       this.emit();
       return true;
@@ -1544,7 +1670,9 @@ export class Village {
         CATALOG[type].decoration ? 1 : 0,
       );
       this.created[type] = (this.created[type] || 0) + 1;
-      const plannedMessage = `${CATALOG[type].name} planned. A builder is on the way.`;
+      const plannedMessage = CATALOG[type].decoration
+        ? `${CATALOG[type].name} placed.`
+        : `${CATALOG[type].name} planned. Workers will deliver materials before construction.`;
       this.announce(plannedMessage);
       this.notify(plannedMessage);
       if (type === "house" && (this.tutorialStep || 0) === 0) {
@@ -1552,6 +1680,10 @@ export class Village {
         const guideWorker = this.workers.find((worker) => worker.m?.position);
         if (guideWorker) this.highlightWorker(guideWorker);
       }
+    }
+    if (type !== "road") {
+      this.select(null);
+      this.onPlacementComplete?.();
     }
     this.save();
     this.emit();
@@ -1724,10 +1856,14 @@ export class Village {
     });
     for (const worker of this.workers) {
       if (worker.building !== building) continue;
+      this.clearCarry(worker);
+      worker.carry = null;
       worker.building = null;
       worker.phase = "idle";
       worker.timer = 0;
       worker.path = [];
+      worker.materialResource = null;
+      worker.deliveryRetry = 0;
     }
     this.disposeOwnedObject(building.scaffolding);
     this.disposeOwnedObject(building.siteRing);
@@ -1770,7 +1906,12 @@ export class Village {
     if (!building) return false;
     building.paused = Boolean(paused);
     for (const worker of this.workers) {
-      if (worker.building !== building || worker.phase === "deliver") continue;
+      if (
+        worker.building !== building ||
+        worker.phase === "deliver" ||
+        worker.phase === "material_delivery"
+      )
+        continue;
       worker.building = null;
       worker.phase = "idle";
       worker.timer = 0;
@@ -2187,6 +2328,28 @@ export class Village {
       pts[0]
     );
   }
+  nextConstructionMaterial(building) {
+    return Object.entries(CATALOG[building?.type]?.cost || {}).find(
+      ([resource, required]) =>
+        finiteNumber(building?.materials?.[resource], 0) < required,
+    )?.[0] || null;
+  }
+  materialSource(resource) {
+    const sourceType = {
+      wood: "lumberyard",
+      stone: "mine",
+      food: "farm",
+    }[resource];
+    return (
+      this.buildings.find(
+        (building) =>
+          building.type === sourceType && building.progress === 1,
+      ) ||
+      this.buildings.find(
+        (building) => building.type === "townhall" && building.progress === 1,
+      )
+    );
+  }
   assign(w) {
     const workerLoad = (building) =>
       this.workers.filter((v) => v !== w && v.building === building).length;
@@ -2211,14 +2374,21 @@ export class Village {
     );
     const candidates = [...construction, ...sites.sort(compareJobs)];
     for (const b of candidates) {
-      const [x, z] = this.jobPoint(b);
+      const material = b.progress < 1 ? this.nextConstructionMaterial(b) : null;
+      const destination = material ? this.materialSource(material) : b;
+      if (!destination) {
+        b.lastRouteBlocked = true;
+        continue;
+      }
+      const [x, z] = this.jobPoint(destination);
       if (!this.route(w, x, z)) {
         b.lastRouteBlocked = true;
         continue;
       }
       b.lastRouteBlocked = false;
       w.building = b;
-      w.phase = "travel";
+      w.materialResource = material;
+      w.phase = material ? "material_pickup" : "travel";
       return;
     }
     const well = this.buildings.find(
@@ -2249,7 +2419,11 @@ export class Village {
       if (this.activityTime === 0) this.activity = "";
     }
     for (const w of this.workers) {
-      if (w.building?.paused && w.phase !== "deliver") {
+      if (
+        w.building?.paused &&
+        w.phase !== "deliver" &&
+        w.phase !== "material_delivery"
+      ) {
         w.building = null;
         w.phase = "idle";
         w.timer = 0;
@@ -2263,7 +2437,8 @@ export class Village {
           !this.route(w, w.routeTarget.x, w.routeTarget.z)
         ) {
           w.path = [];
-          if (w.phase === "deliver") w.deliveryRetry = 1.5;
+          if (w.phase === "deliver" || w.phase === "material_delivery")
+            w.deliveryRetry = 1.5;
           else {
             w.phase = "idle";
             w.building = null;
@@ -2302,6 +2477,67 @@ export class Village {
       if (w.phase === "idle") {
         w.timer -= dt;
         if (w.timer <= 0) this.assign(w);
+      } else if (w.phase === "material_pickup") {
+        const b = w.building;
+        const resource = w.materialResource || this.nextConstructionMaterial(b);
+        const required = CATALOG[b?.type]?.cost?.[resource] || 0;
+        const delivered = finiteNumber(b?.materials?.[resource], 0);
+        const amount = Math.min(10, Math.max(0, required - delivered));
+        if (!b || !resource || amount <= 0) {
+          w.phase = "idle";
+          w.building = null;
+          w.materialResource = null;
+          continue;
+        }
+        w.carry = { resource, amount, construction: true };
+        this.showCarry(w, resource);
+        w.phase = "material_delivery";
+        const [siteX, siteZ] = this.jobPoint(b);
+        w.deliveryRetry = this.route(w, siteX, siteZ) ? 0 : 1.5;
+      } else if (w.phase === "material_delivery") {
+        const b = w.building;
+        if (!b) {
+          this.clearCarry(w);
+          w.carry = null;
+          w.phase = "idle";
+          continue;
+        }
+        if (w.deliveryRetry > 0) {
+          w.deliveryRetry -= dt;
+          if (w.deliveryRetry <= 0) {
+            const [siteX, siteZ] = this.jobPoint(b);
+            w.deliveryRetry = this.route(w, siteX, siteZ) ? 0 : 1.5;
+          }
+          continue;
+        }
+        if (w.carry) {
+          const { resource, amount } = w.carry;
+          b.materials ||= normalizedConstructionMaterials(b.type, {}, 0);
+          const required = CATALOG[b.type]?.cost?.[resource] || 0;
+          b.materials[resource] = Math.min(
+            required,
+            finiteNumber(b.materials[resource], 0) + amount,
+          );
+          this.deliveryBurst(b, resource, amount);
+          this.clearCarry(w);
+          w.carry = null;
+          w.deliveryRetry = 0;
+          this.updateSiteMaterials(b);
+        }
+        if (constructionMaterialsReady(b)) {
+          b.m.visible = true;
+          b.m.scale.set(1, 0.1 + b.progress * 0.9, 1);
+          w.phase = "construct";
+          w.workDuration = 0;
+          w.materialResource = null;
+          this.announce(`${CATALOG[b.type].name} has all materials. Construction begins.`);
+          this.save();
+        } else {
+          w.phase = "idle";
+          w.building = null;
+          w.materialResource = null;
+          w.timer = 0.35;
+        }
       } else if (w.phase === "travel") {
         if (w.building.progress < 1) {
           w.phase = "construct";
@@ -2492,12 +2728,23 @@ export class Village {
       name: this.name,
       buildings: this.buildings.map((b) => {
         const assigned = this.workers.filter((w) => w.building === b);
+        const materialsReady = constructionMaterialsReady(b);
         const work = this.workSnapshot(
           assigned.find((w) => w.phase === "work" && w.workDuration > 0),
         );
         const status =
           b.paused
             ? "Paused"
+            : b.progress < 1 &&
+                !materialsReady &&
+                assigned.some((w) => w.phase === "material_pickup")
+              ? "Collecting materials"
+            : b.progress < 1 &&
+                !materialsReady &&
+                assigned.some((w) => w.phase === "material_delivery")
+              ? "Delivering materials"
+            : b.progress < 1 && !materialsReady
+              ? "Awaiting materials"
             : b.progress < 1
             ? "Building"
             : b.lastRouteBlocked
@@ -2519,6 +2766,9 @@ export class Village {
           id: b.id,
           type: b.type,
           progress: b.progress,
+          materials: { ...b.materials },
+          materialProgress: constructionMaterialProgress(b),
+          materialsReady,
           workers: assigned.length,
           cycles: b.cycles,
           cycleProgress: work.progress,
@@ -2596,7 +2846,7 @@ export class Village {
         view: this.viewRecord(),
         roads: [...this.roads].filter((key) => !this.baseRoads?.has(key)),
         buildings: this.buildings.map(
-          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade }) => ({
+          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials }) => ({
             type,
             x,
             z,
@@ -2606,6 +2856,7 @@ export class Village {
             priority: priority === "priority" ? "priority" : "normal",
             paused: Boolean(paused),
             upgrade: upgrade ? String(upgrade) : null,
+            materials: { ...materials },
           }),
         ),
       });

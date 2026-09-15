@@ -14,6 +14,9 @@ import {
   sanitizeVillageName,
   parseVillageImport,
   summarizeVillageSave,
+  normalizedConstructionMaterials,
+  constructionMaterialsReady,
+  constructionMaterialProgress,
   Village,
 } from "../src/world.js";
 import {
@@ -67,6 +70,41 @@ test("guided placement searches for the nearest clear site", () => {
   const site = v.findOpenPlacement("house", { x: 0, z: 3 });
   assert.equal(v.valid(site.x, site.z, "house").ok, true);
   assert.notDeepEqual(site, { x: 0, z: 3 });
+});
+test("successful building placement clears the active placement tool", () => {
+  const selections = [];
+  let placementComplete = 0;
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    ready: true,
+    selected: "house",
+    placement: { x: 0, z: 0, ok: true },
+    storageConflict: false,
+    resources: { wood: 100, stone: 100 },
+    buildings: [],
+    workers: [],
+    created: {},
+    ensureAudio() {},
+    playSound() {},
+    addBuilding() {},
+    announce() {},
+    notify() {},
+    save() {},
+    emit() {},
+    select(type) {
+      selections.push(type);
+      this.selected = type;
+      this.placement = null;
+    },
+    onPlacementComplete() {
+      placementComplete++;
+    },
+  });
+  assert.equal(v.confirmPlacement(), true);
+  assert.deepEqual(selections, [null]);
+  assert.equal(placementComplete, 1);
+  assert.equal(v.selected, null);
+  assert.equal(v.placement, null);
 });
 test("focusing a villager frames them, selects them, and advances the introduction", () => {
   const worker = { id: "worker-1", m: new THREE.Object3D(), building: null };
@@ -342,6 +380,120 @@ test("builder completes structure and welcomes two workers", () => {
   assert.equal(welcomed, 2);
   assert.equal(v.activity, "Cottage is ready. 2 new villagers have arrived.");
   assert.equal(v.activityLog[0].message, v.activity);
+});
+
+test("construction waits for workers to deliver the full material cost", () => {
+  const v = village();
+  const b = {
+    type: "house",
+    progress: 0,
+    materials: { wood: 25, stone: 10 },
+    m: new THREE.Object3D(),
+    x: 6,
+    z: 6,
+  };
+  b.m.visible = false;
+  const w = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "material_pickup",
+    materialResource: "wood",
+    building: b,
+  };
+  v.buildings = [b];
+  v.workers = [w];
+  v.route = () => true;
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+  v.updateSiteMaterials = () => {};
+  v.simulate(0.1);
+  assert.deepEqual(w.carry, {
+    resource: "wood",
+    amount: 5,
+    construction: true,
+  });
+  assert.equal(w.phase, "material_delivery");
+  assert.equal(b.progress, 0);
+  assert.equal(b.m.visible, false);
+  v.simulate(0.1);
+  assert.deepEqual(b.materials, { wood: 30, stone: 10 });
+  assert.equal(constructionMaterialsReady(b), true);
+  assert.equal(b.m.visible, true);
+  assert.equal(w.phase, "construct");
+  assert.equal(b.progress, 0);
+  assert.match(v.activity, /all materials.*Construction begins/);
+});
+
+test("construction assignments collect each material from its producer", () => {
+  const v = village();
+  const site = {
+    type: "house",
+    progress: 0,
+    materials: { wood: 0, stone: 0 },
+    x: 8,
+    z: 8,
+    priority: "normal",
+  };
+  const lumberyard = {
+    type: "lumberyard",
+    progress: 1,
+    x: -8,
+    z: -11,
+  };
+  const w = { m: new THREE.Object3D(), path: [], phase: "idle", timer: 0 };
+  v.buildings = [site, lumberyard];
+  v.workers = [w];
+  let destination;
+  v.route = (_worker, x, z) => {
+    destination = [x, z];
+    return true;
+  };
+  v.assign(w);
+  assert.equal(w.building, site);
+  assert.equal(w.phase, "material_pickup");
+  assert.equal(w.materialResource, "wood");
+  assert.deepEqual(destination, v.jobPoint(lumberyard));
+});
+
+test("construction material state is bounded and reports delivery progress", () => {
+  const materials = normalizedConstructionMaterials(
+    "house",
+    { wood: 18, stone: 99 },
+    0,
+  );
+  const site = { type: "house", materials };
+  assert.deepEqual(materials, { wood: 18, stone: 10 });
+  assert.equal(constructionMaterialsReady(site), false);
+  assert.equal(constructionMaterialProgress(site), 0.7);
+  assert.deepEqual(normalizedConstructionMaterials("house", null, 0.5), {
+    wood: 30,
+    stone: 10,
+  });
+});
+
+test("construction snapshots distinguish material delivery from building", () => {
+  const v = village();
+  let state;
+  const site = {
+    id: "house-site",
+    type: "house",
+    progress: 0,
+    materials: { wood: 20, stone: 0 },
+    cycles: 0,
+  };
+  v.onUpdate = (next) => (state = next);
+  v.buildings = [site];
+  v.workers = [{
+    id: "worker-1",
+    phase: "material_delivery",
+    building: site,
+    carry: { resource: "wood", amount: 10, construction: true },
+  }];
+  v.emit();
+  assert.equal(state.buildings[0].status, "Delivering materials");
+  assert.equal(state.buildings[0].materialProgress, 0.5);
+  assert.equal(state.buildings[0].materialsReady, false);
 });
 
 test("activity history keeps the four newest village updates", () => {
