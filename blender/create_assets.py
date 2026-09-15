@@ -56,69 +56,73 @@ def house():
  cube('Crate',(-1,-1.4,.23),(.4,.4,.46),'timber')
  for z in [.1,.35]:cube('Crate band',(-1,-1.61,z),(.43,.035,.045),'cut')
 def bakery():
- # A compact stone-and-timber bakehouse inspired by the reference, with its
- # front-right work bay intentionally open for the baker and production loop.
- cube('Stone foundation',(0,0,.12),(2.7,2.5,.24),'stoneBlue')
- cube('Bakery floor',(0,0,.27),(2.5,2.2,.12),'cut')
- # Blue-gray lower masonry makes the workshop feel rooted without closing off
- # the viewer-facing side.
- cube('Rear stone wall',(0,1.03,.75),(1.25,.13,.55),'stoneBlue')
- cube('Rear plaster wall',(0,1.05,1.55),(1.18,.11,.45),'plaster')
- cube('Left stone wall',(-1.17,.34,.70),(.13,.79,.46),'stoneBlue')
- for x in [-.88,-.30,.30,.88]:
-  cube('Front stone course',(x,-1.10,.47),(.25,.10,.17),'stoneLight' if x in [-.30,.88] else 'stoneBlue')
- for y in [-.55,.05,.62]:
-  cube('Left stone course',(-1.29,y,.47),(.10,.22,.17),'stoneLight' if y==.05 else 'stoneBlue')
- # Dark framing and warm plaster sit above the masonry, echoing the reference.
- # Keep supports directly under the short roof: front posts set at the roof
- # eave read as genuine structure instead of detached porch pillars.
- for x in [-1.2,1.2]:
-  cube('Rear bakery oak post',(x,1.04,1.37),(.14,.14,1.15),'wood')
-  cube('Eave bakery oak post',(x,-.30,1.37),(.14,.14,1.15),'wood')
- cube('Open roof lintel',(0,-.30,2.34),(2.55,.14,.14),'wood')
- cube('Rear eave beam',(0,1.06,2.34),(2.55,.14,.14),'wood')
- beam('Left timber brace',(-1.19,-.30,1.25),(-.55,-.30,2.28),.075,'timber')
- beam('Rear timber brace',(-1.18,.94,1.16),(-.55,1.03,2.28),.065,'timber')
- # A deep, honey-thatch rear roof gives a rich silhouette while its open gable
- # frames—not hides—the active counter from the standard isometric view.
- roof(2.98,1.62,2.32,1.08,'thatch',.48,True)
- beam('Open gable brace',(-1.15,-.33,2.32),(0,-.33,3.40),.105,'wood')
- beam('Open gable brace',(1.15,-.33,2.32),(0,-.33,3.40),.105,'wood')
- for x in [-1.22,-.78,-.34,.10,.54,.98,1.30]:
-  beam('Thatch eave',(x,-.34,2.30),(x,-.34,2.18),.035,'thatchLight')
- # The rough-stone oven and chimney are one continuous architectural mass.
- cube('Oven hearth',(-.70,.48,.45),(.74,.63,.11),'stone')
- cube('Oven base',(-.70,.62,.78),(.69,.56,.55),'stoneBlue')
- cyl('Oven dome',(-.70,.62,1.23),.68,.70,'stoneLight',8,.50)
- cube('Oven mouth',(-.70,.03,.83),(.44,.07,.35),'dark')
- ico('Oven embers',(-.70,-.05,.62),(.25,.07,.09),'roof')
- for x in [-.96,-.70,-.44]:
-  ico('Fresh bread',(x,-.055,.87),(.10,.10,.065),'wheatLight')
- cube('Oven mantle',(-.70,.00,1.20),(.62,.10,.09),'stone')
- cube('Oven chimney',(-.70,.72,2.90),(.45,.47,2.30),'stoneBlue')
- for z in [2.03,2.46,2.89,3.32,3.75]:
-  cube('Chimney stone course',(-.70,.48,z),(.49,.04,.075),'stoneLight')
- cube('Chimney cap',(-.70,.72,4.10),(.59,.61,.14),'stoneLight')
- cube('Flue opening',(-.70,.72,4.18),(.35,.37,.02),'dark')
- # The visible service nook keeps the current bakery's readable production
- # storytelling: knead at the counter, fire the oven, collect the loaves.
- cube('Baker prep table',(.33,-.48,.76),(1.04,.38,.11),'timber')
- for x in [-.58,.58]:
-  cube('Prep table leg',(.33+x,-.48,.42),(.08,.085,.36),'wood')
- ico('Dough on prep table',(.33,-.49,.90),(.40,.18,.10),'cream')
- for x in [.06,.33,.60]:
-  ico('Loaf on counter',(x,-.66,.91),(.12,.09,.055),'wheatLight')
- cube('Bread display shelf',(1.00,-.10,1.02),(.10,.75,.07),'timber')
- for y in [-.55,-.22,.11]:
-  cyl('Ingredient jar',(1.00,y,1.23),.10,.22,'cream',8)
- cube('Tool rack',(1.02,.88,1.48),(.07,.13,.42),'wood')
+ # Three continuous walls form a compact stone-and-timber bakehouse. Only
+ # the viewer-facing side is open, like a cutaway shopfront, so the baker and
+ # production loop remain readable without making the roof look unsupported.
+ cube('Stone foundation',(0,0,.06),(2.62,2.42,.12),'stoneBlue')
+ cube('Foundation cap',(0,0,.15),(2.52,2.32,.06),'stoneLight')
+ cube('Bakery floor',(0,0,.21),(2.36,2.08,.06),'cut')
+
+ # A continuous masonry dado and plaster upper wall run around the rear and
+ # both sides. Their dimensions meet exactly at the corners and roof plate.
+ cube('Rear stone wall',(0,1.00,.55),(2.30,.16,.62),'stoneBlue')
+ cube('Rear plaster wall',(0,1.00,1.53),(2.30,.14,1.34),'plaster')
+ for x in [-1.08,1.08]:
+  cube('Side stone wall',(x,0,.55),(.14,2.00,.62),'stoneBlue')
+  cube('Side plaster wall',(x,0,1.53),(.14,2.00,1.34),'plaster')
+
+ # Timbering is fixed against the wall faces, rather than standing as loose
+ # porch posts. The front lintel lands directly on the two side walls.
+ for x in [-1.16,1.16]:
+  cube('Wall corner timber',(x,0,1.53),(.10,1.96,.12),'wood')
+  cube('Front wall end timber',(x,-.97,1.53),(.12,.10,1.34),'wood')
+ cube('Rear wall rail',(0,.925,.86),(2.18,.08,.10),'wood')
+ cube('Left wall rail',(-1.155,0,.86),(.08,1.90,.10),'wood')
+ cube('Right wall rail',(1.155,0,.86),(.08,1.90,.10),'wood')
+ cube('Front lintel',(0,-.97,2.15),(2.30,.12,.10),'wood')
+ cube('Rear roof plate',(0,.98,2.15),(2.30,.12,.10),'wood')
+
+ # The full-depth roof rests on the wall plates. The open gable frame is
+ # supported by the lintel and leaves the entire front elevation accessible.
+ roof(2.78,2.30,2.20,1.08,'thatch',.04,True)
+ beam('Open gable brace',(-1.10,-1.11,2.20),(0,-1.11,3.28),.09,'wood')
+ beam('Open gable brace',(1.10,-1.11,2.20),(0,-1.11,3.28),.09,'wood')
+
+ # The hearth, oven, chimney shaft and cap overlap slightly at their joins,
+ # producing one continuous masonry mass with no detached stone courses.
+ cube('Oven hearth',(-.68,.48,.32),(.78,.70,.16),'stone')
+ cube('Oven base',(-.68,.62,.72),(.72,.60,.64),'stoneBlue')
+ cyl('Oven dome',(-.68,.62,1.25),.68,.58,'stoneLight',8,.50)
+ cube('Oven mouth',(-.68,.30,.86),(.46,.08,.40),'dark')
+ ico('Oven embers',(-.68,.245,.70),(.25,.07,.09),'roof')
+ for x in [-.94,-.68,-.42]:
+  ico('Fresh bread',(x,.235,.90),(.10,.10,.065),'wheatLight')
+ cube('Oven mantle',(-.68,.245,1.17),(.62,.10,.09),'stone')
+ cube('Oven chimney',(-.68,.72,2.46),(.44,.46,1.84),'stoneBlue')
+ cube('Chimney cap',(-.68,.72,3.44),(.56,.58,.12),'stoneLight')
+ cube('Flue opening',(-.68,.72,3.51),(.34,.36,.02),'dark')
+
+ # The connected four-legged table and wall-mounted shelves complete the
+ # visible service nook while keeping the sole open side unobstructed.
+ cube('Baker prep table',(.25,-.45,.82),(1.05,.50,.12),'timber')
+ for x in [-.15,.65]:
+  for y in [-.61,-.29]:
+   cube('Prep table leg',(x,y,.50),(.08,.08,.52),'wood')
+ ico('Dough on prep table',(.25,-.45,.95),(.38,.17,.09),'cream')
+ for x in [.00,.25,.50]:
+  ico('Loaf on counter',(x,-.58,.94),(.12,.09,.055),'wheatLight')
+ cube('Bread display shelf',(1.00,-.10,1.02),(.10,.72,.08),'timber')
+ for y in [-.36,-.10,.16]:
+  cyl('Ingredient jar',(1.00,y,1.18),.09,.22,'cream',8)
+ cube('Tool rack',(1.00,.70,1.48),(.08,.12,.42),'wood')
  for z in [1.34,1.57]:
-  cube('Baking tool',(.94,.82,z),(.022,.04,.14),'stone')
- # A tiny hanging loaf sign has the reference's shopfront character without
- # placing a fence or wall across the view.
- beam('Sign bracket',(1.19,-1.06,2.17),(1.19,-1.55,2.17),.06,'wood')
- cube('Bakery sign',(1.19,-1.57,1.93),(.34,.07,.30),'roof')
- ico('Sign loaf',(1.19,-1.65,1.93),(.14,.022,.06),'cream')
+  cube('Baking tool',(.94,.64,z),(.025,.04,.14),'stone')
+
+ # A small loaf sign hangs from the front roof plate rather than from an
+ # isolated post.
+ beam('Sign bracket',(1.02,-1.03,2.12),(1.02,-1.48,2.12),.055,'wood')
+ cube('Bakery sign',(1.02,-1.50,1.88),(.34,.07,.30),'roof')
+ ico('Sign loaf',(1.02,-1.55,1.88),(.14,.022,.06),'cream')
 def tree():
  cyl('Trunk',(0,0,.65),.19,1.3,'wood',6)
  for z,r,d in [(1.4,.93,1.45),(2.07,.74,1.35),(2.66,.48,1.2)]:cyl('Pine',(0,0,z),r,d,'leaf' if z<2 else 'leafLight',5,0)

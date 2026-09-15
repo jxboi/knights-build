@@ -8,8 +8,6 @@ import {
   Users,
   Sun,
   Moon,
-  Pause,
-  Play,
   Plus,
   Minus,
   Compass,
@@ -758,12 +756,6 @@ function App() {
   const activeJobs = state.buildings.filter(
     (building) => building.progress < 1 || building.workers > 0,
   ).length;
-  const waitingForFood = state.buildings.some(
-    (building) => building.status === "Waiting for food" || building.status === "Waiting for wheat",
-  );
-  const waitingForRoute = state.buildings.some(
-    (building) => building.status === "Waiting for route",
-  );
   const deliveries = state.buildings.reduce(
     (total, building) => total + (building.cycles || 0),
     0,
@@ -1065,18 +1057,8 @@ function App() {
       </header>
       <section className="left-stack">
         <div className="village-label">
-          <span className="live-dot" /> YOUR SETTLEMENT{" "}
+          <span className="live-dot" /> {state.name.toUpperCase()}{" "}
           <span className="label-line" />
-        </div>
-        <div className="village-heading">
-          <h2>{state.name}</h2>
-          <span>
-            {allGoals
-              ? "A village in bloom"
-              : builtHouse || builtFarm
-                ? "A home with room to grow"
-                : "A humble beginning"}
-          </span>
         </div>
         {goals && (
           <div className={`objectives parchment ${allGoals ? "complete" : ""}`}>
@@ -1166,47 +1148,9 @@ function App() {
             </div>
           </div>
         )}
-        <div
-          className={`settlement-status ${
-            state.speed !== 0 &&
-            (state.activity || waitingForFood || waitingForRoute)
-              ? "activity"
-              : ""
-          }`}
-          role="status"
-        >
-          <span className="live-dot" />
-          {state.speed === 0
-            ? "A quiet moment. Time is paused."
-            : state.activity ||
-              (waitingForRoute
-                  ? "A worker is waiting for a clear route."
-                  : waitingForFood
-                    ? "A producer needs ingredients. Farms supply wheat for bakeries."
-                    : state.buildings.some((b) => b.progress < 1)
-                      ? "Your builders are at work."
-                    : housingFull
-                      ? "Your cottages are full. Build another home."
-                      : "Your villagers are settling in.")}
-        </div>
       </section>
       <div className="top-right">
         <div className="time-controls parchment">
-          <button
-            className={state.speed === 0 ? "active" : ""}
-            aria-keyshortcuts="Space"
-            aria-pressed={state.speed === 0}
-            onClick={() =>
-              speed(state.speed === 0 ? previousSpeed.current : 0)
-            }
-            title="Pause / resume (Space)"
-            aria-label={
-              state.speed === 0 ? "Resume simulation" : "Pause simulation"
-            }
-          >
-            {state.speed === 0 ? <Play size={16} /> : <Pause size={16} />}
-          </button>
-          <span />
           <button
             className={state.speed === 1 ? "active" : ""}
             aria-label="Set simulation speed to 1x"
