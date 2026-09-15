@@ -2,6 +2,8 @@
 
 This document describes the architecture currently implemented in the repository. It is intended to help contributors find the right boundary for a change and understand which state is authoritative at runtime.
 
+For an agent takeover, begin with [HANDOFF.md](HANDOFF.md). This document is the detailed implementation reference, while the handoff records the captured worktree state and verification sequence.
+
 ## System shape
 
 ```mermaid

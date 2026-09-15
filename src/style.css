@@ -1877,108 +1877,6 @@ h1 span {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.event-card {
-  position: absolute;
-  top: 168px;
-  right: 82px;
-  width: min(260px, calc(100% - 32px));
-  padding: 15px 17px;
-  z-index: 18;
-  box-shadow: 0 8px 25px #3542231f;
-}
-.event-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.event-card-top .overview-kicker {
-  margin-bottom: 0;
-}
-.event-peek {
-  position: absolute;
-  top: 168px;
-  right: 27px;
-  z-index: 18;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: min(230px, calc(100% - 32px));
-  padding: 10px 12px;
-  text-align: left;
-  color: #756447;
-  box-shadow: 0 8px 25px #3542231f;
-}
-.event-peek > svg:first-child {
-  color: #b18b43;
-}
-.event-peek > span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  flex: 1;
-}
-.event-peek small {
-  color: #a08b64;
-  font-size: 6px;
-  letter-spacing: 1.1px;
-}
-.event-peek strong {
-  overflow: hidden;
-  color: #6c5a3f;
-  font: 500 11px/1.2 "Lora", Georgia, serif;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.event-peek:hover {
-  background: #f5ecd9;
-  transform: translateY(-1px);
-}
-.event-card h3 {
-  margin-top: 5px;
-  color: #665b45;
-  font: 500 17px/1.25 "Lora", Georgia, serif;
-}
-.event-card p {
-  margin-top: 7px;
-  color: #998a72;
-  font-size: 9px;
-  line-height: 1.55;
-}
-.event-choices {
-  display: grid;
-  gap: 5px;
-  margin-top: 12px;
-}
-.event-choices button {
-  padding: 8px 9px;
-  border: 1px solid #d1c3a8;
-  border-radius: 4px;
-  color: #806b4c;
-  font-size: 8px;
-  text-align: left;
-}
-.event-choices button:hover:not(:disabled) {
-  background: #eadfc8;
-  border-color: #bca27b;
-}
-.event-choices button.event-choice-primary {
-  background: #96704b;
-  border-color: #96704b;
-  color: #fff8e8;
-  font-weight: 550;
-}
-.event-choices button.event-choice-primary:hover:not(:disabled) {
-  background: #805d3d;
-  border-color: #805d3d;
-}
-.event-choices button.event-choice-primary:focus-visible {
-  outline-color: #fff4d8;
-}
-.event-choices button:disabled {
-  color: #b9aa90;
-  cursor: not-allowed;
-}
 .placement-confirm {
   color: #718255;
 }
@@ -2376,14 +2274,6 @@ h1 span {
     transform: none;
     width: min(340px, calc(100% - 28px));
   }
-  .event-peek {
-    right: 14px;
-    width: min(205px, calc(100% - 28px));
-  }
-  .event-card {
-    right: 14px;
-    width: min(240px, calc(100% - 28px));
-  }
 }
 @media (min-width: 761px) and (max-width: 900px) and (max-height: 620px) {
   /* Landscape tablets keep the wide header but need the same vertical budget
@@ -2425,13 +2315,6 @@ h1 span {
     right: max(17px, env(safe-area-inset-right));
     bottom: calc(130px + env(safe-area-inset-bottom));
   }
-  .event-card {
-    right: calc(138px + env(safe-area-inset-right));
-    width: min(240px, calc(100% - 32px));
-  }
-  .event-peek {
-    right: calc(138px + env(safe-area-inset-right));
-  }
   .game-shell:has(.world.is-building) .build-tooltip {
     visibility: hidden;
   }
@@ -2463,12 +2346,6 @@ h1 span {
     border: 2px solid transparent;
     background-clip: padding-box;
     border-radius: 8px;
-  }
-  .event-card {
-    right: calc(138px + env(safe-area-inset-right));
-  }
-  .event-peek {
-    right: calc(138px + env(safe-area-inset-right));
   }
   .settlement-status {
     display: none;
@@ -2880,28 +2757,6 @@ h1 span {
     padding: 6px 7px;
     font-size: 7px;
   }
-  .event-peek {
-    top: calc(322px + env(safe-area-inset-top));
-    right: max(14px, env(safe-area-inset-right));
-    width: min(170px, calc(100% - 230px));
-    min-width: 150px;
-    padding: 8px 9px;
-  }
-  .event-peek strong {
-    font-size: 9px;
-  }
-  .event-peek small {
-    font-size: 5px;
-  }
-  .event-peek > svg {
-    width: 12px;
-  }
-  .event-card {
-    top: calc(163px + env(safe-area-inset-top));
-    right: max(14px, env(safe-area-inset-right));
-    width: min(230px, calc(100% - 28px));
-    padding: 12px 13px;
-  }
   .tutorial-card h3 {
     font-size: 15px;
   }
@@ -2959,14 +2814,6 @@ h1 span {
     letter-spacing: 0.3px;
     pointer-events: none;
   }
-  /* The story card occupies the right-hand reading lane on narrow phones;
-     hide the competing goal card while it is open instead of letting the two
-     surfaces overlap. */
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .objectives,
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .settlement-status {
-    visibility: hidden;
-    pointer-events: none;
-  }
 }
 @media (max-width: 360px) {
   /* Keep grouped five-digit storage values fully visible on the narrowest
@@ -3007,14 +2854,6 @@ h1 span {
     max-width: 150px;
     margin-top: 8px;
     font-size: 6px;
-  }
-  /* Give the story card a clean reading lane on the smallest phones instead
-     of letting it collide with the persistent settlement goals. */
-  .event-card {
-    top: calc(195px + env(safe-area-inset-top));
-    left: max(14px, env(safe-area-inset-left));
-    right: max(14px, env(safe-area-inset-right));
-    width: auto;
   }
 }
 @media (max-width: 760px) and (max-height: 620px) {
@@ -3088,36 +2927,6 @@ h1 span {
     right: calc(100% + 11px);
     margin: 0;
   }
-  .event-peek {
-    top: calc(198px + env(safe-area-inset-top));
-    right: calc(53px + env(safe-area-inset-right));
-    width: min(120px, calc(100% - 106px));
-    min-width: 0;
-    padding: 7px 8px;
-  }
-  .event-peek strong {
-    font-size: 8px;
-  }
-  .game-shell:has(.event-peek) .objectives,
-  .game-shell:has(.event-peek) .settlement-status,
-  .game-shell:has(.event-peek) .bottom-left,
-  .game-shell:has(.event-peek) .bottom-right {
-    visibility: hidden;
-    pointer-events: none;
-  }
-  /* On very short landscape screens, let an active story choice own the
-     reading lane instead of leaving the palette and navigation rails behind
-     the card. They return as soon as the choice is resolved. */
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .event-card {
-    top: calc(112px + env(safe-area-inset-top));
-  }
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .build-area,
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .bottom-left,
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .bottom-right,
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .advisor-launch {
-    visibility: hidden;
-    pointer-events: none;
-  }
 }
 @media (max-width: 760px) {
   /* A deliberate menu selection should be able to reveal the goals card even
@@ -3144,10 +2953,6 @@ h1 span {
   .placement-details-toggle {
     display: flex;
   }
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .advisor-launch {
-    visibility: hidden;
-    pointer-events: none;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -3162,31 +2967,6 @@ h1 span {
 }
 .game-shell:has(.tutorial-card) .toast {
   top: 290px;
-}
-.game-shell:has(.advisor-panel) .event-peek {
-  visibility: hidden;
-  pointer-events: none;
-}
-.game-shell:has(.event-card:not([aria-hidden="true"])) .advisor-launch {
-  visibility: hidden;
-  pointer-events: none;
-}
-.game-shell:has(.menu) .event-peek,
-.game-shell:has(.menu) .event-card,
-.game-shell:has(.world.is-building) .event-card,
-.game-shell:has(.advisor-panel) .event-card {
-  visibility: hidden;
-  pointer-events: none;
-}
-.game-shell:has(.inspector) .event-peek,
-.game-shell:has(.inspector) .event-card {
-  visibility: hidden;
-  pointer-events: none;
-}
-.game-shell:has(.modal) .event-peek,
-.game-shell:has(.modal) .event-card {
-  visibility: hidden;
-  pointer-events: none;
 }
 .game-shell:has(.inspector) .build-tooltip,
 .game-shell:has(.modal) .build-tooltip,
@@ -3224,10 +3004,6 @@ h1 span {
     backdrop-filter: blur(10px);
   }
   .game-shell:has(.advisor-panel) .tutorial-card {
-    visibility: hidden;
-    pointer-events: none;
-  }
-  .game-shell:has(.event-card:not([aria-hidden="true"])) .tutorial-card {
     visibility: hidden;
     pointer-events: none;
   }

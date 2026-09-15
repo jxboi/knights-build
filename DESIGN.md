@@ -2,6 +2,8 @@
 
 This document describes the visual language implemented in `src/style.css` and `src/main.jsx`. It is the design reference for extending the village UI without drifting into a generic dashboard or a modern game HUD.
 
+For an AI continuation, read [HANDOFF.md](HANDOFF.md) first, then use this file as the visual contract. It is especially important for changes to responsive layout, keyboard focus, or the build palette.
+
 The interface should feel like a small illustrated storybook laid over a living low-poly landscape: warm parchment, quiet typography, natural colors, compact controls, and feedback that feels useful rather than noisy.
 
 ## Design personality

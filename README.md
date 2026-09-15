@@ -6,6 +6,10 @@ A playable, local-first medieval village builder made with **Blender + Three.js*
 
 The game runs entirely in the browser. The core simulation does not require an account or a backend; the optional Village Advisor uses a small server-side OpenRouter proxy.
 
+## Continuing with an AI agent
+
+Start with [HANDOFF.md](HANDOFF.md). It captures the current worktree state, the safe verification loop, and the most useful next places to inspect. [AGENTS.md](AGENTS.md) is the concise, tool-neutral operating guide; [CLAUDE.md](CLAUDE.md) is an entry point for Claude Code. Read [ARCHITECTURAL.md](ARCHITECTURAL.md) before changing the simulation or persistence and [DESIGN.md](DESIGN.md) before changing the interface.
+
 ## Requirements
 
 - Node.js 18 or newer

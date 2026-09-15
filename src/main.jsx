@@ -125,8 +125,6 @@ function App() {
     menuButtonRef = useRef(),
     menuStateRef = useRef(false),
     advisorButtonRef = useRef(),
-    eventPeekRef = useRef(),
-    eventCloseRef = useRef(),
     inspectorCloseRef = useRef(),
     goalsButtonRef = useRef(),
     modalRef = useRef(),
@@ -197,15 +195,12 @@ function App() {
     [advisorError, setAdvisorError] = useState(null);
   const [importOpen, setImportOpen] = useState(false),
     [importPreview, setImportPreview] = useState(null);
-  const [eventOpen, setEventOpen] = useState(false);
   const toastTimer = useRef();
   const goalSnapshot = useRef({ ready: false, complete: false });
   const modalReturnRef = useRef();
   const tutorialFocusPending = useRef(false);
   const placementFocusReturn = useRef(null);
   const inspectorFocusReturn = useRef(null);
-  const eventChoiceRef = useRef();
-  const eventFocusId = useRef(null);
   const notify = (message) => {
     setToast(message);
     clearTimeout(toastTimer.current);
@@ -214,7 +209,6 @@ function App() {
   const openModal = (setter, returnTarget) => {
     modalReturnRef.current = returnTarget || document.activeElement;
     setAdvisorOpen(false);
-    setEventOpen(false);
     setter(true);
   };
   const closeMenu = (restoreFocus = false) => {
@@ -253,7 +247,6 @@ function App() {
         active.matches("button, input, textarea, select, a, [tabindex]")
           ? active
           : null;
-      setEventOpen(false);
     } else {
       inspectorFocusReturn.current = null;
     }
@@ -376,7 +369,6 @@ function App() {
     setBuildDetailsOpen(false);
     setHover(null);
     setDetail(null);
-    setEventOpen(false);
     setAdvisorOpen(false);
     game.current.clearHighlight();
     game.current.select(next);
@@ -425,12 +417,9 @@ function App() {
           requestAnimationFrame(() => returnTarget?.focus());
           return;
         }
-        if (help || reset || rename || overview || advisorOpen || importOpen || eventOpen) {
+        if (help || reset || rename || overview || advisorOpen || importOpen) {
           if (advisorOpen) {
             requestAnimationFrame(() => advisorButtonRef.current?.focus());
-          }
-          if (eventOpen) {
-            requestAnimationFrame(() => eventPeekRef.current?.focus());
           }
           setHelp(false);
           setReset(false);
@@ -439,7 +428,6 @@ function App() {
           setAdvisorOpen(false);
           setImportOpen(false);
           setImportPreview(null);
-          setEventOpen(false);
           return;
         }
         if (menu) {
@@ -516,7 +504,7 @@ function App() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [selected, loaded, detail, help, reset, rename, overview, menu, advisorOpen, importOpen, eventOpen]);
+  }, [selected, loaded, detail, help, reset, rename, overview, menu, advisorOpen, importOpen]);
   const menuKeyDown = (event) => {
     const items = menuRef.current?.querySelectorAll('[role="menuitem"]');
     if (!items?.length) return;
@@ -700,17 +688,11 @@ function App() {
     introActive &&
     (!selected ||
       (tutorialAction?.kind === "build" && selected === tutorialAction.type));
-  const firstAffordableEventChoice =
-    state.event?.choices?.findIndex((choice) =>
-      Object.entries(choice.cost || {}).every(
-        ([resource, amount]) => (state.resources[resource] || 0) >= amount,
-      ),
-    ) ?? -1;
   useEffect(() => {
     const syncHiddenSurfaces = () => {
       document
         .querySelectorAll(
-          ".game-shell .objectives, .game-shell .tutorial-card, .game-shell .event-peek, .game-shell .event-card, .game-shell .advisor-panel, .game-shell .inspector, .game-shell .build-tooltip",
+          ".game-shell .objectives, .game-shell .tutorial-card, .game-shell .advisor-panel, .game-shell .inspector, .game-shell .build-tooltip",
         )
         .forEach((element) => {
           const styles = window.getComputedStyle(element);
@@ -755,7 +737,7 @@ function App() {
       window.removeEventListener("resize", syncHiddenSurfaces);
       observer?.disconnect();
     };
-  }, [advisorOpen, buildDetailsOpen, detail, eventOpen, menu, modalOpen, selected, tutorialVisible]);
+  }, [advisorOpen, buildDetailsOpen, detail, menu, modalOpen, selected, tutorialVisible]);
   const runTutorialAction = () => {
     if (!tutorialAction) return;
     if (tutorialAction.kind === "focus") {
@@ -975,19 +957,7 @@ function App() {
   };
   const closeAdvisor = () => {
     setAdvisorOpen(false);
-    setEventOpen(false);
     requestAnimationFrame(() => advisorButtonRef.current?.focus());
-  };
-  const openEvent = () => setEventOpen(true);
-  const closeEvent = () => {
-    setEventOpen(false);
-    requestAnimationFrame(() => eventPeekRef.current?.focus());
-  };
-  const resolveEventChoice = (index) => {
-    game.current?.resolveEvent(index);
-    requestAnimationFrame(() => {
-      (eventPeekRef.current || menuButtonRef.current)?.focus();
-    });
   };
   const toggleAdvisor = () => {
     if (advisorOpen) {
@@ -995,25 +965,9 @@ function App() {
       return;
     }
     setAdvisorOpen(true);
-    setEventOpen(false);
     closeDetail();
     closeMenu();
   };
-  useEffect(() => {
-    if (!eventOpen) return;
-    requestAnimationFrame(() => eventCloseRef.current?.focus());
-  }, [eventOpen]);
-  useEffect(() => {
-    if (!state.event) {
-      eventFocusId.current = null;
-      return;
-    }
-    if (eventFocusId.current === state.event.id) return;
-    eventFocusId.current = state.event.id;
-    if (introActive || selected || detail || advisorOpen || menu || modalOpen) return;
-    const frame = requestAnimationFrame(() => eventChoiceRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [state.event?.id, introActive, selected, detail, advisorOpen, menu, modalOpen]);
   useEffect(() => {
     if (!detail || selected) return;
     requestAnimationFrame(() => inspectorCloseRef.current?.focus());
@@ -1673,63 +1627,6 @@ function App() {
             </button>
           )}
           <button className="tutorial-skip" onClick={() => game.current?.dismissTutorial()}>Skip introduction</button>
-        </aside>
-      )}
-      {state.event && introActive && !eventOpen && !selected && (
-        <button ref={eventPeekRef} className="event-peek parchment" type="button" onClick={openEvent}>
-          <Sparkles size={14} />
-          <span><small>STORY WAITING</small><strong>{state.event.title}</strong></span>
-          <ArrowUpRight size={13} />
-        </button>
-      )}
-      {state.event && (!introActive || eventOpen) && (
-        <aside
-          className="event-card parchment"
-          role="dialog"
-          aria-modal="false"
-          aria-labelledby="story-event-title"
-        >
-          <div className="event-card-top">
-            <span className="overview-kicker">A SMALL VILLAGE STORY</span>
-            {introActive && <button ref={eventCloseRef} className="bare" type="button" aria-label="Keep story for later" onClick={closeEvent}><X size={14} /></button>}
-          </div>
-          <h3 id="story-event-title">{state.event.title}</h3>
-          <p>{state.event.text}</p>
-          <div className="event-choices">
-            {state.event.choices.map((choice, index) => {
-              const shortages = Object.entries(choice.cost || {}).filter(
-                ([resource, amount]) => (state.resources[resource] || 0) < amount,
-              );
-              const affordable = shortages.length === 0;
-              const costHint = shortages.length
-                ? `Need ${shortages
-                    .map(([resource, amount]) => `${Math.ceil(amount - (state.resources[resource] || 0))} more ${resource}`)
-                    .join(" and ")}`
-                : choice.cost
-                  ? `Costs ${Object.entries(choice.cost)
-                      .map(([resource, amount]) => `${amount} ${resource}`)
-                      .join(" and ")}`
-                  : "No resources required";
-              return (
-                <button
-                  key={choice.label}
-                  className={index === 0 && affordable ? "event-choice-primary" : undefined}
-                  ref={
-                    index ===
-                    (firstAffordableEventChoice >= 0 ? firstAffordableEventChoice : 0)
-                      ? eventChoiceRef
-                      : undefined
-                  }
-                  disabled={!affordable}
-                  title={costHint}
-                  aria-label={`${choice.label}. ${costHint}`}
-                  onClick={() => resolveEventChoice(index)}
-                >
-                  {choice.label}
-                </button>
-              );
-            })}
-          </div>
         </aside>
       )}
       {toast && (

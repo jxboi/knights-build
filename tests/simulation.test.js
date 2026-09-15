@@ -1655,7 +1655,7 @@ test("stale tabs refuse rename and path mutations", () => {
   assert.match(notice, /changed in another tab/);
 });
 
-test("stale tabs refuse inspector, feast, and story mutations", () => {
+test("stale tabs refuse inspector and feast mutations", () => {
   let notice = "";
   const v = Object.create(Village.prototype);
   Object.assign(v, {
@@ -1670,7 +1670,6 @@ test("stale tabs refuse inspector, feast, and story mutations", () => {
   assert.equal(v.setPaused("building-1", true), false);
   assert.equal(v.upgradeBuilding("building-1"), false);
   assert.equal(v.startFeast(), false);
-  assert.equal(v.resolveEvent(0), false);
   assert.equal(v.dismissTutorial(), false);
   assert.match(notice, /changed in another tab/);
 });

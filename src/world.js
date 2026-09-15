@@ -30,35 +30,6 @@ const WORKER_PASS_SECONDS = 1;
 const WORKER_DEADLOCK_SECONDS = 1.8;
 const WORKER_DEADLOCK_YIELD_SECONDS = 2.4;
 const WORKER_DEADLOCK_RADIUS = 1.65;
-const VILLAGE_EVENTS = [
-  {
-    id: "peddler",
-    title: "A peddler at the gate",
-    text: "A cheerful trader offers provisions for your next building push.",
-    choices: [
-      { label: "Trade 12 wood", cost: { wood: 12 }, reward: { food: 20 }, result: "The peddler leaves a sack of grain by the hall." },
-      { label: "Wave goodbye", result: "The peddler tips their hat and continues down the road." },
-    ],
-  },
-  {
-    id: "harvest",
-    title: "A harvest celebration",
-    text: "Your villagers have enough to share. A small celebration could lift every hammer.",
-    choices: [
-      { label: "Share 20 food", cost: { food: 20 }, reward: { wood: 20 }, result: "The celebration brings a bundle of timber from a nearby grove." },
-      { label: "Save the stores", result: "The village keeps its pantry ready for tomorrow." },
-    ],
-  },
-  {
-    id: "stonemason",
-    title: "A passing stonemason",
-    text: "A traveling craftsperson can swap spare stone for useful timber before moving on.",
-    choices: [
-      { label: "Trade 10 stone", cost: { stone: 10 }, reward: { wood: 16 }, result: "Fresh-cut timber arrives at the town hall." },
-      { label: "Let them pass", result: "The stonemason wishes your village well." },
-    ],
-  },
-];
 function pushPriority(heap, item) {
   let index = heap.length;
   heap.push(item);
@@ -360,8 +331,6 @@ export class Village {
     this.tutorialStep = 0;
     this.tutorialDismissed = false;
     this.feast = null;
-    this.event = null;
-    this.nextEventAt = 70;
     this.trendSample = { elapsed: 0, resources: { ...this.resources } };
     this.trends = { wood: 0, stone: 0, food: 0, wheat: 0 };
     this.activity = "";
@@ -859,8 +828,6 @@ export class Village {
           this.saved.feast && finiteNumber(this.saved.feast.remaining, 0) > 0
             ? { remaining: finiteNumber(this.saved.feast.remaining, 0) }
             : null;
-        this.event = VILLAGE_EVENTS.find((candidate) => candidate.id === this.saved?.event?.id) || null;
-        this.nextEventAt = Math.max(70, finiteNumber(this.saved.nextEventAt, 70));
         this.created =
           this.saved.created && typeof this.saved.created === "object"
             ? { ...this.saved.created }
@@ -2526,29 +2493,6 @@ export class Village {
     this.emit();
     return true;
   }
-  resolveEvent(choiceIndex) {
-    if (this.blockedByStorageConflict()) return false;
-    if (!this.event) return false;
-    const choice = this.event.choices[choiceIndex];
-    if (!choice) return false;
-    if (choice.cost && Object.entries(choice.cost).some(([resource, amount]) => (this.resources[resource] || 0) < amount)) {
-      this.notify("The village does not have enough to make that trade.");
-      return false;
-    }
-    Object.entries(choice.cost || {}).forEach(([resource, amount]) => {
-      this.resources[resource] -= amount;
-    });
-    Object.entries(choice.reward || {}).forEach(([resource, amount]) => {
-      this.resources[resource] += amount;
-    });
-    this.announce(choice.result);
-    this.notify(choice.result);
-    this.event = null;
-    this.nextEventAt = this.elapsed + 70;
-    this.save();
-    this.emit();
-    return true;
-  }
   highlight(b) {
     this.clearHighlight();
     const n = (CATALOG[b.type]?.size || 4) / 2 + 0.3;
@@ -3892,12 +3836,6 @@ export class Village {
     this.elapsed += dt;
     this.updateGrainFields();
     this.updateTrees();
-    if (!this.event && this.elapsed >= (this.nextEventAt || 70)) {
-      const event = VILLAGE_EVENTS[Math.floor(this.elapsed / 70) % VILLAGE_EVENTS.length];
-      this.event = event;
-      this.announce(`${event.title}.`);
-      this.save();
-    }
     if (this.activityTime > 0) {
       this.activityTime = Math.max(0, this.activityTime - dt);
       if (this.activityTime === 0) this.activity = "";
@@ -4491,9 +4429,6 @@ export class Village {
         claimed: goal.completed || goal.claimed || Boolean(this.chapterRewards[goal.id]),
       })),
       feast: this.feast ? { ...this.feast } : null,
-      event: this.event
-        ? { id: this.event.id, title: this.event.title, text: this.event.text, choices: this.event.choices }
-        : null,
       tutorialStep: this.tutorialStep,
       tutorialDismissed: this.tutorialDismissed,
       graphicsPreset: this.graphicsPreset,
@@ -4524,8 +4459,6 @@ export class Village {
         delivered: this.delivered,
         chapterRewards: this.chapterRewards,
         feast: this.feast,
-        event: this.event ? { id: this.event.id } : null,
-        nextEventAt: this.nextEventAt,
         tutorialStep: this.tutorialStep,
         tutorialDismissed: this.tutorialDismissed,
         activityLog: (Array.isArray(this.activityLog) ? this.activityLog : [])
