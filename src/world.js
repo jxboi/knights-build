@@ -2348,8 +2348,23 @@ export class Village {
   }
   addWorker() {
     const m = this.model("worker", rand() * 2 - 1, rand() * 2);
+    const contactShadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.3, 20),
+      new THREE.MeshBasicMaterial({
+        color: "#43552e",
+        transparent: true,
+        opacity: 0.2,
+        depthWrite: false,
+      }),
+    );
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.position.set(m.position.x, 0.006, m.position.z);
+    contactShadow.scale.set(1, 0.58, 1);
+    contactShadow.renderOrder = 1;
+    this.scene.add(contactShadow);
     const w = {
       m,
+      contactShadow,
       phase: "idle",
       path: [],
       id: `worker-${this.nextWorkerId++}`,
@@ -2784,19 +2799,9 @@ export class Village {
         } else {
           w.m.position.addScaledVector(delta.normalize(), step);
           w.m.rotation.y = Math.atan2(delta.x, delta.z);
-          const walkWave = Math.sin(
-            this.elapsed * 11 + (w.walkPhase || 0),
-          );
-          w.m.position.y = 0.018 + Math.abs(walkWave) * 0.045;
-          w.m.rotation.z = walkWave * 0.055;
-          w.m.scale.y = 1 + Math.abs(walkWave) * 0.025;
         }
         continue;
       }
-      const idleWave = Math.sin(this.elapsed * 2.4 + (w.idlePhase || 0));
-      w.m.position.y = Math.max(0, idleWave * 0.012);
-      w.m.rotation.z *= 0.92;
-      w.m.scale.y += (1 - w.m.scale.y) * 0.14;
       if (w.phase === "idle") {
         w.timer -= dt;
         if (w.timer <= 0) this.assign(w);
@@ -3456,6 +3461,29 @@ export class Village {
     if (this.ready && this.speed) this.simulate(dt * this.speed);
     this.controls.update();
     this.updateAtmosphere();
+    for (const w of this.workers) {
+      if (!w.m?.position) continue;
+      const walking = w.path.length > 0;
+      const cycle = walking
+        ? t * 9.5 + (w.walkPhase || 0)
+        : t * 2.2 + (w.idlePhase || 0);
+      const stride = walking ? Math.sin(cycle) : 0;
+      const lift = walking ? Math.abs(stride) * 0.012 : 0;
+      const baseY = 0.004;
+      w.m.position.y = baseY + lift;
+      w.m.rotation.z = walking ? stride * 0.04 : Math.sin(cycle) * 0.008;
+      w.m.rotation.x = walking ? Math.cos(cycle) * 0.012 : 0;
+      const stretch = walking ? Math.abs(stride) * 0.012 : 0;
+      w.m.scale.y += (1 + stretch - w.m.scale.y) * 0.24;
+      if (w.contactShadow) {
+        w.contactShadow.position.set(w.m.position.x, 0.006, w.m.position.z);
+        const squash = walking ? 1 - Math.abs(stride) * 0.12 : 1;
+        w.contactShadow.scale.set(squash, 0.58 * squash, 1);
+        w.contactShadow.material.opacity = walking
+          ? 0.18 + Math.abs(stride) * 0.035
+          : 0.18;
+      }
+    }
     for (const m of this.ripples) {
       const phase = m.userData.phase || 0;
       const speed = m.userData.speed || 0.5;
