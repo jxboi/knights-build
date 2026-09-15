@@ -91,8 +91,11 @@ function popPriority(heap) {
 }
 export const DEFAULT_VILLAGE_NAME = "Willowbrook";
 export const MAX_POPULATION = 24;
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 export const GRAIN_GROW_SECONDS = 30;
+export const TREE_REGROW_SECONDS = 45;
+export const TREE_LOG_AMOUNT = 8;
+export const LUMBERYARD_PROCESS_SECONDS = 5;
 export const grainGrowthProgress = (plantedAt, elapsed) =>
   Math.max(
     0,
@@ -108,6 +111,10 @@ export const grainGrowthStage = (plantedAt, elapsed) => {
   if (progress >= 0.58) return "growing";
   if (progress >= 0.24) return "sprout";
   return "sown";
+};
+export const treeRegrowthProgress = (regrowAt, elapsed) => {
+  const remaining = Math.max(0, finiteNumber(regrowAt, 0) - finiteNumber(elapsed, 0));
+  return Math.max(0, Math.min(1, 1 - remaining / TREE_REGROW_SECONDS));
 };
 export const sanitizeVillageName = (value, fallback = DEFAULT_VILLAGE_NAME) => {
   if (typeof value !== "string") return fallback;
@@ -777,7 +784,6 @@ export class Village {
         });
       }
       if (this.dead) return;
-      this.makeThumbnails();
       this.name = sanitizeVillageName(this.saved?.name);
       const savedActivity = Array.isArray(this.saved?.activityLog)
         ? this.saved.activityLog
@@ -901,6 +907,11 @@ export class Village {
       } else {
         initial.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
       }
+      const savedTrees = new Map(
+        (Array.isArray(this.saved?.trees) ? this.saved.trees : [])
+          .filter((tree) => tree && Number.isFinite(Number(tree.x)) && Number.isFinite(Number(tree.z)))
+          .map((tree) => [`${Number(tree.x).toFixed(3)},${Number(tree.z).toFixed(3)}`, tree]),
+      );
       for (let i = 0; i < 210; i++) {
         const x = rand() * 65 - 32,
           z = rand() * 60 - 30;
@@ -924,14 +935,30 @@ export class Village {
         const s = type === "tree" ? 0.65 + rand() * 0.7 : 0.35 + rand() * 0.65;
         m.scale.setScalar(s);
         m.rotation.y = rand() * 6;
-        if (type === "tree") {
+        const tree = type === "tree";
+        if (tree) {
           m.userData.baseZ = 0;
           m.userData.phase = rand() * Math.PI * 2;
           m.userData.speed = 0.55 + rand() * 0.3;
           m.userData.amount = 0.012 + rand() * 0.015;
           this.swayers.push(m);
         }
-        this.decor.push({ m, x, z, r: type === "tree" ? 0.5 * s : 0.6 * s });
+        const savedTree = tree
+          ? savedTrees.get(`${x.toFixed(3)},${z.toFixed(3)}`)
+          : null;
+        this.decor.push({
+          m,
+          x,
+          z,
+          r: tree ? 0.5 * s : 0.6 * s,
+          type,
+          state: tree ? savedTree?.state || "available" : null,
+          claimedBy: null,
+          regrowAt: tree ? finiteNumber(savedTree?.regrowAt, null) : null,
+          baseScale: s,
+          baseRotation: m.rotation.z,
+        });
+        if (tree) this.updateTreeVisual(this.decor[this.decor.length - 1]);
       }
       for (let i = 0; i < 350; i++) {
         const x = rand() * 49 - 25,
@@ -970,8 +997,21 @@ export class Village {
       this.lastSave = saveCycleMarker(this.elapsed);
       this.trendSample = { elapsed: this.elapsed, resources: { ...this.resources } };
       this.ready = true;
-      this.onLoaded(this.thumbnails);
+      this.onLoaded(this.thumbnails, undefined, "interactive");
       this.emit();
+      const makeThumbnails = () => {
+        if (this.dead) return;
+        this.makeThumbnails();
+        this.onLoaded(this.thumbnails, undefined, "thumbnails");
+        this.emit();
+      };
+      if (window.requestIdleCallback) {
+        this.thumbnailTaskKind = "idle";
+        this.thumbnailTask = window.requestIdleCallback(makeThumbnails, { timeout: 1800 });
+      } else {
+        this.thumbnailTaskKind = "timeout";
+        this.thumbnailTask = window.setTimeout(makeThumbnails, 100);
+      }
     } catch (e) {
       console.error(e);
       this.notify("Could not load the village. Please refresh to try again.");
@@ -1198,6 +1238,69 @@ export class Village {
     for (const field of this.buildings)
       if (field.type === "grainfield") this.updateGrainFieldVisual(field);
   }
+  treeGrowthProgress(tree) {
+    if (!tree || tree.type !== "tree") return 1;
+    if (tree.state === "available") return 1;
+    if (tree.state === "chopping")
+      return Math.max(0.15, 1 - (tree.chopProgress || 0) * 0.08);
+    return treeRegrowthProgress(tree.regrowAt, this.elapsed);
+  }
+  updateTreeVisual(tree) {
+    if (!tree?.m || tree.type !== "tree") return;
+    const progress = this.treeGrowthProgress(tree);
+    tree.m.visible = true;
+    tree.m.scale.set(
+      tree.baseScale || 1,
+      (tree.baseScale || 1) * (0.12 + progress * 0.88),
+      tree.baseScale || 1,
+    );
+    tree.m.position.y = tree.state === "regrowing" ? 0.02 : 0;
+  }
+  updateTrees() {
+    for (const tree of this.decor || []) {
+      if (tree.type !== "tree") continue;
+      if (tree.state === "regrowing" && this.elapsed >= tree.regrowAt) {
+        tree.state = "available";
+        tree.regrowAt = null;
+        tree.chopProgress = 0;
+        tree.claimedBy = null;
+        this.announce("A felled tree has grown back in the forest.");
+      }
+      this.updateTreeVisual(tree);
+    }
+  }
+  availableTreeFor(lumberyard, worker) {
+    return (this.decor || [])
+      .filter(
+        (tree) =>
+          tree.type === "tree" &&
+          tree.state === "available" &&
+          !tree.claimedBy,
+      )
+      .sort(
+        (a, b) =>
+          Math.hypot(worker.m.position.x - a.x, worker.m.position.z - a.z) -
+            Math.hypot(worker.m.position.x - b.x, worker.m.position.z - b.z) ||
+          Math.hypot(lumberyard.x - a.x, lumberyard.z - a.z) -
+            Math.hypot(lumberyard.x - b.x, lumberyard.z - b.z),
+      )[0] || null;
+  }
+  finishChopping(tree) {
+    if (!tree || tree.type !== "tree") return;
+    tree.state = "regrowing";
+    tree.claimedBy = null;
+    tree.chopProgress = 0;
+    tree.regrowAt = this.elapsed + TREE_REGROW_SECONDS;
+    this.updateTreeVisual(tree);
+  }
+  releaseTree(tree) {
+    if (!tree || tree.type !== "tree") return;
+    tree.state = "available";
+    tree.claimedBy = null;
+    tree.chopProgress = 0;
+    tree.regrowAt = null;
+    this.updateTreeVisual(tree);
+  }
   addSmoke(b) {
     if (b.smoke || !this.scene?.add) return;
     const group = new THREE.Group();
@@ -1418,7 +1521,7 @@ export class Village {
         Math.abs(z - b.z) < (CATALOG[b.type]?.size || 4) / 2 + padding,
     );
   }
-  routeBlocked(x, z, ignore = null) {
+  routeBlocked(x, z, ignore = null, ignoreDecor = null) {
     if (
       this.buildings.some(
         (building) =>
@@ -1434,6 +1537,7 @@ export class Village {
     return Boolean(
       this.decor?.some(
         (decor) =>
+          decor !== ignoreDecor &&
           Math.abs(x - decor.x) < 0.45 + decor.r &&
           Math.abs(z - decor.z) < 0.45 + decor.r,
       ),
@@ -2268,11 +2372,14 @@ export class Village {
       if (
         worker.building !== building ||
         worker.phase === "deliver" ||
+        worker.phase === "lumber_delivery" ||
         worker.phase === "material_delivery"
       )
         continue;
       if (worker.field) worker.field.claimedBy = null;
+      if (worker.tree) this.releaseTree(worker.tree);
       worker.field = null;
+      worker.tree = null;
       worker.building = null;
       worker.phase = "idle";
       worker.timer = 0;
@@ -2490,10 +2597,27 @@ export class Village {
     };
     const leftArm = makeArm(-0.16);
     const rightArm = makeArm(0.16);
+    const axe = new THREE.Group();
+    const axeHandle = part(
+      new THREE.BoxGeometry(0.035, 0.34, 0.035),
+      materials.wood,
+    );
+    axeHandle.position.y = -0.17;
+    axe.add(axeHandle);
+    const axeHead = part(
+      new THREE.BoxGeometry(0.16, 0.1, 0.035),
+      materials.dark,
+    );
+    axeHead.position.set(0.055, -0.02, 0);
+    axe.add(axeHead);
+    axe.position.set(0, -0.31, -0.05);
+    axe.rotation.z = -0.6;
+    axe.visible = false;
+    rightArm.add(axe);
     const leftLeg = makeLeg(-0.075);
     const rightLeg = makeLeg(0.075);
     m.add(rig);
-    return { rig, leftArm, rightArm, leftLeg, rightLeg };
+    return { rig, leftArm, rightArm, leftLeg, rightLeg, axe };
   }
   addWorker() {
     const preferredX = rand() * 2 - 1;
@@ -2526,6 +2650,7 @@ export class Village {
       workDuration: 0,
       building: null,
       carry: null,
+      tree: null,
       waitingForInput: false,
       walkPhase: rand() * Math.PI * 2,
       idlePhase: rand() * Math.PI * 2,
@@ -2564,14 +2689,16 @@ export class Village {
       wheat: "#e1b74e",
     }[resource] || "#d6bd7c";
   }
-  showCarry(w, resource) {
+  showCarry(w, resource, variant = null) {
     if (w.carryMesh || !w.m?.add) return;
     const geometry =
       resource === "stone"
         ? new THREE.DodecahedronGeometry(0.13, 0)
         : resource === "food"
           ? new THREE.ConeGeometry(0.11, 0.23, 5)
-          : new THREE.BoxGeometry(0.24, 0.13, 0.13);
+          : variant === "logs"
+            ? new THREE.CylinderGeometry(0.08, 0.08, 0.28, 8)
+            : new THREE.BoxGeometry(0.24, 0.13, 0.13);
     w.carryMesh = new THREE.Mesh(
       geometry,
       new THREE.MeshStandardMaterial({
@@ -2581,6 +2708,7 @@ export class Village {
       }),
     );
     w.carryMesh.position.set(0, 0.63, -0.17);
+    if (variant === "logs") w.carryMesh.rotation.z = Math.PI / 2;
     w.carryMesh.rotation.y = rand() * Math.PI;
     w.carryMesh.castShadow = true;
     w.m.add(w.carryMesh);
@@ -2726,7 +2854,7 @@ export class Village {
     this.sun.intensity = 0.62 + sunHeight * 2.12;
     this.hemi.intensity = 0.82 + sunHeight * 0.82;
   }
-  route(w, x, z, ignore = null) {
+  route(w, x, z, ignore = null, ignoreDecor = null) {
     const sx = Math.round(w.m.position.x),
       sz = Math.round(w.m.position.z),
       tx = Math.round(x),
@@ -2761,7 +2889,7 @@ export class Village {
           nz < -30 ||
           nz > 30 ||
           nx > riverX(nz) - 0.6 ||
-          this.routeBlocked(nx, nz, ignore)
+          this.routeBlocked(nx, nz, ignore, ignoreDecor)
         )
           continue;
         // Other workers are temporary congestion, not walls. The route remains
@@ -2878,7 +3006,15 @@ export class Village {
     const candidates = [...construction, ...sites.sort(compareJobs)];
     for (const b of candidates) {
       const material = b.progress < 1 ? this.nextConstructionMaterial(b) : null;
+      const forestTrees = (this.decor || []).filter((decor) => decor.type === "tree");
+      const tree = !material && b.type === "lumberyard" && forestTrees.length
+        ? this.availableTreeFor(b, w)
+        : null;
       const destination = material ? this.materialSource(material) : b;
+      if (!material && b.type === "lumberyard" && forestTrees.length && !tree) {
+        b.lastRouteBlocked = false;
+        continue;
+      }
       if (!destination) {
         b.lastRouteBlocked = true;
         continue;
@@ -2894,17 +3030,21 @@ export class Village {
                 ),
             )[0]
           : null;
-      const [x, z] = field
-        ? [field.x, field.z]
-        : this.jobPoint(destination, w);
-      if (!this.route(w, x, z, field)) {
+      const [x, z] = tree
+        ? [tree.x, tree.z]
+        : field
+          ? [field.x, field.z]
+          : this.jobPoint(destination, w);
+      if (!this.route(w, x, z, field, tree)) {
         b.lastRouteBlocked = true;
         continue;
       }
       b.lastRouteBlocked = false;
       w.building = b;
       w.field = field || null;
+      w.tree = tree || null;
       if (field) field.claimedBy = w.id;
+      if (tree) tree.claimedBy = w.id;
       w.materialResource = material;
       w.phase = material ? "material_pickup" : "travel";
       w.waitingForSpace = false;
@@ -2952,7 +3092,12 @@ export class Village {
       candidate.z >= -30 &&
       candidate.z <= 30 &&
       candidate.x <= riverX(candidate.z) - 0.6 &&
-      !this.routeBlocked(candidate.x, candidate.z, worker.field || null) &&
+      !this.routeBlocked(
+        candidate.x,
+        candidate.z,
+        worker.field || null,
+        worker.tree || null,
+      ) &&
       !this.workerMoveBlocker(worker, candidate)
     );
   }
@@ -3121,6 +3266,7 @@ export class Village {
       target.x,
       target.z,
       worker.field || null,
+      worker.tree || null,
     );
     if (!routed) worker.path = previousPath;
     worker.routeTarget = target;
@@ -3136,16 +3282,28 @@ export class Village {
     }
     const next = w.path[0];
     if (
-      this.routeTargetBlocked(next) &&
+      this.routeTargetBlocked(next, w) &&
       w.routeTarget &&
-      !this.route(w, w.routeTarget.x, w.routeTarget.z, w.field || null)
+      !this.route(
+        w,
+        w.routeTarget.x,
+        w.routeTarget.z,
+        w.field || null,
+        w.tree || null,
+      )
     ) {
       w.path = [];
-      if (w.phase === "deliver" || w.phase === "material_delivery")
+      if (
+        w.phase === "deliver" ||
+        w.phase === "lumber_delivery" ||
+        w.phase === "material_delivery"
+      )
         w.deliveryRetry = 1.5;
       else {
         if (w.field) w.field.claimedBy = null;
+        if (w.tree) this.releaseTree(w.tree);
         w.field = null;
+        w.tree = null;
         w.phase = "idle";
         w.building = null;
         w.timer = 2;
@@ -3210,6 +3368,7 @@ export class Village {
     if (!this.trends) this.trends = { wood: 0, stone: 0, food: 0, wheat: 0 };
     this.elapsed += dt;
     this.updateGrainFields();
+    this.updateTrees();
     if (!this.event && this.elapsed >= (this.nextEventAt || 70)) {
       const event = VILLAGE_EVENTS[Math.floor(this.elapsed / 70) % VILLAGE_EVENTS.length];
       this.event = event;
@@ -3237,10 +3396,13 @@ export class Village {
       if (
         w.building?.paused &&
         w.phase !== "deliver" &&
+        w.phase !== "lumber_delivery" &&
         w.phase !== "material_delivery"
       ) {
         if (w.field) w.field.claimedBy = null;
+        if (w.tree) this.releaseTree(w.tree);
         w.field = null;
+        w.tree = null;
         w.building = null;
         w.phase = "idle";
         w.timer = 0;
@@ -3324,7 +3486,15 @@ export class Village {
           w.timer = 0.35;
         }
       } else if (w.phase === "travel") {
-        if (w.field) {
+        if (w.tree) {
+          w.tree.state = "chopping";
+          w.tree.chopProgress = 0;
+          this.updateTreeVisual(w.tree);
+          w.phase = "chop";
+          w.workDuration = 4.5;
+          w.timer = w.workDuration;
+          this.announce("A worker is chopping down a tree for the lumberyard.");
+        } else if (w.field) {
           w.phase = "harvest";
           w.workDuration = 3.5;
           w.timer = w.workDuration;
@@ -3382,6 +3552,83 @@ export class Village {
           this.playSound("complete");
           this.notify(readyMessage);
           this.save();
+        }
+      } else if (w.phase === "chop") {
+        w.timer -= dt;
+        if (w.tree) {
+          w.tree.chopProgress = Math.max(
+            0,
+            Math.min(1, 1 - w.timer / Math.max(0.01, w.workDuration)),
+          );
+          this.updateTreeVisual(w.tree);
+        }
+        if (w.timer <= 0) {
+          const tree = w.tree;
+          const lumberyard = w.building;
+          if (!tree || !lumberyard) {
+            w.phase = "idle";
+            w.tree = null;
+            w.building = null;
+            continue;
+          }
+          this.finishChopping(tree);
+          w.tree = null;
+          w.workDuration = 0;
+          w.carry = {
+            resource: "wood",
+            amount: TREE_LOG_AMOUNT,
+            product: "logs",
+          };
+          this.showCarry(w, "wood", "logs");
+          w.phase = "lumber_delivery";
+          const [yardX, yardZ] = this.jobPoint(lumberyard, w);
+          w.deliveryRetry = this.route(w, yardX, yardZ) ? 0 : 1.5;
+          this.announce("The tree is down. Logs are heading to the lumberyard.");
+        }
+      } else if (w.phase === "lumber_delivery") {
+        const lumberyard = w.building;
+        if (!lumberyard) {
+          this.clearCarry(w);
+          w.carry = null;
+          w.phase = "idle";
+          continue;
+        }
+        if (w.deliveryRetry > 0) {
+          w.deliveryRetry -= dt;
+          if (w.deliveryRetry <= 0) {
+            const [yardX, yardZ] = this.jobPoint(lumberyard, w);
+            w.deliveryRetry = this.route(w, yardX, yardZ) ? 0 : 1.5;
+          }
+          continue;
+        }
+        this.clearCarry(w);
+        w.carry = null;
+        w.phase = "process";
+        w.workDuration = LUMBERYARD_PROCESS_SECONDS;
+        w.timer = w.workDuration;
+        this.announce("The lumberyard is sawing logs into wooden planks.");
+      } else if (w.phase === "process") {
+        w.timer -= dt;
+        if (w.timer <= 0) {
+          const lumberyard = w.building;
+          if (!lumberyard) {
+            w.phase = "idle";
+            continue;
+          }
+          w.carry = {
+            resource: "wood",
+            amount: TREE_LOG_AMOUNT,
+            product: "wooden plank",
+          };
+          this.showCarry(w, "wood", "plank");
+          w.phase = "deliver";
+          w.workDuration = 0;
+          const depot =
+            this.buildings.find((building) => building.type === "townhall") ||
+            lumberyard;
+          const [depotX, depotZ] = this.jobPoint(depot, w);
+          w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
+          this.announce("Wooden planks are ready. A worker is taking them to the hall.");
         }
       } else if (w.phase === "harvest") {
         w.timer -= dt;
@@ -3461,8 +3708,9 @@ export class Village {
           this.delivered[w.carry.resource] =
             (this.delivered[w.carry.resource] || 0) + w.carry.amount;
           if (w.carry.resource === "wood") this.gathered += w.carry.amount;
+          const deliveredLabel = w.carry.product || w.carry.resource;
           this.announce(
-            `${w.building.type === "bakery" ? "Bread (food)" : w.carry.resource[0].toUpperCase() + w.carry.resource.slice(1)} +${w.carry.amount} delivered to the hall.`,
+            `${w.building.type === "bakery" ? "Bread (food)" : deliveredLabel[0].toUpperCase() + deliveredLabel.slice(1)} +${w.carry.amount} delivered to the hall.`,
           );
           w.building.cycles++;
           this.clearCarry(w);
@@ -3472,6 +3720,7 @@ export class Village {
         w.phase = "idle";
         w.workDuration = 0;
         w.field = null;
+        w.tree = null;
         w.building = null;
       }
     }
@@ -3506,14 +3755,14 @@ export class Village {
       };
     }
   }
-  routeTargetBlocked(point) {
+  routeTargetBlocked(point, worker = null) {
     if (!point) return false;
-    return this.routeBlocked(point.x, point.z);
+    return this.routeBlocked(point.x, point.z, null, worker?.tree || null);
   }
   workSnapshot(w) {
     if (
       !w ||
-      (w.phase !== "work" && w.phase !== "harvest") ||
+      !["work", "harvest", "chop", "process"].includes(w.phase) ||
       !(w.workDuration > 0)
     )
       return { progress: null, remaining: null };
@@ -3559,7 +3808,7 @@ export class Village {
         const work = this.workSnapshot(
           assigned.find(
             (w) =>
-              (w.phase === "work" || w.phase === "harvest") &&
+              ["work", "harvest", "chop", "process"].includes(w.phase) &&
               w.workDuration > 0,
           ),
         );
@@ -3572,6 +3821,10 @@ export class Village {
             ? grainGrowthStage(b.plantedAt, this.elapsed)
             : null;
         const farmFields = b.type === "farm" ? this.grainFieldsForFarm(b) : [];
+        const forestTrees = this.decor?.filter((tree) => tree.type === "tree") || [];
+        const availableTrees = forestTrees.some(
+          (tree) => tree.state === "available" && !tree.claimedBy,
+        );
         const nextFarmGrowth = farmFields.length
           ? Math.max(
               ...farmFields.map((field) =>
@@ -3609,6 +3862,14 @@ export class Village {
               ? "Waiting for space"
             : assigned.some((w) => w.deliveryRetry > 0)
               ? "Waiting for route"
+            : b.type === "lumberyard" && forestTrees.length && !availableTrees && !assigned.length
+              ? "Waiting for trees"
+              : assigned.some((w) => w.phase === "chop")
+                ? "Chopping trees"
+              : assigned.some((w) => w.phase === "lumber_delivery")
+                ? "Taking logs to Lumberyard"
+              : assigned.some((w) => w.phase === "process")
+                ? "Sawing wooden planks"
               : assigned.some((w) => w.phase === "deliver")
                 ? "Delivering"
               : assigned.some((w) => w.phase === "travel")
@@ -3723,6 +3984,14 @@ export class Village {
           .map(({ message }) => String(message).slice(0, 140)),
         view: this.viewRecord(),
         roads: [...this.roads].filter((key) => !this.baseRoads?.has(key)),
+        trees: (this.decor || [])
+          .filter((tree) => tree.type === "tree" && tree.state !== "available")
+          .map((tree) => ({
+            x: tree.x,
+            z: tree.z,
+            state: tree.state === "regrowing" ? "regrowing" : "available",
+            regrowAt: tree.regrowAt,
+          })),
         buildings: this.buildings.map(
           ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt }) => ({
             type,
@@ -3944,8 +4213,20 @@ export class Village {
         w.rig.rig.rotation.z = gait * 0.025;
         w.rig.leftLeg.rotation.x += (gait * 0.42 - w.rig.leftLeg.rotation.x) * 0.35;
         w.rig.rightLeg.rotation.x += (-gait * 0.42 - w.rig.rightLeg.rotation.x) * 0.35;
-        w.rig.leftArm.rotation.x += (-gait * 0.3 - w.rig.leftArm.rotation.x) * 0.35;
-        w.rig.rightArm.rotation.x += (gait * 0.3 - w.rig.rightArm.rotation.x) * 0.35;
+        const chopping = w.phase === "chop";
+        w.rig.leftArm.rotation.x +=
+          ((chopping ? -0.72 : -gait * 0.3) - w.rig.leftArm.rotation.x) *
+          0.35;
+        w.rig.rightArm.rotation.x +=
+          ((chopping ? -0.72 : gait * 0.3) - w.rig.rightArm.rotation.x) *
+          0.35;
+        if (w.rig.axe) {
+          w.rig.axe.visible = chopping;
+          if (chopping) {
+            const swing = Math.max(0, Math.sin(t * 7.5 + w.walkPhase));
+            w.rig.axe.rotation.z = -0.7 + swing * 1.75;
+          }
+        }
       }
       if (w.contactShadow) {
         w.contactShadow.position.set(w.m.position.x, 0.006, w.m.position.z);
@@ -3970,6 +4251,13 @@ export class Village {
       const speed = m.userData.speed || 0.7;
       const amount = motion * (m.userData.amount || 0.02);
       m.rotation.z = (m.userData.baseZ || 0) + Math.sin(t * speed + phase) * amount;
+    }
+    for (const tree of this.decor || []) {
+      if (tree.type !== "tree" || tree.state !== "chopping" || !tree.m?.visible)
+        continue;
+      const chopWave = Math.max(0, Math.sin(t * 10 + (tree.chopProgress || 0)));
+      tree.m.rotation.x = chopWave * 0.14;
+      tree.m.rotation.z = (tree.baseRotation || 0) + chopWave * 0.035;
     }
     if (this.motes) {
       const positions = this.motes.geometry.attributes.position.array;
@@ -4099,6 +4387,8 @@ export class Village {
   dispose() {
     this.save();
     this.dead = true;
+    if (this.thumbnailTaskKind === "idle") window.cancelIdleCallback?.(this.thumbnailTask);
+    if (this.thumbnailTaskKind === "timeout") window.clearTimeout(this.thumbnailTask);
     cancelAnimationFrame(this.frame);
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("pagehide", this.beforeUnload);

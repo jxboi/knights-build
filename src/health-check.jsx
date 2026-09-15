@@ -111,10 +111,18 @@ function HealthCheck() {
   useEffect(() => {
     const onMessage = (event) => {
       if (event.origin !== window.location.origin || event.source !== frameRef.current?.contentWindow) return;
-      if (event.data?.type === "hearth-hamlet-health-ready") {
-        const nextMetrics = getChildMetrics(frameRef.current);
-        setMetrics({ ...nextMetrics, ready: event.data.readyAt });
-        setStatus("ready");
+      if (event.data?.type === "hearth-hamlet-health-phase") {
+        const { phase, at } = event.data;
+        setMetrics((previous) => {
+          const base = previous || getChildMetrics(frameRef.current) || {};
+          const phases = { ...(previous?.phases || {}), [phase]: at };
+          return {
+            ...base,
+            phases,
+            ready: phases.interactive,
+          };
+        });
+        if (phase === "interactive") setStatus("ready");
         setLastError("");
       }
       if (event.data?.type === "hearth-hamlet-health-runtime") {
@@ -195,8 +203,8 @@ function HealthCheck() {
 
       <section className="health-grid health-grid-primary" aria-label="Key performance metrics">
         <MetricCard icon={HardDrive} label="Game payload" value={bytesToLabel(totalEncoded)} detail="Compressed bytes requested by the game" tone="terra" />
-        <MetricCard icon={Clock3} label="Ready to play" value={msToLabel(metrics?.ready)} detail="Document start → 3D world ready" tone="green" />
-        <MetricCard icon={Gauge} label="Frame rate" value={metricState(frameRate, " fps")} detail="Live 5-second requestAnimationFrame sample" tone="blue" />
+        <MetricCard icon={Clock3} label="Ready to play" value={msToLabel(metrics?.ready)} detail="Document start → visible game UI ready" tone="green" />
+        <MetricCard icon={Gauge} label="Frame rate" value={metricState(frameRate, " fps")} detail="5-second requestAnimationFrame sample; keep the game visible" tone="blue" />
         <MetricCard icon={Cpu} label="Long tasks" value={metricState(longTasks, " tasks")} detail={Number.isFinite(runtime?.longestTask) ? `Longest task ${msToLabel(runtime.longestTask)}` : "Main-thread tasks over 50 ms during sample"} tone="gold" />
       </section>
 
@@ -208,7 +216,8 @@ function HealthCheck() {
             <TimelineRow label="DOM ready" value={msToLabel(metrics?.navigation?.domContentLoaded)} />
             <TimelineRow label="Window loaded" value={msToLabel(metrics?.navigation?.load)} />
             <TimelineRow label="First contentful paint" value={msToLabel(metrics?.firstContentfulPaint)} />
-            <TimelineRow label="3D world ready" value={msToLabel(metrics?.ready)} highlight />
+            <TimelineRow label="World interactive" value={msToLabel(metrics?.phases?.interactive)} highlight />
+            <TimelineRow label="Thumbnail work complete" value={metrics?.phases?.thumbnails ? msToLabel(metrics.phases.thumbnails) : status === "ready" ? "Deferred" : "—"} />
           </div>
         </article>
 
@@ -260,7 +269,7 @@ function HealthCheck() {
         <div className="health-note-icon"><Check size={17} /></div>
         <div>
           <strong>How to use this check</strong>
-          <p>Run it on a phone over cellular data after a hard reload. Treat “ready to play” and “game payload” as your main guardrails. Around 60 fps is smooth; sustained readings under 30 fps or long tasks above 100 ms deserve investigation.</p>
+          <p>Run it on a phone over cellular data after a hard reload. Treat “ready to play” and “game payload” as your main guardrails. Scroll the live game into view before judging FPS, because mobile browsers throttle off-screen frames. Around 60 fps is smooth; sustained readings under 30 fps or long tasks above 100 ms deserve investigation.</p>
         </div>
       </section>
 

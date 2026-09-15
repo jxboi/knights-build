@@ -56,7 +56,7 @@ The numbered cards match the keyboard shortcuts:
 | 2 | Well | 15 wood · 25 stone | Village gathering place |
 | 3 | Farmhouse | 25 wood · 5 stone | Farmers harvest connected ripe fields |
 | 4 | Grain field | 1 food per tile | Grows in 30 seconds, then yields 8 food |
-| 5 | Lumberyard | 20 wood · 10 stone | +8 wood per delivery |
+| 5 | Lumberyard | 20 wood · 10 stone | Workers chop nearby trees and saw +8 wooden planks per delivery |
 | 6 | Stone mine | 35 wood · 15 stone | +6 stone per delivery |
 | 7 | Windmill | 50 wood · 35 stone | Converts 2 food into 8 food per cycle |
 | 8 | Watchtower | 45 wood · 20 stone | Expands the buildable boundary by 3 tiles |
@@ -82,7 +82,7 @@ Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment ser
 
 1. **World:** grassy terrain with subtle color variation → toggleable 1-unit grid → orthographic pan/zoom/orbit camera → warm sunlight and shadows → a readable morning-to-night light cycle with dusk lanterns → animated foliage, water highlights, ambient motes, distant birds, and paths with faster movement → curved river, ripples, rocks, reeds, and a wooden landing.
 2. **Assets:** pine trees → faceted rocks → timber fences → cottages → masonry well → wheat farm → lumberyard → rocky mine → rotating windmill → watchtower. Includes a central village hall and workers.
-3. **Simulation:** workers → balanced job assignment → obstacle-aware grid routing → automatic work and construction jobs → wood/stone/food storage → timed production with visible carried goods, delivery bursts, and activity feedback at the town hall. Farms deliver wheat to storage. Bakeries turn 4 wheat into 8 bread (added to food) per 16-second work cycle and wait when wheat is unavailable. Windmills require food input. Cottages add housing and welcome two workers, up to 24 simulated villagers. Completing the three starter goals gets a one-time flourishing acknowledgement.
+3. **Simulation:** workers → balanced job assignment → obstacle-aware grid routing → automatic work and construction jobs → renewable tree harvesting → Lumberyard log delivery and plank sawing → wood/stone/food storage → timed production with visible carried goods, delivery bursts, and activity feedback at the town hall. Chopped trees regrow after a short delay. Farms deliver wheat to storage. Bakeries turn 4 wheat into 8 bread (added to food) per 16-second work cycle and wait when wheat is unavailable. Windmills require food input. Cottages add housing and welcome two workers, up to 24 simulated villagers. Completing the three starter goals gets a one-time flourishing acknowledgement.
 4. **Building:** choose a building → translucent grid-snapped preview → validate land, obstacles, resources, and footprint → place and pay → a worker travels to the site → scaffolding and rising geometry show construction → the finished building joins the village simulation.
 
 ## Controls

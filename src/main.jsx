@@ -61,6 +61,9 @@ function workerStatus(worker) {
   if (worker.deliveryRetry) return "Waiting for route";
   return {
     travel: "On the way",
+    chop: "Chopping a tree",
+    lumber_delivery: "Taking logs to Lumberyard",
+    process: "Sawing wooden planks",
     material_pickup: "Collecting materials",
     material_delivery: "Delivering materials",
     construct: "Building",
@@ -304,15 +307,16 @@ function App() {
           setState,
           notify,
           selectDetail,
-          (images, err) => {
+          (images, err, phase = "interactive") => {
             setThumbs(images);
             setError(err);
             setLoaded(true);
             if (window.parent !== window && new URLSearchParams(window.location.search).has("healthcheck")) {
               window.parent.postMessage(
                 {
-                  type: err ? "hearth-hamlet-health-error" : "hearth-hamlet-health-ready",
-                  readyAt: performance.now(),
+                  type: err ? "hearth-hamlet-health-error" : "hearth-hamlet-health-phase",
+                  phase,
+                  at: performance.now(),
                   message: err ? String(err) : undefined,
                 },
                 window.location.origin,
@@ -1415,7 +1419,7 @@ function App() {
             <Leaf size={15} />
             {detail.type === "worker"
               ? inspectedWorker?.carry
-                ? `Carrying ${inspectedWorker.carry.amount} ${inspectedWorker.carry.resource}`
+                ? `Carrying ${inspectedWorker.carry.amount} ${inspectedWorker.carry.product || inspectedWorker.carry.resource}`
                 : inspectedWorker?.buildingType
                   ? `Assigned to ${CATALOG[inspectedWorker.buildingType]?.name || "the village"}`
                   : "Ready for a new task"

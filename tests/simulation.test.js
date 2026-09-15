@@ -20,6 +20,10 @@ import {
   GRAIN_GROW_SECONDS,
   grainGrowthProgress,
   grainGrowthStage,
+  TREE_REGROW_SECONDS,
+  TREE_LOG_AMOUNT,
+  LUMBERYARD_PROCESS_SECONDS,
+  treeRegrowthProgress,
   WORKER_CLEARANCE,
   Village,
 } from "../src/world.js";
@@ -321,6 +325,88 @@ test("worker assignment prefers the closest equally staffed work site", () => {
   v.simulate(0.1);
   assert.equal(w.building, near);
   assert.equal(w.phase, "travel");
+});
+test("lumberyard workers chop trees, saw planks, and wait for regrowth", () => {
+  const v = village();
+  const lumberyard = {
+    type: "lumberyard",
+    progress: 1,
+    x: 0,
+    z: 0,
+    cycles: 0,
+    m: new THREE.Object3D(),
+  };
+  const hall = {
+    type: "townhall",
+    progress: 1,
+    x: -3,
+    z: -3,
+    m: new THREE.Object3D(),
+  };
+  const tree = {
+    type: "tree",
+    state: "available",
+    claimedBy: null,
+    regrowAt: null,
+    baseScale: 1,
+    m: new THREE.Object3D(),
+    x: 2,
+    z: 0,
+    r: 0.5,
+  };
+  const worker = {
+    id: "worker-lumber",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+    carry: null,
+  };
+  v.decor = [tree];
+  v.buildings = [hall, lumberyard];
+  v.workers = [worker];
+  v.route = () => true;
+  v.jobPoint = () => [0, 0];
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+
+  v.simulate(0.1);
+  assert.equal(worker.building, lumberyard);
+  assert.equal(worker.tree, tree);
+  assert.equal(worker.phase, "travel");
+  v.simulate(0.1);
+  assert.equal(worker.phase, "chop");
+  assert.equal(tree.state, "chopping");
+  v.simulate(4.5);
+  assert.equal(worker.phase, "lumber_delivery");
+  assert.deepEqual(worker.carry, {
+    resource: "wood",
+    amount: TREE_LOG_AMOUNT,
+    product: "logs",
+  });
+  assert.equal(tree.state, "regrowing");
+  assert.equal(tree.regrowAt, v.elapsed + TREE_REGROW_SECONDS);
+  v.simulate(0.1);
+  assert.equal(worker.phase, "process");
+  assert.equal(worker.timer, LUMBERYARD_PROCESS_SECONDS);
+  v.simulate(LUMBERYARD_PROCESS_SECONDS);
+  assert.equal(worker.phase, "deliver");
+  assert.deepEqual(worker.carry, {
+    resource: "wood",
+    amount: TREE_LOG_AMOUNT,
+    product: "wooden plank",
+  });
+  v.simulate(0.1);
+  assert.equal(v.resources.wood, 108);
+  assert.equal(lumberyard.cycles, 1);
+  assert.equal(worker.phase, "idle");
+  assert.ok(treeRegrowthProgress(tree.regrowAt, v.elapsed) > 0);
+  assert.ok(treeRegrowthProgress(tree.regrowAt, v.elapsed) < 1);
+  v.simulate(TREE_REGROW_SECONDS - 0.1);
+  assert.equal(tree.state, "available");
+  assert.equal(treeRegrowthProgress(tree.regrowAt, v.elapsed), 1);
 });
 
 test("grain fields grow through readable stages and cap at ripe", () => {
