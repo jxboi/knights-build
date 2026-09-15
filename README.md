@@ -42,6 +42,10 @@ The advisor is optional: the village remains playable without a key, but advisor
 npm test          # simulation and placement checks
 ```
 
+## Performance health check
+
+Open `/health-check` on the deployed game (for example, `https://your-domain/health-check`) to run a real game startup sample. The page reports the game payload, startup milestones, 3D model and JavaScript weight, frame rate, long tasks, WebGL renderer, device capabilities, and the largest resources observed by the browser. Run it after adding assets or interactions; for a realistic phone baseline, use a hard reload on the phone over cellular data.
+
 ## Build palette
 
 The numbered cards match the keyboard shortcuts:

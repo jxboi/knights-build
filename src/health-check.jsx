@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Activity, Box, Check, Clock3, Cpu, Gauge, HardDrive, RefreshCw, Smartphone, Zap } from "lucide-react";
 import "./health-check.css";
 
-const bytesToLabel = (bytes) => {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+const bytesToLabel = (bytes, emptyLabel = "—") => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return emptyLabel;
   const units = ["B", "KB", "MB", "GB"];
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
@@ -146,7 +146,10 @@ function HealthCheck() {
     });
   }, [metrics]);
 
-  const rerun = () => setRun((value) => value + 1);
+  const rerun = () => {
+    frameRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setRun((value) => value + 1);
+  };
   const totalEncoded = metrics?.summary?.total?.encoded || 0;
   const frameRate = runtime?.fps;
   const longTasks = runtime?.longTasks;
@@ -208,7 +211,7 @@ function HealthCheck() {
               <div className="payload-row" key={key}>
                 <span className="payload-icon"><Icon size={15} /></span>
                 <span className="payload-name">{label}<small>{requests} {requests === 1 ? "request" : "requests"}</small></span>
-                <strong>{bytesToLabel(bytes)}</strong>
+                <strong>{bytesToLabel(bytes, "cached")}</strong>
                 <div className="payload-bar"><i style={{ width: `${totalEncoded ? Math.max(4, (bytes / totalEncoded) * 100) : 0}%` }} /></div>
               </div>
             ))}
@@ -236,7 +239,7 @@ function HealthCheck() {
               <div className="resource-row" key={`${resource.name}-${resource.category}`}>
                 <span className={`resource-type ${resource.category}`}>{resource.category === "models" ? "3D" : resource.category === "javascript" ? "JS" : resource.category.toUpperCase().slice(0, 3)}</span>
                 <span className="resource-name" title={resource.name}>{resource.name}</span>
-                <strong>{bytesToLabel(resource.encoded)}</strong>
+                <strong>{bytesToLabel(resource.encoded, "cached")}</strong>
                 <small>{msToLabel(resource.duration)}</small>
               </div>
             ))}

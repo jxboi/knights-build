@@ -325,6 +325,12 @@ function App() {
         console.error(loadError);
         setError(String(loadError));
         setLoaded(true);
+        if (window.parent !== window && new URLSearchParams(window.location.search).has("healthcheck")) {
+          window.parent.postMessage(
+            { type: "hearth-hamlet-health-error", message: String(loadError) },
+            window.location.origin,
+          );
+        }
       });
     return () => {
       cancelled = true;
