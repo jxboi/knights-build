@@ -57,6 +57,7 @@ function timeOfDay(seconds = 0) {
 function workerStatus(worker) {
   if (!worker) return "Idle";
   if (worker.waitingForInput) return "Waiting for ingredients";
+  if (worker.waitingForSpace) return "Waiting for space";
   if (worker.deliveryRetry) return "Waiting for route";
   return {
     travel: "On the way",

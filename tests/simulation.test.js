@@ -20,6 +20,7 @@ import {
   GRAIN_GROW_SECONDS,
   grainGrowthProgress,
   grainGrowthStage,
+  WORKER_CLEARANCE,
   Village,
 } from "../src/world.js";
 import {
@@ -459,6 +460,40 @@ test("workers reroute when a new building blocks their next step", () => {
   assert.equal(reroutes, 1);
   assert.equal(w.path[0].z, 1);
   assert.equal(w.phase, "travel");
+});
+test("workers yield at a head-on collision instead of entering the same space", () => {
+  const v = village();
+  const first = {
+    id: "worker-0",
+    movementPriority: 0,
+    m: new THREE.Object3D(),
+    path: [new THREE.Vector3(1, 0, 0)],
+    routeTarget: { x: 1, z: 0 },
+    phase: "travel",
+    field: null,
+    yieldCooldown: 0,
+  };
+  const second = {
+    id: "worker-1",
+    movementPriority: 1,
+    m: new THREE.Object3D(),
+    path: [new THREE.Vector3(0, 0, 0)],
+    routeTarget: { x: 0, z: 0 },
+    phase: "travel",
+    field: null,
+    yieldCooldown: 0,
+  };
+  first.m.position.set(0, 0, 0);
+  second.m.position.set(1, 0, 0);
+  v.workers = [first, second];
+
+  v.moveWorker(first, 0.1);
+  v.moveWorker(second, 0.1);
+
+  assert.equal(second.waitingForSpace, true);
+  assert.equal(second.yielding, true);
+  assert.ok(second.path[0].z !== 0);
+  assert.ok(first.m.position.distanceTo(second.m.position) >= WORKER_CLEARANCE);
 });
 test("builder completes structure and welcomes two workers", () => {
   const v = village(),

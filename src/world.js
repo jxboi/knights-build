@@ -22,6 +22,9 @@ const rand = () => {
   return seed / 4294967296;
 };
 const riverX = (z) => 16 + Math.sin(z * 0.13) * 1.6;
+// Workers are small on screen, but giving them a little extra room keeps their
+// hitboxes and carried goods from visually merging at a shared waypoint.
+export const WORKER_CLEARANCE = 0.78;
 const VILLAGE_EVENTS = [
   {
     id: "peddler",
@@ -1431,6 +1434,54 @@ export class Village {
       ),
     );
   }
+  workerPriority(worker) {
+    const index = this.workers.indexOf(worker);
+    return Number.isFinite(worker?.movementPriority)
+      ? worker.movementPriority
+      : index < 0
+        ? Number.MAX_SAFE_INTEGER
+        : index;
+  }
+  workerPositionBlocked(x, z, ignore = null) {
+    return this.workers.some(
+      (worker) =>
+        worker !== ignore &&
+        worker.m?.position &&
+        Math.hypot(x - worker.m.position.x, z - worker.m.position.z) <
+          WORKER_CLEARANCE,
+    );
+  }
+  workerTargetBlocked(x, z, ignore = null) {
+    return this.workers.some(
+      (worker) =>
+        worker !== ignore &&
+        worker.path?.length &&
+        worker.routeTarget &&
+        Math.hypot(x - worker.routeTarget.x, z - worker.routeTarget.z) <
+          WORKER_CLEARANCE,
+    );
+  }
+  workerSpawnPosition(preferredX, preferredZ) {
+    const candidates = [[preferredX, preferredZ]];
+    for (let radius = 1; radius <= 8; radius++) {
+      for (let x = -radius; x <= radius; x++) {
+        candidates.push([preferredX + x, preferredZ - radius]);
+        candidates.push([preferredX + x, preferredZ + radius]);
+      }
+      for (let z = -radius + 1; z < radius; z++) {
+        candidates.push([preferredX - radius, preferredZ + z]);
+        candidates.push([preferredX + radius, preferredZ + z]);
+      }
+    }
+    return (
+      candidates.find(
+        ([x, z]) =>
+          !this.routeBlocked(x, z) &&
+          !this.workerPositionBlocked(x, z) &&
+          x < riverX(z) - 0.5,
+      ) || [preferredX, preferredZ]
+    );
+  }
   overlapsRoad(x, z, halfSize) {
     return [...(this.roads || [])].some((key) => {
       const [roadX, roadZ] = key.split(",").map(Number);
@@ -2425,7 +2476,10 @@ export class Village {
     return { rig, leftArm, rightArm, leftLeg, rightLeg };
   }
   addWorker() {
-    const m = this.model("worker", rand() * 2 - 1, rand() * 2);
+    const preferredX = rand() * 2 - 1;
+    const preferredZ = rand() * 2;
+    const [spawnX, spawnZ] = this.workerSpawnPosition(preferredX, preferredZ);
+    const m = this.model("worker", spawnX, spawnZ);
     const rig = this.createWorkerRig(m);
     const contactShadow = new THREE.Mesh(
       new THREE.CircleGeometry(0.3, 20),
@@ -2447,6 +2501,7 @@ export class Village {
       phase: "idle",
       path: [],
       id: `worker-${this.nextWorkerId++}`,
+      movementPriority: this.nextWorkerId - 1,
       timer: 0,
       workDuration: 0,
       building: null,
@@ -2455,6 +2510,8 @@ export class Village {
       walkPhase: rand() * Math.PI * 2,
       idlePhase: rand() * Math.PI * 2,
       walkBlend: 0,
+      waitingForSpace: false,
+      yieldCooldown: 0,
       rig,
     };
     m.userData.worker = w;
@@ -2650,6 +2707,13 @@ export class Village {
     w.routeTarget = { x: tx, z: tz };
     const start = `${sx},${sz}`,
       goal = `${tx},${tz}`;
+    if (
+      this.workerPositionBlocked(tx, tz, w) ||
+      this.workerTargetBlocked(tx, tz, w)
+    ) {
+      w.path = [];
+      return false;
+    }
     const queue = [],
       costs = new Map([[start, 0]]),
       parents = new Map([[start, null]]);
@@ -2677,7 +2741,8 @@ export class Village {
           nz < -30 ||
           nz > 30 ||
           nx > riverX(nz) - 0.6 ||
-          this.routeBlocked(nx, nz, ignore)
+          this.routeBlocked(nx, nz, ignore) ||
+          this.workerPositionBlocked(nx, nz, w)
         )
           continue;
         const stepCost = this.roads.has(k) ? 0.67 : 1;
@@ -2699,7 +2764,7 @@ export class Village {
     }
     return found;
   }
-  jobPoint(b) {
+  jobPoint(b, worker = null) {
     const n = Math.ceil((CATALOG[b.type]?.size || 4) / 2 + 0.5);
     const pts = [
       [b.x, b.z + n],
@@ -2709,7 +2774,11 @@ export class Village {
     ];
     return (
       pts.find(
-        ([x, z]) => !this.routeBlocked(x, z) && x < riverX(z) - 0.5,
+        ([x, z]) =>
+          !this.routeBlocked(x, z) &&
+          !this.workerPositionBlocked(x, z, worker) &&
+          !this.workerTargetBlocked(x, z, worker) &&
+          x < riverX(z) - 0.5,
       ) ||
       pts[0]
     );
@@ -2750,7 +2819,7 @@ export class Village {
           : null;
       const [x, z] = ripeField
         ? [ripeField.x, ripeField.z]
-        : this.jobPoint(building);
+        : this.jobPoint(building, w);
       return Math.hypot(w.m.position.x - x, w.m.position.z - z);
     };
     const compareJobs = (a, b) =>
@@ -2793,7 +2862,7 @@ export class Village {
           : null;
       const [x, z] = field
         ? [field.x, field.z]
-        : this.jobPoint(destination);
+        : this.jobPoint(destination, w);
       if (!this.route(w, x, z, field)) {
         b.lastRouteBlocked = true;
         continue;
@@ -2804,20 +2873,149 @@ export class Village {
       if (field) field.claimedBy = w.id;
       w.materialResource = material;
       w.phase = material ? "material_pickup" : "travel";
+      w.waitingForSpace = false;
       return;
     }
     const well = this.buildings.find(
       (building) => building.type === "well" && building.progress === 1 && !building.paused,
     );
-    if (well && this.route(w, ...this.jobPoint(well))) {
+    if (well && this.route(w, ...this.jobPoint(well, w))) {
       w.building = well;
       w.phase = "visit";
       w.timer = 3.5;
+      w.waitingForSpace = false;
       return;
     }
     w.phase = "idle";
     w.building = null;
+    w.waitingForSpace = false;
     w.timer = candidates.length ? 2 : 0;
+  }
+  rerouteForSpace(worker) {
+    if (
+      !worker?.routeTarget ||
+      worker.yieldCooldown > 0 ||
+      !worker.path?.length
+    )
+      return false;
+    const previousPath = worker.path;
+    const originalTarget = { ...worker.routeTarget };
+    const routed = this.route(
+      worker,
+      originalTarget.x,
+      originalTarget.z,
+      worker.field || null,
+    );
+    if (routed) {
+      worker.yieldCooldown = 0.5;
+      return true;
+    }
+    worker.path = previousPath;
+    worker.routeTarget = originalTarget;
+
+    const originX = Math.round(worker.m.position.x);
+    const originZ = Math.round(worker.m.position.z);
+    const next = worker.path[0];
+    const movingAlongX =
+      next && Math.abs(next.x - worker.m.position.x) >= Math.abs(next.z - worker.m.position.z);
+    const detours = movingAlongX
+      ? [
+          [originX, originZ + 1],
+          [originX, originZ - 1],
+          [originX + 1, originZ],
+          [originX - 1, originZ],
+        ]
+      : [
+          [originX + 1, originZ],
+          [originX - 1, originZ],
+          [originX, originZ + 1],
+          [originX, originZ - 1],
+        ];
+    for (const [x, z] of detours) {
+      if (
+        Math.hypot(x - worker.m.position.x, z - worker.m.position.z) <
+          WORKER_CLEARANCE ||
+        this.routeBlocked(x, z, worker.field || null) ||
+        this.workerPositionBlocked(x, z, worker) ||
+        this.workerTargetBlocked(x, z, worker)
+      )
+        continue;
+      if (!this.route(worker, x, z, worker.field || null)) continue;
+      worker.routeTarget = originalTarget;
+      worker.yielding = true;
+      worker.yieldCooldown = 0.5;
+      return true;
+    }
+    worker.path = previousPath;
+    worker.routeTarget = originalTarget;
+    return false;
+  }
+  moveWorker(w, dt) {
+    if (!w.path?.length) return false;
+    const next = w.path[0];
+    if (
+      this.routeTargetBlocked(next) &&
+      w.routeTarget &&
+      !this.route(w, w.routeTarget.x, w.routeTarget.z, w.field || null)
+    ) {
+      w.path = [];
+      if (w.phase === "deliver" || w.phase === "material_delivery")
+        w.deliveryRetry = 1.5;
+      else {
+        if (w.field) w.field.claimedBy = null;
+        w.field = null;
+        w.phase = "idle";
+        w.building = null;
+        w.timer = 2;
+      }
+      return false;
+    }
+    const delta = next.clone().sub(w.m.position);
+    delta.y = 0;
+    if (!delta.lengthSq()) {
+      w.path.shift();
+      w.waitingForSpace = false;
+      return true;
+    }
+    const fast = this.roads.has(
+      `${Math.round(w.m.position.x)},${Math.round(w.m.position.z)}`,
+    )
+      ? 1.5
+      : 1;
+    // The cap keeps a large simulation tick from jumping through a neighbour.
+    const step = Math.min(dt * 1.5 * fast, WORKER_CLEARANCE * 0.62);
+    const candidate = w.m.position
+      .clone()
+      .addScaledVector(delta.normalize(), Math.min(delta.length(), step));
+    const blocker = this.workers.find(
+      (other) =>
+        other !== w &&
+        other.m?.position &&
+        candidate.distanceTo(other.m.position) < WORKER_CLEARANCE,
+    );
+    if (blocker) {
+      const wPriority = this.workerPriority(w);
+      const blockerPriority = this.workerPriority(blocker);
+      const yieldWorker = wPriority < blockerPriority ? blocker : w;
+      // The earlier worker has right of way. The other worker takes a clear
+      // detour when one exists; otherwise it remains stopped until the lane is
+      // clear. This also prevents head-on paths from swapping positions.
+      const yielded = this.rerouteForSpace(yieldWorker);
+      w.waitingForSpace = true;
+      w.waitingFor = blocker.id || null;
+      if (yielded && yieldWorker === w) w.waitingForSpace = true;
+      return false;
+    }
+    w.waitingForSpace = false;
+    w.waitingFor = null;
+    if (delta.length() <= step) {
+      w.m.position.copy(next);
+      w.path.shift();
+    } else {
+      w.m.position.copy(candidate);
+      w.m.rotation.y = Math.atan2(delta.x, delta.z);
+    }
+    return true;
   }
   simulate(dt) {
     if (!this.delivered) this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0 };
@@ -2835,6 +3033,12 @@ export class Village {
       if (this.activityTime === 0) this.activity = "";
     }
     for (const w of this.workers) {
+      w.yieldCooldown = Math.max(0, (w.yieldCooldown || 0) - dt);
+    }
+    const movementOrder = [...this.workers].sort(
+      (a, b) => this.workerPriority(a) - this.workerPriority(b),
+    );
+    for (const w of movementOrder) {
       if (
         w.building?.paused &&
         w.phase !== "deliver" &&
@@ -2848,40 +3052,18 @@ export class Village {
         w.path = [];
       }
       if (w.path.length) {
-        const next = w.path[0];
+        this.moveWorker(w, dt);
+        continue;
+      }
+      if (w.yielding) {
+        w.yielding = false;
         if (
-          this.routeTargetBlocked(next) &&
           w.routeTarget &&
-          !this.route(w, w.routeTarget.x, w.routeTarget.z)
-        ) {
-          w.path = [];
-          if (w.phase === "deliver" || w.phase === "material_delivery")
-            w.deliveryRetry = 1.5;
-          else {
-            if (w.field) w.field.claimedBy = null;
-            w.field = null;
-            w.phase = "idle";
-            w.building = null;
-            w.timer = 2;
-          }
-          continue;
-        }
-        const target = w.path[0],
-          delta = target.clone().sub(w.m.position);
-        delta.y = 0;
-        const fast = this.roads.has(
-          `${Math.round(w.m.position.x)},${Math.round(w.m.position.z)}`,
+          this.route(w, w.routeTarget.x, w.routeTarget.z, w.field || null)
         )
-          ? 1.5
-          : 1;
-        const step = dt * 1.5 * fast;
-        if (delta.length() <= step) {
-          w.m.position.copy(target);
-          w.path.shift();
-        } else {
-          w.m.position.addScaledVector(delta.normalize(), step);
-          w.m.rotation.y = Math.atan2(delta.x, delta.z);
-        }
+          continue;
+        w.waitingForSpace = true;
+        w.timer = 0.25;
         continue;
       }
       if (w.phase === "idle") {
@@ -2902,7 +3084,7 @@ export class Village {
         w.carry = { resource, amount, construction: true };
         this.showCarry(w, resource);
         w.phase = "material_delivery";
-        const [siteX, siteZ] = this.jobPoint(b);
+        const [siteX, siteZ] = this.jobPoint(b, w);
         w.deliveryRetry = this.route(w, siteX, siteZ) ? 0 : 1.5;
       } else if (w.phase === "material_delivery") {
         const b = w.building;
@@ -2915,7 +3097,7 @@ export class Village {
         if (w.deliveryRetry > 0) {
           w.deliveryRetry -= dt;
           if (w.deliveryRetry <= 0) {
-            const [siteX, siteZ] = this.jobPoint(b);
+            const [siteX, siteZ] = this.jobPoint(b, w);
             w.deliveryRetry = this.route(w, siteX, siteZ) ? 0 : 1.5;
           }
           continue;
@@ -3033,7 +3215,7 @@ export class Village {
           const depot =
             this.buildings.find((building) => building.type === "townhall") ||
             farm;
-          const [depotX, depotZ] = this.jobPoint(depot);
+          const [depotX, depotZ] = this.jobPoint(depot, w);
           w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
           this.announce("A farmer has gathered a ripe grain field.");
         }
@@ -3062,7 +3244,7 @@ export class Village {
           const depot =
             this.buildings.find((building) => building.type === "townhall") ||
             w.building;
-          const [depotX, depotZ] = this.jobPoint(depot);
+          const [depotX, depotZ] = this.jobPoint(depot, w);
           w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
         }
       } else if (w.phase === "deliver") {
@@ -3072,7 +3254,7 @@ export class Village {
             const depot =
               this.buildings.find((building) => building.type === "townhall") ||
               w.building;
-            const [depotX, depotZ] = this.jobPoint(depot);
+            const [depotX, depotZ] = this.jobPoint(depot, w);
             w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
           }
           continue;
@@ -3230,6 +3412,8 @@ export class Village {
             ? "Building"
             : b.lastRouteBlocked
               ? "Waiting for route"
+            : assigned.some((w) => w.waitingForSpace)
+              ? "Waiting for space"
             : assigned.some((w) => w.deliveryRetry > 0)
               ? "Waiting for route"
               : assigned.some((w) => w.phase === "deliver")
@@ -3285,6 +3469,7 @@ export class Village {
           id: w.id || `worker-${index}`,
           phase: w.phase,
           waitingForInput: !!w.waitingForInput,
+          ...(w.waitingForSpace ? { waitingForSpace: true } : {}),
           deliveryRetry: w.deliveryRetry > 0,
           buildingType: w.building?.type || null,
           carry: w.carry ? { ...w.carry } : null,
