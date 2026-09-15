@@ -2346,8 +2346,86 @@ export class Village {
     textures.forEach((texture) => texture.dispose());
     this.scene?.clear();
   }
+  createWorkerRig(m) {
+    const sourceMeshes = [];
+    m.traverse((object) => {
+      if (object.isMesh) {
+        sourceMeshes.push(object);
+        object.visible = false;
+      }
+    });
+    const sourceMaterial = (name, fallback) => {
+      const source = sourceMeshes.find((object) =>
+        object.name.toLowerCase().startsWith(name.toLowerCase()),
+      );
+      return (
+        source?.material?.clone() ||
+        new THREE.MeshStandardMaterial({
+          color: fallback,
+          roughness: 0.9,
+          flatShading: true,
+        })
+      );
+    };
+    const materials = {
+      tunic: sourceMaterial("tunic", "#123f91"),
+      skin: sourceMaterial("head", "#a35c35"),
+      cream: sourceMaterial("arm", "#e1c386"),
+      dark: sourceMaterial("leg", "#201d19"),
+      wood: sourceMaterial("shoe", "#70452b"),
+    };
+    const part = (geometry, material) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    };
+    const rig = new THREE.Group();
+    const tunic = part(new THREE.BoxGeometry(0.23, 0.3, 0.16), materials.tunic);
+    tunic.position.y = 0.51;
+    rig.add(tunic);
+    const head = part(new THREE.IcosahedronGeometry(0.115, 1), materials.skin);
+    head.position.y = 0.79;
+    head.scale.set(1, 0.9, 1.1);
+    rig.add(head);
+    const cap = part(new THREE.CylinderGeometry(0.13, 0.11, 0.12, 6), materials.cream);
+    cap.position.y = 0.9;
+    rig.add(cap);
+    const makeArm = (x) => {
+      const pivot = new THREE.Group();
+      pivot.position.set(x, 0.62, 0);
+      const arm = part(new THREE.BoxGeometry(0.07, 0.28, 0.07), materials.cream);
+      arm.position.y = -0.13;
+      pivot.add(arm);
+      const hand = part(new THREE.IcosahedronGeometry(0.055, 1), materials.skin);
+      hand.position.set(0, -0.29, -0.02);
+      hand.scale.set(1, 1, 0.9);
+      pivot.add(hand);
+      rig.add(pivot);
+      return pivot;
+    };
+    const makeLeg = (x) => {
+      const pivot = new THREE.Group();
+      pivot.position.set(x, 0.38, 0);
+      const leg = part(new THREE.BoxGeometry(0.08, 0.28, 0.08), materials.dark);
+      leg.position.y = -0.14;
+      pivot.add(leg);
+      const shoe = part(new THREE.BoxGeometry(0.09, 0.09, 0.17), materials.wood);
+      shoe.position.set(0, -0.3, 0.035);
+      pivot.add(shoe);
+      rig.add(pivot);
+      return pivot;
+    };
+    const leftArm = makeArm(-0.16);
+    const rightArm = makeArm(0.16);
+    const leftLeg = makeLeg(-0.075);
+    const rightLeg = makeLeg(0.075);
+    m.add(rig);
+    return { rig, leftArm, rightArm, leftLeg, rightLeg };
+  }
   addWorker() {
     const m = this.model("worker", rand() * 2 - 1, rand() * 2);
+    const rig = this.createWorkerRig(m);
     const contactShadow = new THREE.Mesh(
       new THREE.CircleGeometry(0.3, 20),
       new THREE.MeshBasicMaterial({
@@ -2375,6 +2453,8 @@ export class Village {
       waitingForInput: false,
       walkPhase: rand() * Math.PI * 2,
       idlePhase: rand() * Math.PI * 2,
+      walkBlend: 0,
+      rig,
     };
     m.userData.worker = w;
     const hitbox = new THREE.Mesh(
@@ -3463,18 +3543,29 @@ export class Village {
     this.updateAtmosphere();
     for (const w of this.workers) {
       if (!w.m?.position) continue;
-      const walking = w.path.length > 0;
+      const walking = !this.reduceMotion && w.path.length > 0;
       const cycle = walking
         ? t * 9.5 + (w.walkPhase || 0)
         : t * 2.2 + (w.idlePhase || 0);
+      const targetBlend = walking ? 1 : 0;
+      w.walkBlend += (targetBlend - (w.walkBlend || 0)) * Math.min(1, dt * 10);
       const stride = walking ? Math.sin(cycle) : 0;
+      const idleStride = Math.sin(cycle) * 0.08;
+      const gait = stride * w.walkBlend + idleStride * (1 - w.walkBlend);
       const lift = walking ? Math.abs(stride) * 0.012 : 0;
       const baseY = 0.004;
       w.m.position.y = baseY + lift;
-      w.m.rotation.z = walking ? stride * 0.04 : Math.sin(cycle) * 0.008;
-      w.m.rotation.x = walking ? Math.cos(cycle) * 0.012 : 0;
+      w.m.rotation.z = 0;
+      w.m.rotation.x = 0;
       const stretch = walking ? Math.abs(stride) * 0.012 : 0;
       w.m.scale.y += (1 + stretch - w.m.scale.y) * 0.24;
+      if (w.rig) {
+        w.rig.rig.rotation.z = gait * 0.025;
+        w.rig.leftLeg.rotation.x += (gait * 0.42 - w.rig.leftLeg.rotation.x) * 0.35;
+        w.rig.rightLeg.rotation.x += (-gait * 0.42 - w.rig.rightLeg.rotation.x) * 0.35;
+        w.rig.leftArm.rotation.x += (-gait * 0.3 - w.rig.leftArm.rotation.x) * 0.35;
+        w.rig.rightArm.rotation.x += (gait * 0.3 - w.rig.rightArm.rotation.x) * 0.35;
+      }
       if (w.contactShadow) {
         w.contactShadow.position.set(w.m.position.x, 0.006, w.m.position.z);
         const squash = walking ? 1 - Math.abs(stride) * 0.12 : 1;
