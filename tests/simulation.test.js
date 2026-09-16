@@ -60,6 +60,8 @@ import {
   ROAD_TINTS,
   STARTER_BUILDINGS,
   STARTER_ROADS,
+  STARTER_SETTLEMENT_CLEAR_RADIUS,
+  isInStarterSettlementClearing,
   Village,
 } from "../src/world.js";
 import {
@@ -122,6 +124,21 @@ test("starter village buildings never overlap starter paths", () => {
     );
     assert.equal(pathCrossesSite, false, `${type} at ${x},${z} overlaps a starter path`);
   }
+});
+test("starter settlement clears trees from the central common area", () => {
+  assert.equal(
+    isInStarterSettlementClearing(0, 0, "tree"),
+    false,
+  );
+  assert.equal(
+    isInStarterSettlementClearing(STARTER_SETTLEMENT_CLEAR_RADIUS, 0, "tree"),
+    true,
+  );
+  assert.equal(
+    isInStarterSettlementClearing(0, 0, "rock"),
+    true,
+    "rocks remain available for texture in the clearing",
+  );
 });
 test("cleared resource nodes stop blocking placement until they are removed", () => {
   const v = village();

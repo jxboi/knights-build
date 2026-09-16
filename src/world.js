@@ -49,6 +49,12 @@ export const SCENERY_COUNT = 210;
 export const SCENERY_DRAWS = 8;
 export const GRASS_COUNT = 350;
 export const GRASS_DRAWS = 9;
+// Keep the starter settlement's common area open enough for the buildings and
+// paths to read as one place. This only affects trees; rocks can still add a
+// little visual texture without blocking the central space.
+export const STARTER_SETTLEMENT_CLEAR_RADIUS = 8;
+export const isInStarterSettlementClearing = (x, z, type = "tree") =>
+  type !== "tree" || Math.hypot(Number(x), Number(z)) >= STARTER_SETTLEMENT_CLEAR_RADIUS;
 const drawBlock = (next, size) => {
   const block = new Array(size);
   for (let i = 0; i < size; i++) block[i] = next();
@@ -1426,7 +1432,7 @@ export class Village {
               (CATALOG[b.type]?.size || 4) / 2 + 2.2,
           ) ||
           this.roads.has(`${Math.round(x)},${Math.round(z)}`) ||
-          Math.hypot(x, z) < 4
+          !isInStarterSettlementClearing(x, z, type)
         )
           continue;
         const m = this.model(type, x, z);
