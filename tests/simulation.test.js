@@ -58,6 +58,8 @@ import {
   buildRoadSurfaceGeometry,
   ROAD_TILE,
   ROAD_TINTS,
+  STARTER_BUILDINGS,
+  STARTER_ROADS,
   Village,
 } from "../src/world.js";
 import {
@@ -104,6 +106,17 @@ test("placement rejects occupied sites, river, scenery, and insufficient resourc
   v.resources.stone = 0;
   assert.match(v.valid(-8, -8, "house").reason, /resources/);
   assert.match(v.valid(-8, -8, "house").reason, /Need 30 wood \+ 10 stone/);
+});
+test("starter village buildings never overlap starter paths", () => {
+  for (const [type, x, z] of STARTER_BUILDINGS) {
+    const halfSize = (CATALOG[type]?.size || 4) / 2;
+    const pathCrossesSite = STARTER_ROADS.some(
+      (road) =>
+        Math.abs(x - road.x) < halfSize + 0.5 &&
+        Math.abs(z - road.z) < halfSize + 0.5,
+    );
+    assert.equal(pathCrossesSite, false, `${type} at ${x},${z} overlaps a starter path`);
+  }
 });
 test("cleared resource nodes stop blocking placement until they are removed", () => {
   const v = village();

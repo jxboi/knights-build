@@ -4,18 +4,31 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CATALOG, TOWNHALL_STORAGE } from "./catalog.js";
 import { chapterGoalState } from "./progression.js";
 export { CATALOG, TOWNHALL_STORAGE } from "./catalog.js";
-const initial = [
-  ["townhall", -3, -3],
-  ["house", -9, 2],
+export const STARTER_BUILDINGS = Object.freeze([
+  ["townhall", 3, -3],
+  ["house", -9, 3],
   ["house", -9, -5],
   ["house", -4, 8],
-  ["well", 1, 2],
+  ["well", 2, 3],
   ["farm", 6, 6],
   ["lumberyard", -8, -11],
-  ["mine", 2, -11],
-  ["windmill", 11, -1],
+  ["mine", 3, -11],
+  ["windmill", 11, -3],
   ["watchtower", 10, -10],
-];
+]);
+export const STARTER_ROADS = Object.freeze([
+  ...Array.from({ length: 30 }, (_, index) => {
+    const x = index - 16;
+    return [{ x, z: 0 }, { x, z: 1 }];
+  }).flat(),
+  ...Array.from({ length: 30 }, (_, index) => {
+    const z = index - 15;
+    return [{ x: 0, z }, { x: -1, z }];
+  }).flat(),
+  ...Array.from({ length: 18 }, (_, index) => ({ x: -6, z: index - 10 })),
+  ...Array.from({ length: 21 }, (_, index) => ({ x: index - 10, z: -8 })),
+  ...Array.from({ length: 17 }, (_, index) => ({ x: index - 7, z: 10 })),
+]);
 const WORLD_SEED = 654321;
 const createRandom = (initial) => {
   let value = initial >>> 0;
@@ -964,13 +977,7 @@ export class Village {
     });
     this.riverBank.instanceMatrix.needsUpdate = true;
     this.scene.add(this.riverBank);
-    for (let x = -16; x <= 13; x++)
-      for (let z of [0, 1]) this.addRoad(x, z, false, true);
-    for (let z = -15; z <= 14; z++)
-      for (let x of [0, -1]) this.addRoad(x, z, false, true);
-    for (let z = -10; z < 8; z++) this.addRoad(-6, z, false, true);
-    for (let x = -10; x <= 10; x++) this.addRoad(x, -8, false, true);
-    for (let x = -7; x < 10; x++) this.addRoad(x, 10, false, true);
+    for (const { x, z } of STARTER_ROADS) this.addRoad(x, z, false, true);
     this.ripples = [];
     for (let i = 0; i < 45; i++) {
       const z = rand() * 70 - 35;
@@ -1370,7 +1377,7 @@ export class Village {
         }
         this.clampResourcesToStorage();
         if (!this.buildings.some((building) => building.type === "townhall"))
-          initial.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
+          STARTER_BUILDINGS.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
         const savedRoads = Array.isArray(this.saved.roads)
           ? this.saved.roads
           : [];
@@ -1400,7 +1407,7 @@ export class Village {
         }
         this.created = reconcileRoadCount(this.created, restoredRoads, this.baseRoads);
       } else {
-        initial.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
+        STARTER_BUILDINGS.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
       }
       const savedTrees = new Map(
         (Array.isArray(this.saved?.trees) ? this.saved.trees : [])
