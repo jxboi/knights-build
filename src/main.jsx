@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   Wheat,
   Wine,
+  GraduationCap,
   Croissant,
   Trees,
   Mountain,
@@ -1512,6 +1513,44 @@ function App() {
               </>
             )}
           </div>
+          {detail.type === "school" && inspected?.training && (
+            <div className="training-panel" aria-label="School training">
+              <span className="inspector-action-label">
+                <GraduationCap size={13} aria-hidden="true" /> Train a villager
+              </span>
+              <p className="training-housing">
+                {state.population}/{state.capacity} villagers housed
+                {state.capacity - state.population > 0
+                  ? ` · room for ${state.capacity - state.population} more`
+                  : " · build a cottage for more room"}
+              </p>
+              <div className="training-options">
+                {inspected.training.map((option) => (
+                  <button
+                    key={option.type}
+                    className="training-option"
+                    disabled={!option.canTrain}
+                    title={
+                      option.canTrain
+                        ? `Train a ${option.label.toLowerCase()} (${option.trained} of ${option.posts} posts filled)`
+                        : option.reason
+                    }
+                    aria-label={
+                      option.canTrain
+                        ? `Train a ${option.label.toLowerCase()}. ${option.trained} of ${option.posts} posts filled.`
+                        : `Cannot train a ${option.label.toLowerCase()}. ${option.reason}.`
+                    }
+                    onClick={() => game.current?.trainWorker(inspected.id, option.type)}
+                  >
+                    <span className="training-role">{option.label}</span>
+                    <em className="training-count">
+                      {option.trained}/{option.posts}
+                    </em>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {detail.type !== "worker" && inspected && (
             <div className="inspector-actions" aria-label="Building controls">
               {(inspected.progress < 1 || CATALOG[detail.type]?.resource) && (

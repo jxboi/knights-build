@@ -109,8 +109,8 @@ export const CATALOG = {
     size: 4,
     cost: { wood: 60, stone: 45 },
     description:
-      "A clock-gabled schoolhouse where the village's children learn their letters.",
-    effect: "Civic landmark · needs no workers once built",
+      "A clock-gabled schoolhouse where villagers are trained for the trades.",
+    effect: "Trains woodcutters, miners, farmers and bakers · needs housing room",
     seconds: 22,
   },
   vineyard: {
@@ -129,7 +129,7 @@ export const CATALOG = {
     size: 1,
     cost: { stone: 1 },
     description: "Connect your hamlet. Villagers move faster on paths.",
-    effect: "+50% walking speed",
+    effect: "+50% walking speed · open ground slows villagers to 0.7x",
     seconds: 0,
   },
   sign: {

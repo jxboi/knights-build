@@ -167,6 +167,15 @@ export const buildRoadSurfaceGeometry = (tiles = []) => {
 // Workers are small on screen, but giving them a little extra room keeps their
 // hitboxes and carried goods from visually merging at a shared waypoint.
 export const WORKER_CLEARANCE = 0.78;
+// A stone path is the made road: villagers keep their full pace on it. Open
+// ground is rough going and slows them to 0.7x, so paving a route is worth it.
+export const ROAD_SPEED = 1.5;
+export const OFF_ROAD_SPEED = 0.7;
+export const travelSpeed = (onRoad) => (onRoad ? ROAD_SPEED : OFF_ROAD_SPEED);
+// Routing is solved in travel time rather than tiles, so a tile costs the
+// inverse of the speed a villager crosses it at. Keeping both derived from the
+// same numbers stops A* from choosing a short route that is slower to walk.
+export const travelStepCost = (onRoad) => 1 / travelSpeed(onRoad);
 const WORKER_REPATH_SECONDS = 1.1;
 const WORKER_PASS_SECONDS = 1;
 const WORKER_DEADLOCK_SECONDS = 1.8;
@@ -329,6 +338,50 @@ export const workerCapacityForBuilding = (type) =>
     windmill: 1,
     vineyard: 1,
   })[type] || 0;
+// Builders arrive with cottages; the School trains the trades, and only for
+// posts the village can actually staff.
+export const TRAINABLE_WORKER_TYPES = Object.freeze([
+  WORKER_TYPES.WOODCUTTER,
+  WORKER_TYPES.MINER,
+  WORKER_TYPES.FARMER,
+  WORKER_TYPES.BAKER,
+]);
+export const workplaceNamesForWorkerType = (workerType) =>
+  Object.keys(CATALOG)
+    .filter((type) => workerTypeForBuilding(type) === workerType)
+    .map((type) => CATALOG[type].name);
+export const jobCapacityForWorkerType = (buildings = [], workerType) =>
+  (Array.isArray(buildings) ? buildings : []).reduce(
+    (total, building) =>
+      building?.progress === 1 &&
+      workerTypeForBuilding(building.type) === workerType
+        ? total + workerCapacityForBuilding(building.type)
+        : total,
+    0,
+  );
+export const trainedWorkerCount = (workers = [], workerType) =>
+  (Array.isArray(workers) ? workers : []).filter(
+    (worker) => worker?.trainedType === workerType,
+  ).length;
+export const trainingOptions = (buildings = [], workers = []) => {
+  const housed = (Array.isArray(workers) ? workers : []).length;
+  const capacity = Math.min(MAX_POPULATION, housingCapacity(buildings));
+  const housingRoom = capacity - housed;
+  return TRAINABLE_WORKER_TYPES.map((type) => {
+    const label = WORKER_TYPE_LABELS[type];
+    const posts = jobCapacityForWorkerType(buildings, type);
+    const trained = trainedWorkerCount(workers, type);
+    const reason =
+      posts === 0
+        ? `Needs a completed ${workplaceNamesForWorkerType(type).join(" or ")}`
+        : trained >= posts
+          ? `Every ${label.toLowerCase()} post is already filled`
+          : housingRoom <= 0
+            ? "No housing space for another villager"
+            : null;
+    return { type, label, trained, posts, canTrain: !reason, reason };
+  });
+};
 export const housingCapacity = (buildings = []) =>
   4 +
   buildings.filter(
@@ -1365,6 +1418,11 @@ export class Village {
           0,
           Math.min(1, finiteNumber(savedWorkerNeeds[index]?.hunger, worker.hunger)),
         );
+        const trained = savedWorkerNeeds[index]?.trained;
+        if (TRAINABLE_WORKER_TYPES.includes(trained)) {
+          worker.trainedType = trained;
+          this.setWorkerType(worker, trained);
+        }
       });
       this.lastSave = saveCycleMarker(this.elapsed);
       this.trendSample = { elapsed: this.elapsed, resources: { ...this.resources } };
@@ -2911,6 +2969,34 @@ export class Village {
     this.emit();
     return true;
   }
+  trainWorker(id, workerType) {
+    if (this.blockedByStorageConflict()) return false;
+    const school = this.buildings.find((candidate) => candidate.id === id);
+    if (!school || school.type !== "school" || school.progress < 1) return false;
+    if (school.paused) {
+      this.notify("The School is paused.");
+      return false;
+    }
+    const option = trainingOptions(this.buildings, this.workers).find(
+      (candidate) => candidate.type === workerType,
+    );
+    if (!option) return false;
+    if (!option.canTrain) {
+      this.notify(option.reason);
+      return false;
+    }
+    const worker = this.addWorker();
+    if (!worker) return false;
+    worker.trainedType = workerType;
+    this.setWorkerType(worker, workerType);
+    school.cycles = Math.max(0, Math.floor(finiteNumber(school.cycles, 0))) + 1;
+    this.announce(`The School trained a new ${option.label.toLowerCase()}.`);
+    this.notify(`${option.label} trained at the School.`);
+    this.playSound("complete");
+    this.save();
+    this.emit();
+    return true;
+  }
   startFeast() {
     if (this.blockedByStorageConflict()) return false;
     if (this.feast?.remaining > 0) {
@@ -3533,6 +3619,7 @@ export class Village {
     hitbox.userData.worker = w;
     m.add(hitbox);
     this.workers.push(w);
+    return w;
   }
   carryColor(resource) {
     return {
@@ -3751,7 +3838,7 @@ export class Village {
         // Other workers are temporary congestion, not walls. The route remains
         // valid through a crowd, but A* prefers an open lane when one exists.
         const stepCost =
-          (this.roads.has(k) ? 0.67 : 1) + this.workerCongestion(nx, nz, w);
+          travelStepCost(this.roads.has(k)) + this.workerCongestion(nx, nz, w);
         const nextCost = cost + stepCost;
         if (nextCost >= (costs.get(k) ?? Infinity)) continue;
         costs.set(k, nextCost);
@@ -4186,7 +4273,9 @@ export class Village {
     w.building = null;
     w.workInside = false;
     this.setWorkerInside(w, false);
-    this.setWorkerType(w, WORKER_TYPES.BUILDER);
+    // A villager trained at the School keeps their trade between jobs, which
+    // also gives them first claim on that work in the next assignment pass.
+    this.setWorkerType(w, w.trainedType || WORKER_TYPES.BUILDER);
     w.waitingForSpace = false;
     w.timer = candidates.length ? 2 : 0;
   }
@@ -4440,13 +4529,13 @@ export class Village {
       w.waitingForSpace = false;
       return true;
     }
-    const fast = this.roads.has(
-      `${Math.round(w.m.position.x)},${Math.round(w.m.position.z)}`,
-    )
-      ? 1.5
-      : 1;
+    const pace = travelSpeed(
+      this.roads.has(
+        `${Math.round(w.m.position.x)},${Math.round(w.m.position.z)}`,
+      ),
+    );
     // The cap keeps a large simulation tick from jumping through a neighbour.
-    const step = Math.min(dt * 1.5 * fast, WORKER_CLEARANCE * 0.62);
+    const step = Math.min(dt * 1.5 * pace, WORKER_CLEARANCE * 0.62);
     if (this.followAvoidance(w, step, dt)) return true;
     const direction = delta.multiplyScalar(1 / distance);
     const candidate = w.m.position
@@ -5158,6 +5247,9 @@ export class Village {
           ...(b.type === "inn"
             ? { breadStock: Math.max(0, Math.floor(finiteNumber(b.breadStock, 0))) }
             : {}),
+          ...(b.type === "school" && b.progress === 1
+            ? { training: trainingOptions(this.buildings, this.workers) }
+            : {}),
         };
       }),
       workers: this.workers.map((w, index) => {
@@ -5171,6 +5263,7 @@ export class Village {
           deliveryRetry: w.deliveryRetry > 0,
           workerType: w.workerType || WORKER_TYPES.BUILDER,
           workerTypeLabel: WORKER_TYPE_LABELS[w.workerType] || "Builder",
+          ...(w.trainedType ? { trainedType: w.trainedType } : {}),
           buildingType: w.building?.type || null,
           ...(w.insideBuilding ? { insideBuilding: true } : {}),
           carry: w.carry ? { ...w.carry } : null,
@@ -5225,6 +5318,7 @@ export class Village {
         tutorialDismissed: this.tutorialDismissed,
         workerNeeds: this.workers.map((worker) => ({
           hunger: Math.max(0, Math.min(1, finiteNumber(worker.hunger, 0))),
+          ...(worker.trainedType ? { trained: worker.trainedType } : {}),
         })),
         activityLog: (Array.isArray(this.activityLog) ? this.activityLog : [])
           .slice(0, 4)

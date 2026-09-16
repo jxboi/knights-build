@@ -30,8 +30,15 @@ import {
   treeRegrowthProgress,
   treeGrowthStage,
   WORKER_CLEARANCE,
+  ROAD_SPEED,
+  OFF_ROAD_SPEED,
+  travelSpeed,
+  travelStepCost,
   WORKER_TYPES,
   AXE_CARRY_ANGLE,
+  TRAINABLE_WORKER_TYPES,
+  jobCapacityForWorkerType,
+  trainingOptions,
   workerTypeForBuilding,
   workerCapacityForBuilding,
   sceneryCandidates,
@@ -340,6 +347,23 @@ test("worker path routes around scenery obstacles", () => {
   assert.equal(v.route(w, 4, 0), true);
   assert.ok(w.path.every((point) => !v.routeBlocked(point.x, point.z)));
   assert.ok(w.path.some((point) => point.z !== 0));
+});
+test("villagers keep full pace on a stone path and cross open ground at 0.7x", () => {
+  assert.equal(travelSpeed(true), ROAD_SPEED);
+  assert.equal(travelSpeed(false), OFF_ROAD_SPEED);
+  assert.equal(OFF_ROAD_SPEED, 0.7);
+  assert.equal(
+    Number((travelSpeed(false) / travelSpeed(true)).toFixed(4)),
+    Number((0.7 / 1.5).toFixed(4)),
+  );
+});
+test("routing costs a tile by travel time, so open ground costs more than paving", () => {
+  assert.ok(travelStepCost(false) > travelStepCost(true));
+  // Cost is the inverse of speed, so the cost ratio mirrors the speed ratio.
+  assert.equal(
+    Number((travelStepCost(false) / travelStepCost(true)).toFixed(4)),
+    Number((ROAD_SPEED / OFF_ROAD_SPEED).toFixed(4)),
+  );
 });
 test("worker routing prefers a longer connected road", () => {
   const v = village();
@@ -665,6 +689,152 @@ test("a baker enters the bakery before starting a production cycle", () => {
   assert.equal(worker.phase, "work");
   assert.equal(worker.insideBuilding, true);
   assert.equal(worker.m.visible, true);
+});
+
+function trainingVillage(buildings, workers) {
+  const v = village();
+  v.buildings = buildings;
+  v.workers = workers;
+  v.emit = () => {};
+  v.playSound = () => {};
+  // addWorker needs the renderer; the rules under test do not.
+  v.addWorker = () => {
+    const worker = { id: `worker-${v.workers.length}`, phase: "idle" };
+    v.workers.push(worker);
+    return worker;
+  };
+  v.setWorkerType = (worker, type) => {
+    worker.workerType = type;
+    return type;
+  };
+  return v;
+}
+
+test("job posts, not just housing, cap what the School can train", () => {
+  const buildings = [
+    { type: "bakery", progress: 1 },
+    { type: "windmill", progress: 1 },
+    { type: "lumberyard", progress: 1 },
+    { type: "mine", progress: 0.4 },
+  ];
+  // A bakery and a windmill both employ bakers; a lumberyard takes two.
+  assert.equal(jobCapacityForWorkerType(buildings, WORKER_TYPES.BAKER), 2);
+  assert.equal(jobCapacityForWorkerType(buildings, WORKER_TYPES.WOODCUTTER), 2);
+  // The mine is still under construction, so it offers no post yet.
+  assert.equal(jobCapacityForWorkerType(buildings, WORKER_TYPES.MINER), 0);
+  const options = trainingOptions(buildings, []);
+  assert.deepEqual(
+    options.map((option) => option.type),
+    TRAINABLE_WORKER_TYPES.slice(),
+  );
+  const miner = options.find((option) => option.type === WORKER_TYPES.MINER);
+  assert.equal(miner.canTrain, false);
+  assert.match(miner.reason, /Stone mine/);
+});
+
+test("the School trains a villager per open post, then refuses", () => {
+  const school = { id: "school-1", type: "school", progress: 1, cycles: 0 };
+  const buildings = [
+    school,
+    { type: "bakery", progress: 1 },
+    { type: "house", progress: 1 },
+    { type: "house", progress: 1 },
+  ];
+  const v = trainingVillage(buildings, [{ id: "w0" }, { id: "w1" }]);
+  // Housing: 4 base + two cottages = 8, so there is room for six more.
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BAKER), true);
+  assert.equal(v.workers.length, 3);
+  assert.equal(v.workers[2].trainedType, WORKER_TYPES.BAKER);
+  assert.equal(v.workers[2].workerType, WORKER_TYPES.BAKER);
+  assert.equal(school.cycles, 1);
+  // The single bakery only has one post.
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BAKER), false);
+  assert.equal(v.workers.length, 3);
+  const baker = trainingOptions(v.buildings, v.workers).find(
+    (option) => option.type === WORKER_TYPES.BAKER,
+  );
+  assert.equal(baker.trained, 1);
+  assert.equal(baker.posts, 1);
+  assert.equal(baker.canTrain, false);
+});
+
+test("training stops when the village runs out of housing", () => {
+  const school = { id: "school-1", type: "school", progress: 1, cycles: 0 };
+  const buildings = [school, { type: "lumberyard", progress: 1 }];
+  // No cottages: base housing is 4 and four villagers already live here.
+  const v = trainingVillage(buildings, [{}, {}, {}, {}]);
+  const option = trainingOptions(v.buildings, v.workers).find(
+    (candidate) => candidate.type === WORKER_TYPES.WOODCUTTER,
+  );
+  assert.equal(option.posts, 2);
+  assert.equal(option.canTrain, false);
+  assert.match(option.reason, /housing/i);
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), false);
+  assert.equal(v.workers.length, 4);
+});
+
+test("training at the School adds a real villager wearing the trade's gear", () => {
+  const v = village();
+  // The full path this time: no stubbed addWorker, so the villager is built
+  // with the same rig the game uses.
+  v.models = {};
+  v.scene = new THREE.Scene();
+  v.emit = () => {};
+  v.playSound = () => {};
+  const school = { id: "school-1", type: "school", progress: 1, cycles: 0 };
+  v.buildings = [
+    school,
+    { type: "bakery", progress: 1 },
+    { type: "house", progress: 1 },
+  ];
+  v.workers = [];
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BAKER), true);
+  const trained = v.workers[v.workers.length - 1];
+  assert.equal(trained.trainedType, WORKER_TYPES.BAKER);
+  assert.equal(trained.workerType, WORKER_TYPES.BAKER);
+  assert.equal(trained.rig.bakerGear.visible, true);
+  assert.equal(trained.rig.breadTray.visible, true);
+  assert.equal(trained.rig.roleHeadgear[WORKER_TYPES.BAKER].visible, true);
+});
+
+test("a trained villager keeps their trade between jobs", () => {
+  const v = village();
+  const worker = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+    workerType: WORKER_TYPES.BUILDER,
+    trainedType: WORKER_TYPES.BAKER,
+  };
+  v.buildings = [];
+  v.workers = [worker];
+  v.route = () => true;
+  v.assign(worker);
+  // With no work to take they fall idle, but stay a baker so the next
+  // assignment pass gives them first claim on the bakery.
+  assert.equal(worker.phase, "idle");
+  assert.equal(worker.workerType, WORKER_TYPES.BAKER);
+  const untrained = { ...worker, trainedType: null, m: new THREE.Object3D(), path: [] };
+  v.workers = [untrained];
+  v.assign(untrained);
+  assert.equal(untrained.workerType, WORKER_TYPES.BUILDER);
+});
+
+test("only a completed, working School trains anyone", () => {
+  const site = { id: "school-1", type: "school", progress: 0.5 };
+  const buildings = [site, { type: "lumberyard", progress: 1 }, { type: "house", progress: 1 }];
+  const v = trainingVillage(buildings, [{}]);
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), false);
+  site.progress = 1;
+  site.paused = true;
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), false);
+  site.paused = false;
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), true);
+  // Builders arrive with cottages and are never trained here.
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BUILDER), false);
+  assert.equal(v.trainWorker("bakery-1", WORKER_TYPES.WOODCUTTER), false);
 });
 
 test("the woodcutter wears the straw hat, scarf and satchel and shoulders the axe", () => {

@@ -1337,6 +1337,57 @@ h1 span {
   color: #897249;
   font-size: 8px;
 }
+.training-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid #e4dbc7;
+}
+.training-panel .inspector-action-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.training-housing {
+  margin: 0;
+  color: #897249;
+  font-size: 9px;
+  line-height: 1.45;
+}
+.training-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.training-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid #d8cbb2;
+  border-radius: 4px;
+  color: #85775f;
+  font-size: 9px;
+  line-height: 1.2;
+  text-align: left;
+}
+.training-option:hover:not(:disabled) {
+  background: #e8ddc7;
+  border-color: #bca27b;
+  color: #5f563f;
+}
+.training-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.training-count {
+  color: #a08a5f;
+  font-size: 8px;
+  font-style: normal;
+}
 .inspector-state.idle strong,
 .inspector-state.complete strong {
   color: #817661;
