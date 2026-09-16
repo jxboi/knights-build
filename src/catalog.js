@@ -150,15 +150,6 @@ export const CATALOG = {
     effect: "+50% walking speed · open ground slows villagers to 0.7x",
     seconds: 0,
   },
-  sign: {
-    name: "Sign",
-    size: 1,
-    cost: { wood: 5 },
-    description: "Name a corner of the village with a handmade sign.",
-    effect: "Decorative landmark · does not block walking",
-    seconds: 0,
-    decoration: true,
-  },
 };
 
 // The town hall is the village's first store, so a new settlement can trade

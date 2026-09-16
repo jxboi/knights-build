@@ -195,35 +195,6 @@ test("successful building placement clears the active placement tool", () => {
   assert.equal(v.placement, null);
   assert.equal(v.decor.length, 0);
 });
-test("decorative building tools create a placement ghost without a loaded GLB", () => {
-  const v = Object.create(Village.prototype);
-  Object.assign(v, {
-    models: {},
-    selected: null,
-    placement: null,
-    rotation: 0,
-    ghost: null,
-    footprint: null,
-    previewOutline: null,
-    boundaryPreview: null,
-    ghostGeometryOwned: false,
-    buildings: [],
-    workers: [],
-    decor: [],
-    resources: { wood: 100, stone: 100 },
-    grid: { visible: false },
-    renderer: { domElement: { style: {} } },
-    controls: { mouseButtons: {}, touches: {} },
-    scene: new THREE.Scene(),
-    clearGhost() {},
-    updatePlacement() {},
-  });
-
-  v.select("sign");
-
-  assert.ok(v.ghost);
-  assert.equal(v.ghost.children.length, 2);
-});
 test("focusing a villager frames them, selects them, and advances the introduction", () => {
   const worker = { id: "worker-1", m: new THREE.Object3D(), building: null };
   worker.m.position.set(4, 0, -2);

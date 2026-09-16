@@ -231,11 +231,6 @@ h1 span {
   color: #71889a;
   transform: rotate(-12deg);
 }
-.day-period::before {
-  content: "·";
-  margin: 0 5px;
-  color: #b4a58c;
-}
 .day strong {
   font:
     500 17px "Lora",
@@ -855,7 +850,8 @@ h1 span {
 .building-number {
   position: absolute;
   top: 5px;
-  left: 7px;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 7px;
   color: #b4a58d;
 }
@@ -995,14 +991,6 @@ h1 span {
 .compass:hover {
   background: #f4eed832;
   transform: rotate(-4deg);
-}
-.help-button {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 12px;
-  font-size: 9px;
-  color: #796b54;
 }
 .bottom-right {
   position: absolute;
@@ -1875,71 +1863,6 @@ h1 span {
   font-weight: 600;
   text-align: right;
 }
-.tutorial-card {
-  position: absolute;
-  top: 118px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(360px, calc(100% - 32px));
-  padding: 15px 17px;
-  z-index: 18;
-  box-shadow: 0 8px 25px #3542231f;
-}
-.tutorial-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: #796b54;
-  font-size: 7px;
-  letter-spacing: 1.1px;
-}
-.tutorial-card h3 {
-  margin-top: 10px;
-  color: #665b45;
-  font: 500 17px/1.25 "Lora", Georgia, serif;
-}
-.tutorial-card p {
-  margin-top: 7px;
-  color: #796b54;
-  font-size: 9px;
-  line-height: 1.55;
-}
-.tutorial-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 12px;
-  padding: 8px 10px;
-  border-radius: 4px;
-  background: #96704b;
-  color: #fff8e8;
-  font-size: 8px;
-  transition: background 0.15s ease, transform 0.15s ease;
-}
-.tutorial-action:hover {
-  background: #805d3d;
-  transform: translateY(-1px);
-}
-.tutorial-progress {
-  height: 3px;
-  overflow: hidden;
-  margin-top: 13px;
-  border-radius: 99px;
-  background: #ded5c3;
-}
-.tutorial-progress i {
-  display: block;
-  height: 100%;
-  background: #8f9d70;
-  transition: width .3s ease;
-}
-.tutorial-skip {
-  margin-top: 11px;
-  color: #756447;
-  font-size: 8px;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
 .placement-confirm {
   color: #718255;
 }
@@ -2006,9 +1929,6 @@ h1 span {
 }
 .secondary:hover {
   background: #eee5d3;
-}
-.tutorial-replay {
-  margin-bottom: 10px;
 }
 .full {
   width: 100%;
@@ -2266,12 +2186,6 @@ h1 span {
     right: 18px;
     width: min(330px, calc(100% - 36px));
   }
-  .bottom-left .help-button {
-    padding: 8px;
-  }
-  .help-button span {
-    display: none;
-  }
 }
 @media (min-width: 761px) and (max-width: 900px) {
   .topbar {
@@ -2331,11 +2245,6 @@ h1 span {
   }
   .day small {
     font-size: 8px;
-  }
-  .tutorial-card {
-    left: 14px;
-    transform: none;
-    width: min(340px, calc(100% - 28px));
   }
 }
 @media (min-width: 761px) and (max-width: 900px) and (max-height: 620px) {
@@ -2477,21 +2386,6 @@ h1 span {
   .resource-trend {
     display: none;
   }
-  .game-shell:has(.tutorial-card) .objectives,
-  .game-shell:has(.tutorial-card) .settlement-status {
-    visibility: hidden;
-  }
-  .game-shell:has(.tutorial-card) .left-stack {
-    pointer-events: none;
-  }
-  .game-shell:has(.tutorial-card) .left-stack .village-heading,
-  .game-shell:has(.tutorial-card) .left-stack .village-label {
-    visibility: visible;
-  }
-  .game-shell:has(.tutorial-card) .left-stack .village-heading,
-  .game-shell:has(.tutorial-card) .left-stack .village-label {
-    pointer-events: none;
-  }
   .day {
     border: 0;
     padding: 0;
@@ -2505,12 +2399,6 @@ h1 span {
   }
   .day small {
     font-size: 7px;
-  }
-  .season-name {
-    display: none;
-  }
-  .day-period::before {
-    display: none;
   }
   .menu-button {
     width: 17px;
@@ -2605,7 +2493,7 @@ h1 span {
   }
   .building-number {
     font-size: 5px;
-    left: 3px;
+    left: 50%;
     top: 3px;
   }
   .building-name {
@@ -2650,11 +2538,6 @@ h1 span {
   }
   .compass span {
     font-size: 7px;
-  }
-  .help-button {
-    width: 30px;
-    height: 30px;
-    justify-content: center;
   }
   .bottom-right {
     bottom: calc(146px + env(safe-area-inset-bottom));
@@ -2795,17 +2678,6 @@ h1 span {
   .advisor-prompts button {
     font-size: 7px;
   }
-  .tutorial-card {
-    top: calc(163px + env(safe-area-inset-top));
-    left: max(14px, env(safe-area-inset-left));
-    transform: none;
-    width: min(245px, calc(100% - 28px));
-    padding: 12px 13px;
-  }
-  .tutorial-action {
-    margin-top: 9px;
-    padding: 7px 8px;
-  }
   .goal-next {
     margin-bottom: 10px;
     padding: 8px 9px 9px;
@@ -2819,12 +2691,6 @@ h1 span {
   .goal-next button {
     padding: 6px 7px;
     font-size: 7px;
-  }
-  .tutorial-card h3 {
-    font-size: 15px;
-  }
-  .tutorial-card p {
-    font-size: 8px;
   }
   .economy-strip {
     grid-template-columns: repeat(3, 1fr);
@@ -2923,8 +2789,6 @@ h1 span {
   .game-shell {
     min-height: 100dvh;
   }
-  /* The tutorial owns the compact-height guidance space; keep the secondary
-     build detail card from rising into it during placement. */
   .game-shell:has(.world.is-building) .build-tooltip {
     visibility: hidden;
   }
@@ -2992,19 +2856,6 @@ h1 span {
   }
 }
 @media (max-width: 760px) {
-  /* A deliberate menu selection should be able to reveal the goals card even
-     while the introductory guide is still on screen. */
-  .game-shell.goals-open:has(.tutorial-card) .objectives,
-  .game-shell.goals-open:has(.tutorial-card) .settlement-status {
-    visibility: visible;
-  }
-  .game-shell.goals-open:has(.tutorial-card) .left-stack {
-    pointer-events: auto;
-  }
-  .game-shell.goals-open:has(.tutorial-card) .objectives {
-    margin-top: 135px;
-  }
-
   /* Keep the placement guidance above the build detail card instead of
      allowing the two surfaces to share the same bottom edge. */
   .game-shell .build-tooltip:not(.is-open) {
@@ -3028,9 +2879,6 @@ h1 span {
   top: 100px;
   bottom: auto;
 }
-.game-shell:has(.tutorial-card) .toast {
-  top: 290px;
-}
 .game-shell:has(.inspector) .build-tooltip,
 .game-shell:has(.modal) .build-tooltip,
 .game-shell:has(.advisor-panel) .build-tooltip {
@@ -3041,21 +2889,11 @@ h1 span {
     top: 160px;
     bottom: auto;
   }
-  .game-shell:has(.tutorial-card) .toast {
-    top: calc(370px + env(safe-area-inset-top));
-    left: auto;
-    right: max(14px, env(safe-area-inset-right));
-    width: min(230px, calc(100% - 28px));
-    max-width: calc(100% - 28px);
-    transform: none;
-  }
   .game-shell:has(.inspector) .objectives,
   .game-shell:has(.inspector) .settlement-status {
     visibility: hidden;
   }
 }
-/* On narrow phones the advisor needs the full stage; keeping the tutorial
-   visible underneath it makes the two cards compete for the same space. */
 @media (max-width: 620px) {
   .advisor-panel {
     left: max(14px, env(safe-area-inset-left));
@@ -3065,14 +2903,6 @@ h1 span {
       linear-gradient(135deg, #fbf7eb, #f0e8d7),
       repeating-linear-gradient(0deg, #ffffff09 0 1px, transparent 1px 4px);
     backdrop-filter: blur(10px);
-  }
-  .game-shell:has(.advisor-panel) .tutorial-card {
-    visibility: hidden;
-    pointer-events: none;
-  }
-  .game-shell:has(.inspector) .tutorial-card {
-    visibility: hidden;
-    pointer-events: none;
   }
 }
 

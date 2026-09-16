@@ -637,7 +637,9 @@ export class Village {
     this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 };
     this.chapterRewards = {};
     this.tutorialStep = 0;
-    this.tutorialDismissed = false;
+    // Tutorial fields remain save-compatible, but the introduction is no
+    // longer surfaced or advanced in the playable village.
+    this.tutorialDismissed = true;
     this.feast = null;
     this.trendSample = { elapsed: 0, resources: { ...this.resources } };
     this.trends = { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 };
@@ -1314,7 +1316,7 @@ export class Village {
             ? { ...this.saved.chapterRewards }
             : {};
         this.tutorialStep = Math.max(0, Math.floor(finiteNumber(this.saved.tutorialStep, 0)));
-        this.tutorialDismissed = Boolean(this.saved.tutorialDismissed);
+        this.tutorialDismissed = true;
         this.feast =
           this.saved.feast && finiteNumber(this.saved.feast.remaining, 0) > 0
             ? { remaining: finiteNumber(this.saved.feast.remaining, 0) }
@@ -1548,8 +1550,7 @@ export class Village {
       mesh.receiveShadow = true;
       group.add(mesh);
     };
-    // The sign is the only built decoration, and its post-and-board shape
-    // doubles as the placeholder marker for any type without a loaded GLB.
+    // Keep a simple placeholder for any type without a loaded GLB.
     part(new THREE.BoxGeometry(0.1, 0.9, 0.1), "#76502e", 0, 0.45, 0);
     part(new THREE.BoxGeometry(0.72, 0.42, 0.08), "#b47d49", 0, 0.78, 0);
     return group;
@@ -1584,8 +1585,46 @@ export class Village {
     l.position.set(-4, 7, 5);
     s.add(l);
     const c = new THREE.OrthographicCamera(-3, 3, 2.45, -2.45, 0.1, 50);
-    c.position.set(5, 5, 7);
-    c.lookAt(0, 1.25, 0);
+    const thumbnailProbe = document.createElement("canvas");
+    thumbnailProbe.width = 160;
+    thumbnailProbe.height = 130;
+    const probeContext = thumbnailProbe.getContext("2d");
+    const thumbnailTouchesEdge = (source) => {
+      if (!probeContext) return false;
+      probeContext.clearRect(0, 0, 160, 130);
+      probeContext.drawImage(source, 0, 0);
+      const pixels = probeContext.getImageData(0, 0, 160, 130).data;
+      let minX = 160;
+      let minY = 130;
+      let maxX = -1;
+      let maxY = -1;
+      for (let y = 0; y < 130; y++)
+        for (let x = 0; x < 160; x++)
+          if (pixels[(y * 160 + x) * 4 + 3] > 8) {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+          }
+      return minX <= 1 || minY <= 1 || maxX >= 158 || maxY >= 128;
+    };
+    const renderThumbnail = (model) => {
+      model.updateMatrixWorld(true);
+      c.position.set(5, 5, 7);
+      c.lookAt(0, 1.25, 0);
+      c.updateMatrixWorld(true);
+      let scale = 1;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        c.left = -3 * scale;
+        c.right = 3 * scale;
+        c.top = 2.45 * scale;
+        c.bottom = -2.45 * scale;
+        c.updateProjectionMatrix();
+        r.render(s, c);
+        if (!thumbnailTouchesEdge(r.domElement)) break;
+        scale *= 1.14;
+      }
+    };
     for (const key of Object.keys(CATALOG)) {
       const m =
         key === "road"
@@ -1599,7 +1638,7 @@ export class Village {
             )
           : (this.models[key] || this.makeDecorationModel(key)).clone(true);
       s.add(m);
-      r.render(s, c);
+      renderThumbnail(m);
       this.thumbnails[key] = r.domElement.toDataURL();
       s.remove(m);
     }
@@ -2641,7 +2680,8 @@ export class Village {
       const pathMessage = "A new path for wandering feet.";
       this.announce(pathMessage);
       this.notify(pathMessage);
-      if ((this.tutorialStep || 0) === 2) this.tutorialStep = 3;
+      if (!this.tutorialDismissed && (this.tutorialStep || 0) === 2)
+        this.tutorialStep = 3;
     } else {
       this.addBuilding(
         type,
@@ -2659,7 +2699,7 @@ export class Village {
         : `${CATALOG[type].name} planned. Workers will deliver materials before construction.`;
       this.announce(plannedMessage);
       this.notify(plannedMessage);
-      if (type === "house" && (this.tutorialStep || 0) === 0) {
+      if (!this.tutorialDismissed && type === "house" && (this.tutorialStep || 0) === 0) {
         this.tutorialStep = 1;
         const guideWorker = this.workers.find((worker) => worker.m?.position);
         if (guideWorker) this.highlightWorker(guideWorker);
@@ -2699,7 +2739,7 @@ export class Village {
           workerId: w.id,
         });
         this.highlightWorker(w);
-        if ((this.tutorialStep || 0) === 1) {
+        if (!this.tutorialDismissed && (this.tutorialStep || 0) === 1) {
           this.tutorialStep = 2;
           this.save();
           this.emit();
@@ -5964,7 +6004,7 @@ export class Village {
       workerId: worker.id,
     });
     this.highlightWorker(worker);
-    if ((this.tutorialStep || 0) === 1) {
+    if (!this.tutorialDismissed && (this.tutorialStep || 0) === 1) {
       this.tutorialStep = 2;
       this.save();
       this.emit();

@@ -125,14 +125,14 @@ const Resource = React.memo(function Resource({ type, value, trend = 0, storage 
           <span className="resource-trend negative" title={`${type} storage is full`}>
             · storage full
           </span>
-        ) : (
+        ) : trendValue !== 0 ? (
           <span
-            className={`resource-trend ${trendValue > 0 ? "positive" : trendValue < 0 ? "negative" : "steady"}`}
+            className={`resource-trend ${trendValue > 0 ? "positive" : "negative"}`}
             title={`${type} change over the last simulation window`}
           >
-            {trendValue === 0 ? "· steady" : <><TrendIcon size={10} /> {trendValue > 0 ? "+" : ""}{trendValue}/m</>}
+            <TrendIcon size={10} /> {trendValue > 0 ? "+" : ""}{trendValue}/m
           </span>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -150,7 +150,6 @@ function App() {
     advisorInputRef = useRef(),
     advisorMessagesRef = useRef(),
     importFileRef = useRef(),
-    tutorialActionRef = useRef(),
     previousSpeed = useRef(1);
   const [state, setState] = useState({
     name: "Willowbrook",
@@ -218,7 +217,6 @@ function App() {
   const toastTimer = useRef();
   const goalSnapshot = useRef({ ready: false, complete: false });
   const modalReturnRef = useRef();
-  const tutorialFocusPending = useRef(false);
   const placementFocusReturn = useRef(null);
   const inspectorFocusReturn = useRef(null);
   const notify = (message) => {
@@ -594,11 +592,6 @@ function App() {
     document.addEventListener("keydown", trap);
     return () => {
       document.removeEventListener("keydown", trap);
-      if (tutorialFocusPending.current) {
-        tutorialFocusPending.current = false;
-        requestAnimationFrame(() => tutorialActionRef.current?.focus());
-        return;
-      }
       if (previous instanceof HTMLElement && document.contains(previous))
         requestAnimationFrame(() => previous.focus());
     };
@@ -695,24 +688,11 @@ function App() {
         label: "Build a cottage",
         detail: "Make room for two more workers at the edge of town.",
       };
-  const introActive = loaded && !state.tutorialDismissed && state.tutorialStep < 3;
-  const tutorialAction =
-    state.tutorialStep === 0
-      ? { kind: "build", type: "house", label: selected === "house" ? "Place cottage" : "Choose cottage" }
-      : state.tutorialStep === 1
-        ? { kind: "focus", label: "Meet a villager" }
-      : state.tutorialStep === 2
-        ? { kind: "build", type: "road", label: selected === "road" ? "Place path" : "Choose path" }
-        : null;
-  const tutorialVisible =
-    introActive &&
-    (!selected ||
-      (tutorialAction?.kind === "build" && selected === tutorialAction.type));
   useEffect(() => {
     const syncHiddenSurfaces = () => {
       document
         .querySelectorAll(
-          ".game-shell .objectives, .game-shell .tutorial-card, .game-shell .advisor-panel, .game-shell .inspector, .game-shell .build-tooltip",
+          ".game-shell .objectives, .game-shell .advisor-panel, .game-shell .inspector, .game-shell .build-tooltip",
         )
         .forEach((element) => {
           const styles = window.getComputedStyle(element);
@@ -757,20 +737,7 @@ function App() {
       window.removeEventListener("resize", syncHiddenSurfaces);
       observer?.disconnect();
     };
-  }, [advisorOpen, buildDetailsOpen, detail, menu, modalOpen, selected, tutorialVisible]);
-  const runTutorialAction = () => {
-    if (!tutorialAction) return;
-    if (tutorialAction.kind === "focus") {
-      const worker = game.current?.workers?.[0];
-      if (worker) game.current.focusWorker(worker.id);
-      return;
-    }
-    if (selected !== tutorialAction.type) {
-      choose(tutorialAction.type);
-      return;
-    }
-    if (game.current?.confirmPlacement()) endPlacement(true);
-  };
+  }, [advisorOpen, buildDetailsOpen, detail, menu, modalOpen, selected]);
   const housingFull = state.population >= state.capacity;
   // Wine only earns a header slot once the village presses some, so villages
   // without a vineyard keep the original four-resource layout.
@@ -1062,7 +1029,6 @@ function App() {
           <div>
             <strong>Day {state.day}</strong>
             <small>
-              <span className="season-name">Early summer</span>
               <span className="day-period">{period}</span>
             </small>
           </div>
@@ -1690,36 +1656,6 @@ function App() {
           )}
         </aside>
       )}
-      {tutorialVisible && (
-        <aside className="tutorial-card parchment" aria-label="Village introduction">
-          <div className="tutorial-top">
-            <span>FIRST STEPS · {state.tutorialStep + 1}/3</span>
-            <button className="bare" onClick={() => game.current?.dismissTutorial()} aria-label="Dismiss introduction"><X size={15} /></button>
-          </div>
-          <h3>{[
-            "Place your first cottage",
-            "Meet the people doing the work",
-            "Connect the village",
-          ][state.tutorialStep]}</h3>
-          <p>{[
-            "Choose Cottage below, move its green preview to a clear patch, and place it.",
-            "Click any worker in the world to see their current task and carried goods.",
-            "Choose Path, then click and drag across the ground to lay a route.",
-          ][state.tutorialStep]}</p>
-          <div className="tutorial-progress"><i style={{ width: `${((state.tutorialStep + 1) / 3) * 100}%` }} /></div>
-          {tutorialAction && (
-            <button
-              ref={tutorialActionRef}
-              type="button"
-              className="tutorial-action"
-              onClick={runTutorialAction}
-            >
-              {tutorialAction.label} <ArrowUpRight size={13} />
-            </button>
-          )}
-          <button className="tutorial-skip" onClick={() => game.current?.dismissTutorial()}>Skip introduction</button>
-        </aside>
-      )}
       {toast && (
         <div className="toast" role="status">
           <Check size={17} />
@@ -1735,16 +1671,6 @@ function App() {
         >
           <span>N</span>
           <Compass size={38} strokeWidth={1} />
-        </button>
-        <button
-          className="help-button parchment"
-          aria-label="How to play"
-          aria-keyshortcuts="?"
-          title="How to play (?)"
-          onClick={(event) => openModal(setHelp, event.currentTarget)}
-        >
-          <HelpCircle size={15} />
-          <span>How to play</span>
         </button>
       </div>
       <div className={`build-area ${paletteOpen ? "palette-open" : "palette-collapsed"}`}>
@@ -2497,21 +2423,6 @@ function App() {
                   for grid · Enter to place · ? for help · Your village saves
                   automatically. Use the menu for backup export/import.
                 </div>
-                <button
-                  className="secondary full tutorial-replay"
-                  onClick={() => {
-                    if (game.current) {
-                      game.current.tutorialStep = 0;
-                      game.current.tutorialDismissed = false;
-                      game.current.save();
-                      game.current.emit();
-                    }
-                    tutorialFocusPending.current = true;
-                    setHelp(false);
-                  }}
-                >
-                  Replay the introduction <RotateCw size={14} />
-                </button>
                 <button
                   className="primary full"
                   onClick={() => setHelp(false)}
