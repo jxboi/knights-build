@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Wheat,
+  Wine,
   Croissant,
   Trees,
   Mountain,
@@ -41,7 +42,7 @@ import { CATALOG } from "./catalog.js";
 import { completedPlayerMilestone } from "./progression.js";
 import HealthCheck from "./health-check.jsx";
 import "./style.css";
-const resourceIcons = { wood: Trees, stone: Mountain, food: Croissant, wheat: Wheat };
+const resourceIcons = { wood: Trees, stone: Mountain, food: Croissant, wheat: Wheat, wine: Wine };
 const formatCount = (value) =>
   Math.floor(Number(value) || 0).toLocaleString("en-US");
 const workerTypeOrder = ["Builder", "Woodcutter", "Miner", "Farmer", "Baker"];
@@ -136,7 +137,7 @@ function App() {
     previousSpeed = useRef(1);
   const [state, setState] = useState({
     name: "Willowbrook",
-    resources: { wood: 140, stone: 95, food: 80, wheat: 0 },
+    resources: { wood: 140, stone: 95, food: 80, wheat: 0, wine: 0 },
     population: 8,
     capacity: 10,
     day: 1,
@@ -151,8 +152,8 @@ function App() {
     saveAvailable: true,
     hasSaved: false,
     saveConflict: false,
-    delivered: { wood: 0, stone: 0, food: 0, wheat: 0 },
-    trends: { wood: 0, stone: 0, food: 0, wheat: 0 },
+    delivered: { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 },
+    trends: { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 },
     inTransit: 0,
     blockedSites: 0,
     chapterGoals: [],
@@ -753,6 +754,11 @@ function App() {
     if (game.current?.confirmPlacement()) endPlacement(true);
   };
   const housingFull = state.population >= state.capacity;
+  // Wine only earns a header slot once the village presses some, so villages
+  // without a vineyard keep the original four-resource layout.
+  const showWine =
+    (state.resources.wine || 0) > 0 ||
+    state.buildings.some((building) => building.type === "vineyard");
   const completedBuildings = state.buildings.filter(
     (building) => building.progress === 1 && building.type !== "grainfield",
   ).length;
@@ -787,6 +793,7 @@ function App() {
       stone: Math.floor(state.resources.stone || 0),
       food: Math.floor(state.resources.food || 0),
       wheat: Math.floor(state.resources.wheat || 0),
+      wine: Math.floor(state.resources.wine || 0),
     },
     buildings: state.buildings.map((building) => ({
       name: CATALOG[building.type]?.name || building.type,
@@ -1006,6 +1013,9 @@ function App() {
           <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} />
           <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} />
           <Resource type="food" value={state.resources.food} trend={state.trends.food} />
+          {showWine && (
+            <Resource type="wine" value={state.resources.wine} trend={state.trends.wine} />
+          )}
           <div
             className={`resource population ${housingFull ? "at-capacity" : ""}`}
             title={`Villagers / housing capacity. Simulation limit: 24 villagers. ${Math.max(0, state.capacity - state.population)} housing spaces available.`}
@@ -2370,7 +2380,7 @@ function App() {
                   <div>
                     <strong>Grow a thriving settlement</strong>
                     <span>
-                      Farms produce wheat, bakeries bake it into bread (food), lumberyards supply wood, and mines
+                      Vineyards press grapes into wine. Farms produce wheat, bakeries bake it into bread (food), lumberyards supply wood, and mines
                       gather stone. Windmills turn 2 food into 8. Paths speed up
                       travel.
                     </span>

@@ -145,6 +145,9 @@ h1 span {
 .food .resource-icon {
   color: #b18b43;
 }
+.wine .resource-icon {
+  color: #7d3260;
+}
 .population .resource-icon {
   color: #7b725c;
 }

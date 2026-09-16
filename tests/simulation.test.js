@@ -31,8 +31,15 @@ import {
   treeGrowthStage,
   WORKER_CLEARANCE,
   WORKER_TYPES,
+  AXE_CARRY_ANGLE,
   workerTypeForBuilding,
   workerCapacityForBuilding,
+  sceneryCandidates,
+  grassCandidates,
+  SCENERY_COUNT,
+  GRASS_COUNT,
+  lanternLightBudget,
+  LANTERN_LIGHT_BUDGET,
   Village,
 } from "../src/world.js";
 import {
@@ -43,7 +50,7 @@ import {
 function village() {
   const v = Object.create(Village.prototype);
   Object.assign(v, {
-    resources: { wood: 100, stone: 100, food: 100, wheat: 0 },
+    resources: { wood: 100, stone: 100, food: 100, wheat: 0, wine: 0 },
     buildings: [],
     workers: [],
     decor: [],
@@ -193,10 +200,10 @@ test("decorative building tools create a placement ghost without a loaded GLB", 
     updatePlacement() {},
   });
 
-  v.select("flowerbed");
+  v.select("sign");
 
   assert.ok(v.ghost);
-  assert.equal(v.ghost.children.length, 4);
+  assert.equal(v.ghost.children.length, 2);
 });
 test("focusing a villager frames them, selects them, and advances the introduction", () => {
   const worker = { id: "worker-1", m: new THREE.Object3D(), building: null };
@@ -655,6 +662,94 @@ test("a baker enters the bakery before starting a production cycle", () => {
   assert.equal(worker.phase, "work");
   assert.equal(worker.insideBuilding, true);
   assert.equal(worker.m.visible, true);
+});
+
+test("the woodcutter wears the straw hat, scarf and satchel and shoulders the axe", () => {
+  const v = Object.create(Village.prototype);
+  const rig = v.createWorkerRig(new THREE.Object3D());
+  const worker = { rig };
+  v.setWorkerType(worker, WORKER_TYPES.WOODCUTTER);
+  assert.equal(rig.roleHeadgear[WORKER_TYPES.WOODCUTTER].visible, true);
+  assert.equal(rig.woodcutterGear.visible, true);
+  assert.equal(rig.axe.visible, true);
+  assert.equal(rig.axe.rotation.z, AXE_CARRY_ANGLE);
+  // A mid-swing axe returns to the shoulder when the role changes.
+  rig.axe.rotation.z = 1.2;
+  v.setWorkerType(worker, WORKER_TYPES.WOODCUTTER);
+  assert.equal(rig.axe.rotation.z, AXE_CARRY_ANGLE);
+  v.setWorkerType(worker, WORKER_TYPES.BAKER);
+  assert.equal(rig.woodcutterGear.visible, false);
+  assert.equal(rig.axe.visible, false);
+  assert.equal(rig.roleHeadgear[WORKER_TYPES.BAKER].visible, true);
+});
+
+test("every worker role has its own headgear", () => {
+  const v = Object.create(Village.prototype);
+  const rig = v.createWorkerRig(new THREE.Object3D());
+  const worker = { rig };
+  for (const type of Object.values(WORKER_TYPES)) {
+    v.setWorkerType(worker, type);
+    assert.equal(rig.roleHeadgear[type].visible, true, `${type} headgear`);
+    const others = Object.entries(rig.roleHeadgear).filter(([key]) => key !== type);
+    assert.ok(others.every(([, headgear]) => !headgear.visible));
+  }
+});
+
+test("a vintner treads grapes in the open bay and delivers wine to the hall", () => {
+  const v = village();
+  const vineyard = {
+    type: "vineyard",
+    progress: 1,
+    x: 6,
+    z: 6,
+    rotation: 0,
+    cycles: 0,
+    paused: false,
+  };
+  const hall = { type: "townhall", progress: 1, x: 0, z: 0, cycles: 0, paused: false };
+  const worker = {
+    id: "worker-vintner",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    workDuration: 0,
+    building: null,
+    workerType: WORKER_TYPES.FARMER,
+  };
+  v.buildings = [vineyard, hall];
+  v.workers = [worker];
+  v.route = () => true;
+  v.assign(worker);
+  assert.equal(worker.building, vineyard);
+  assert.equal(worker.workInside, true);
+  worker.path = [];
+  v.simulate(0.1);
+  assert.equal(worker.phase, "work");
+  // The bay is open, so the vintner stays visible beside the vat.
+  assert.equal(worker.m.visible, true);
+  assert.deepEqual(
+    [worker.m.position.x, worker.m.position.z],
+    v.vineyardTreadingPoint(vineyard),
+  );
+  worker.timer = 0;
+  v.simulate(0.1);
+  assert.equal(worker.phase, "deliver");
+  assert.deepEqual(worker.carry, {
+    resource: "wine",
+    amount: CATALOG.vineyard.amount,
+  });
+  v.simulate(0.1);
+  assert.equal(v.resources.wine, CATALOG.vineyard.amount);
+  assert.equal(v.delivered.wine, CATALOG.vineyard.amount);
+  assert.equal(vineyard.cycles, 1);
+});
+
+test("the vineyard treading spot follows the building rotation", () => {
+  const v = village();
+  const [x, z] = v.vineyardTreadingPoint({ x: 6, z: 6, rotation: Math.PI / 2 });
+  assert.ok(Math.abs(x - 7) < 1e-6);
+  assert.ok(Math.abs(z - 7.36) < 1e-6);
 });
 
 test("worker assignment falls back when the preferred site is unreachable", () => {
@@ -1269,7 +1364,7 @@ test("save keeps delivery history, Inn stock, and worker hunger safely bounded",
     Object.assign(v, {
       ready: true,
       name: "Willowbrook",
-      resources: { wood: 100, stone: 100, food: 100, wheat: 0 },
+      resources: { wood: 100, stone: 100, food: 100, wheat: 0, wine: 0 },
       workers: [{ hunger: 0.73 }],
       elapsed: 12,
       created: {},
@@ -1652,7 +1747,7 @@ test("stale tabs refuse rename and path mutations", () => {
     storageConflict: true,
     name: "Willowbrook",
     roads: new Set(),
-    resources: { wood: 100, stone: 100, food: 100, wheat: 0 },
+    resources: { wood: 100, stone: 100, food: 100, wheat: 0, wine: 0 },
     notify(message) {
       notice = message;
     },
@@ -2039,4 +2134,204 @@ test("the real route loop carries Bakery bread to the Inn and serves a meal", ()
   assert.ok(bakery.cycles >= 1);
   assert.ok(inn.cycles >= 1);
   assert.ok(v.delivered.food >= CATALOG.bakery.amount);
+});
+
+test("path totals discount the starter village's own roads", () => {
+  const base = new Set(["0,0", "1,0", "2,0"]);
+  const all = new Set([...base, "5,5", "6,5"]);
+  assert.equal(reconcileRoadCount({}, all, base).road, 2);
+  assert.equal(reconcileRoadCount({}, base, base).road, 0);
+  assert.deepEqual(reconcileRoadCount({ house: 3 }, all, base), {
+    house: 3,
+    road: 2,
+  });
+  // Callers that already hold a player-only set keep working unchanged.
+  assert.equal(reconcileRoadCount({}, new Set(["5,5", "6,5"])).road, 2);
+});
+
+test("removing a path does not inflate progress with starter roads", () => {
+  const v = village();
+  v.baseRoads = new Set();
+  for (let x = 0; x < 40; x++) {
+    v.roads.add(`${x},-9`);
+    v.baseRoads.add(`${x},-9`);
+  }
+  v.roads.add("4,4");
+  v.roads.add("5,4");
+  v.created.road = 2;
+  v.scene = { remove() {}, children: [] };
+  v.disposeOwnedObject = () => {};
+  v.announce = () => {};
+  v.emit = () => {};
+
+  assert.equal(v.removeRoad(99, 99), false, "a tile with no path on it is rejected");
+  assert.equal(v.removeRoad(4, 4), true);
+  assert.equal(v.created.road, 1, "only the player's remaining tile counts");
+
+  const goal = chapterGoalState({}, { created: v.created, delivered: {}, buildings: [] })[0];
+  assert.equal(goal.metric, "paths");
+  assert.equal(goal.progress, 1);
+  assert.equal(goal.completed, false, "removing a path must not complete the paths goal");
+
+  // Starter roads stay protected and uncounted.
+  assert.equal(v.removeRoad(0, -9), false);
+  assert.equal(v.created.road, 1);
+});
+
+test("scenery lands on the same coordinates whatever the village contains", () => {
+  const first = sceneryCandidates();
+  const second = sceneryCandidates();
+  assert.equal(first.length, SCENERY_COUNT);
+  assert.deepEqual(first, second);
+
+  // The runtime generator is shared by roads, lanterns and worker spawns, so a
+  // restored village drains it by an amount that depends on the save. Scenery
+  // must not move because of that.
+  const v = village();
+  for (let i = 0; i < 500; i++) v.workerSpawnPosition(0, 0);
+  assert.deepEqual(sceneryCandidates(), first);
+
+  // Rejecting a candidate must not shift the ones after it.
+  const placeable = (candidate, buildings) =>
+    !buildings.some(
+      (b) =>
+        Math.hypot(candidate.x - b.x, candidate.z - b.z) <
+        (CATALOG[b.type]?.size || 4) / 2 + 2.2,
+    );
+  const dense = Array.from({ length: 12 }, (_, i) => ({
+    type: "house",
+    x: -20 + i * 4,
+    z: i % 2 ? 6 : -6,
+  }));
+  const empty = first.filter((c) => placeable(c, []));
+  const crowded = first.filter((c) => placeable(c, dense));
+  assert.ok(crowded.length < empty.length, "the dense village rejects more candidates");
+  const emptyKeys = new Set(empty.map((c) => `${c.x.toFixed(3)},${c.z.toFixed(3)}`));
+  for (const c of crowded)
+    assert.ok(
+      emptyKeys.has(`${c.x.toFixed(3)},${c.z.toFixed(3)}`),
+      "a surviving tree keeps the coordinates its saved state is keyed to",
+    );
+});
+
+test("grass scatter is deterministic and distinct from the scenery stream", () => {
+  const first = grassCandidates();
+  assert.equal(first.length, GRASS_COUNT);
+  assert.deepEqual(grassCandidates(), first);
+  assert.notDeepEqual(
+    first.map((blade) => blade.x),
+    sceneryCandidates(GRASS_COUNT).map((c) => c.x),
+  );
+  for (const blade of first) {
+    assert.ok(blade.radius > 0 && blade.height > 0);
+    assert.ok(["#f4d587", "#728844"].includes(blade.color));
+  }
+});
+
+function lanternVillage(preset = "balanced") {
+  const v = Object.create(Village.prototype);
+  const scene = new THREE.Scene();
+  Object.assign(v, {
+    scene,
+    buildings: [],
+    graphicsPreset: preset,
+    lanternLights: [],
+    lanternReaim: 0,
+    controls: { target: new THREE.Vector3(0, 0, 0) },
+    atmosphere: { nightAmount: 1 },
+  });
+  return v;
+}
+
+function addLanternBuilding(v, type, x, z) {
+  const m = new THREE.Object3D();
+  m.position.set(x, 0, z);
+  // The building has to live in the scene, or a traversal looking for stray
+  // lights inside its group would never reach them.
+  v.scene.add(m);
+  const b = { type, x, z, m, progress: 1 };
+  v.buildings.push(b);
+  v.addLanterns(b);
+  return b;
+}
+
+test("lantern lights stay within a fixed budget however many cottages are built", () => {
+  const v = lanternVillage("balanced");
+  const budget = lanternLightBudget("balanced");
+
+  for (let i = 0; i < 20; i++) addLanternBuilding(v, "house", i * 3 - 30, 0);
+
+  assert.equal(v.lanternLamps().length, 40, "every cottage still has two lamps");
+  assert.equal(v.lanternLights.length, budget);
+
+  let sceneLights = 0;
+  v.scene.traverse((o) => {
+    if (o.isPointLight) sceneLights++;
+  });
+  assert.equal(sceneLights, budget, "no stray lights hide inside building groups");
+
+  // Building more must not change the light count: a changed count recompiles
+  // every material in the scene, which is the stall this budget exists to stop.
+  const before = v.lanternLights.length;
+  for (let i = 0; i < 10; i++) addLanternBuilding(v, "house", i * 3 - 30, 12);
+  assert.equal(v.lanternLights.length, before);
+});
+
+test("a small village lights every lamp it has, and low graphics lights none", () => {
+  const v = lanternVillage("balanced");
+  addLanternBuilding(v, "well", 0, 0);
+  assert.equal(v.lanternLamps().length, 2);
+  assert.equal(v.lanternLights.length, 2, "below budget, every lamp gets a light");
+
+  v.renderer = { shadowMap: {} };
+  v.resize = () => {};
+  v.emit = () => {};
+  assert.equal(v.setGraphicsPreset("low"), true);
+  assert.equal(v.lanternLights.length, 0, "the low preset drops lantern lights entirely");
+
+  assert.equal(v.setGraphicsPreset("high"), true);
+  assert.equal(v.lanternLights.length, 2);
+  assert.equal(lanternLightBudget("nonsense"), LANTERN_LIGHT_BUDGET.balanced);
+});
+
+test("lantern lights follow the lamps nearest the camera", () => {
+  const v = lanternVillage("balanced");
+  const budget = lanternLightBudget("balanced");
+  for (let i = 0; i < 12; i++) addLanternBuilding(v, "house", i * 5, 0);
+  v.scene.updateMatrixWorld(true);
+
+  v.controls.target.set(0, 0, 0);
+  const near = v.aimLanternLights();
+  assert.equal(near.length, budget);
+  const nearX = v.lanternLights.map((l) => l.position.x).sort((a, b) => a - b);
+  assert.ok(nearX[nearX.length - 1] < 20, "lights cluster around the near cottages");
+
+  v.controls.target.set(55, 0, 0);
+  v.aimLanternLights();
+  const farX = v.lanternLights.map((l) => l.position.x).sort((a, b) => a - b);
+  assert.ok(farX[0] > 20, "lights follow the camera to the far cottages");
+  assert.notDeepEqual(nearX, farX);
+});
+
+test("lantern flicker drives the pooled lights and brightens with nightfall", () => {
+  const v = lanternVillage("balanced");
+  addLanternBuilding(v, "house", 0, 0);
+  v.scene.updateMatrixWorld(true);
+
+  v.atmosphere.nightAmount = 0;
+  v.updateLanternLights(0, 1, 1);
+  const day = v.lanternLights.map((l) => l.intensity);
+
+  v.atmosphere.nightAmount = 1;
+  v.updateLanternLights(0, 1, 1);
+  const night = v.lanternLights.map((l) => l.intensity);
+
+  assert.equal(day.length, 2);
+  night.forEach((value, i) => assert.ok(value > day[i], "lanterns brighten at night"));
+
+  // Reduced motion removes the flicker but keeps the lamps lit.
+  v.updateLanternLights(1.234, 0, 1);
+  const still = v.lanternLights.map((l) => l.intensity);
+  v.updateLanternLights(9.876, 0, 1);
+  assert.deepEqual(v.lanternLights.map((l) => l.intensity), still);
 });

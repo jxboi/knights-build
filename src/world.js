@@ -16,12 +16,83 @@ const initial = [
   ["windmill", 11, -1],
   ["watchtower", 10, -10],
 ];
-let seed = 654321;
-const rand = () => {
-  seed = (1664525 * seed + 1013904223) >>> 0;
-  return seed / 4294967296;
+const WORLD_SEED = 654321;
+const createRandom = (initial) => {
+  let value = initial >>> 0;
+  return () => {
+    value = (1664525 * value + 1013904223) >>> 0;
+    return value / 4294967296;
+  };
 };
+// Runtime randomness (lantern flicker, road tints, worker spawn jitter). It is
+// deliberately NOT used for world generation: the number of calls made before
+// generation depends on how much of a village was restored.
+const rand = createRandom(WORLD_SEED);
 const riverX = (z) => 16 + Math.sin(z * 0.13) * 1.6;
+// Scenery has to land on the same coordinates for every reload of a village,
+// because saved tree state is keyed by position. Each candidate therefore draws
+// a fixed-size block whether or not it is ultimately placed: a restored village
+// rejects more candidates than an empty one, and a variable-length draw would
+// slide every later tree onto fresh coordinates and orphan its saved state.
+export const SCENERY_COUNT = 210;
+export const SCENERY_DRAWS = 8;
+export const GRASS_COUNT = 350;
+export const GRASS_DRAWS = 9;
+const drawBlock = (next, size) => {
+  const block = new Array(size);
+  for (let i = 0; i < size; i++) block[i] = next();
+  return block;
+};
+export const sceneryCandidates = (count = SCENERY_COUNT, seedValue = WORLD_SEED) => {
+  const next = createRandom(seedValue);
+  return Array.from({ length: count }, () => {
+    const draw = drawBlock(next, SCENERY_DRAWS);
+    const type = draw[2] > 0.16 ? "tree" : "rock";
+    return {
+      x: draw[0] * 65 - 32,
+      z: draw[1] * 60 - 30,
+      type,
+      scale: type === "tree" ? 0.65 + draw[3] * 0.7 : 0.35 + draw[3] * 0.65,
+      rotationY: draw[4] * 6,
+      phase: draw[5] * Math.PI * 2,
+      speed: 0.55 + draw[6] * 0.3,
+      amount: 0.012 + draw[7] * 0.015,
+    };
+  });
+};
+export const grassCandidates = (count = GRASS_COUNT, seedValue = WORLD_SEED + 1) => {
+  const next = createRandom(seedValue);
+  return Array.from({ length: count }, () => {
+    const draw = drawBlock(next, GRASS_DRAWS);
+    return {
+      x: draw[0] * 49 - 25,
+      z: draw[1] * 47 - 24,
+      color: draw[2] > 0.88 ? "#f4d587" : "#728844",
+      radius: 0.06 + draw[3] * 0.05,
+      height: 0.2 + draw[4] * 0.18,
+      rotationZ: (draw[5] - 0.5) * 0.5,
+      phase: draw[6] * Math.PI * 2,
+      speed: 0.8 + draw[7] * 0.5,
+      amount: 0.04 + draw[8] * 0.04,
+    };
+  });
+};
+// Paths read as one continuous cobbled surface rather than a grid of stamped
+// squares. Every tile samples a single shared texture through world-space UVs,
+// so the stones run straight across tile joins no matter how a path is drawn.
+const ROAD_PATTERN_TILES = 4;
+const applyRoadUvs = (geometry, x, z) => {
+  const position = geometry.attributes.position;
+  const uv = geometry.attributes.uv;
+  for (let i = 0; i < position.count; i++)
+    uv.setXY(
+      i,
+      (x + position.getX(i)) / ROAD_PATTERN_TILES,
+      (z + position.getZ(i)) / ROAD_PATTERN_TILES,
+    );
+  uv.needsUpdate = true;
+  return geometry;
+};
 // Workers are small on screen, but giving them a little extra room keeps their
 // hitboxes and carried goods from visually merging at a shared waypoint.
 export const WORKER_CLEARANCE = 0.78;
@@ -72,6 +143,18 @@ export const HUNGRY_THRESHOLD = 0.82;
 export const EAT_SECONDS = 8;
 export const INN_SEATS = 3;
 export const MEAL_SATIETY = 0.12;
+// Every lantern-lit building used to own two real PointLights, so a village at
+// the population cap put 30+ of them in the scene. Three.js compiles the light
+// count into every material, and past roughly sixteen lights the frame cost
+// runs far past the 16.7ms budget. Lanterns now share a small fixed pool that
+// follows the camera; the per-lamp glow sprites still light every window.
+export const LANTERN_LIGHT_BUDGET = Object.freeze({ low: 0, balanced: 6, high: 10 });
+export const lanternLightBudget = (preset) =>
+  LANTERN_LIGHT_BUDGET[preset] ?? LANTERN_LIGHT_BUDGET.balanced;
+// Reassigning which lamps are lit is a sort over every lantern, and swapping a
+// light's position is free while the *count* stays fixed (a changed count
+// recompiles every material). Re-aim a few times a second, never per frame.
+export const LANTERN_REAIM_SECONDS = 0.35;
 export const grainGrowthProgress = (plantedAt, elapsed) =>
   Math.max(
     0,
@@ -136,6 +219,9 @@ export const sanitizeCameraView = (view) => {
     zoom: clamp(finiteNumber(view.zoom, 1), 0.65, 2.4),
   };
 };
+// The woodcutter shoulders the axe between swings; the chop animation and
+// the rest pose both work from this angle.
+export const AXE_CARRY_ANGLE = -0.25;
 export const WORKER_TYPES = Object.freeze({
   BUILDER: "builder",
   WOODCUTTER: "woodcutter",
@@ -159,6 +245,9 @@ export const workerTypeForBuilding = (type) =>
     // Keep the existing windmill production loop useful while sharing the
     // baker appearance and role with the village's food-processing buildings.
     windmill: WORKER_TYPES.BAKER,
+    // A vintner tends vines and treads the harvest, so the vineyard shares
+    // the farmer role rather than introducing a second field worker type.
+    vineyard: WORKER_TYPES.FARMER,
   })[type] || null;
 export const workerCapacityForBuilding = (type) =>
   ({
@@ -167,6 +256,7 @@ export const workerCapacityForBuilding = (type) =>
     mine: 1,
     bakery: 1,
     windmill: 1,
+    vineyard: 1,
   })[type] || 0;
 export const housingCapacity = (buildings = []) =>
   4 +
@@ -228,10 +318,16 @@ export const constructionMaterialProgress = (building) => {
   );
   return Math.max(0, Math.min(1, delivered / required));
 };
-export const reconcileRoadCount = (created = {}, roads = new Set()) => ({
-  ...created,
-  road: roads instanceof Set ? roads.size : 0,
-});
+// Only tiles the player laid count toward path progress. The starter village
+// ships with base roads already on the ground, so callers that hold the full
+// road set must hand over `baseRoads` to have them discounted.
+export const reconcileRoadCount = (created = {}, roads = new Set(), baseRoads = new Set()) => {
+  if (!(roads instanceof Set)) return { ...created, road: 0 };
+  const base = baseRoads instanceof Set ? baseRoads : new Set();
+  let road = 0;
+  for (const key of roads) if (!base.has(key)) road++;
+  return { ...created, road };
+};
 export const saveCycleMarker = (elapsed) =>
   Math.floor(Math.max(0, finiteNumber(elapsed, 0)));
 
@@ -314,9 +410,11 @@ export class Village {
     this.moteSeeds = [];
     this.deliveryBursts = [];
     this.birds = [];
+    this.lanternLights = [];
+    this.lanternReaim = 0;
     this.roads = new Set();
     this.baseRoads = new Set();
-    this.resources = { wood: 140, stone: 95, food: 80, wheat: 0 };
+    this.resources = { wood: 140, stone: 95, food: 80, wheat: 0, wine: 0 };
     this.name = DEFAULT_VILLAGE_NAME;
     this.elapsed = 0;
     this.speed = 1;
@@ -331,13 +429,13 @@ export class Village {
     this.storageAvailable = true;
     this.storageConflict = false;
     this.gathered = 0;
-    this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0 };
+    this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 };
     this.chapterRewards = {};
     this.tutorialStep = 0;
     this.tutorialDismissed = false;
     this.feast = null;
     this.trendSample = { elapsed: 0, resources: { ...this.resources } };
-    this.trends = { wood: 0, stone: 0, food: 0, wheat: 0 };
+    this.trends = { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 };
     this.activity = "";
     this.activityTime = 0;
     this.activityLog = [];
@@ -736,18 +834,112 @@ export class Village {
         m.castShadow = true;
       }
   }
+  roadSurfaceTexture() {
+    if (this.roadSurface !== undefined) return this.roadSurface;
+    this.roadSurface = null;
+    if (typeof document === "undefined") return null;
+    const size = 320;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    // A private generator keeps the cobble layout from shifting the shared
+    // world sequence that places trees, rocks and decor.
+    let cobbleSeed = 1276509;
+    const next = () => {
+      cobbleSeed = (1664525 * cobbleSeed + 1013904223) >>> 0;
+      return cobbleSeed / 4294967296;
+    };
+    // Everything is drawn nine times so the patch wraps seamlessly and no
+    // stone is cut in half at the repeat boundary.
+    const wrapped = (x, y, reach, draw) => {
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++) {
+          const px = x + dx * size;
+          const py = y + dy * size;
+          if (px < -reach || px > size + reach) continue;
+          if (py < -reach || py > size + reach) continue;
+          draw(px, py);
+        }
+    };
+    ctx.fillStyle = "#5b5341";
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 80; i++) {
+      const fill = ["#514a3a", "#655d49", "#4a4537"][Math.floor(next() * 3)];
+      const radius = 6 + next() * 18;
+      wrapped(next() * size, next() * size, radius, (px, py) => {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+    const faces = ["#a8a79b", "#93948b", "#b4b2a5", "#83847c", "#bcbaac", "#9b9285", "#78796f"];
+    const columns = 15;
+    const cell = size / columns;
+    for (let row = 0; row < columns; row++)
+      for (let column = 0; column < columns; column++) {
+        const cx = (column + 0.5 + (next() - 0.5) * 0.34) * cell;
+        const cy = (row + 0.5 + (next() - 0.5) * 0.34) * cell;
+        const wide = next() > 0.86 ? 1.32 : 1;
+        const rx = cell * (0.4 + next() * 0.1) * wide;
+        const ry = cell * (0.36 + next() * 0.11);
+        const turn = next() * Math.PI;
+        const fill = faces[Math.floor(next() * faces.length)];
+        wrapped(cx, cy, cell * 1.4, (px, py) => {
+          ctx.save();
+          ctx.translate(px, py);
+          ctx.rotate(turn);
+          ctx.fillStyle = "#48432f";
+          ctx.beginPath();
+          ctx.ellipse(1, 1.4, rx, ry, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = fill;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, rx * 0.87, ry * 0.87, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        });
+      }
+    // Broad, faint washes stop the repeat from reading as a regular weave.
+    ctx.globalAlpha = 0.13;
+    for (let i = 0; i < 16; i++) {
+      const fill = next() > 0.5 ? "#dcd8c8" : "#4d4839";
+      const radius = 24 + next() * 54;
+      wrapped(next() * size, next() * size, radius, (px, py) => {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+    ctx.globalAlpha = 1;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    this.roadSurface = texture;
+    return texture;
+  }
   addRoad(x, z, custom = true, base = false) {
     const key = `${x},${z}`;
     if (this.roads.has(key)) return;
     this.roads.add(key);
     if (base) this.baseRoads.add(key);
     const m = this.mesh(
-      new THREE.BoxGeometry(1.02, 0.025, 1.02),
-      ["#c5ad78", "#c8af79", "#c9b07b"][Math.floor(rand() * 3)],
+      applyRoadUvs(new THREE.BoxGeometry(1.02, 0.04, 1.02), x, z),
+      ["#f4f2ea", "#ebe8de", "#f7f5ed"][Math.floor(rand() * 3)],
       x,
       0.002,
       z,
     );
+    const surface = this.roadSurfaceTexture();
+    if (surface) {
+      m.material.map = surface;
+      m.material.needsUpdate = true;
+    }
     m.userData.road = true;
     if (custom) {
       this.created.road = (this.created.road || 0) + 1;
@@ -775,6 +967,7 @@ export class Village {
         "windmill",
         "watchtower",
         "school",
+        "vineyard",
         "townhall",
         "worker",
       ];
@@ -909,7 +1102,7 @@ export class Village {
           this.addRoad(x, z, false);
           restoredRoads.add(key);
         }
-        this.created = reconcileRoadCount(this.created, restoredRoads);
+        this.created = reconcileRoadCount(this.created, restoredRoads, this.baseRoads);
       } else {
         initial.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
       }
@@ -918,9 +1111,8 @@ export class Village {
           .filter((tree) => tree && Number.isFinite(Number(tree.x)) && Number.isFinite(Number(tree.z)))
           .map((tree) => [`${Number(tree.x).toFixed(3)},${Number(tree.z).toFixed(3)}`, tree]),
       );
-      for (let i = 0; i < 210; i++) {
-        const x = rand() * 65 - 32,
-          z = rand() * 60 - 30;
+      for (const candidate of sceneryCandidates()) {
+        const { x, z, type } = candidate;
         if (
           (x > riverX(z) - 1 && x < riverX(z) + 9) ||
           (x > 14 && x < 19 && z > 6 && z < 10)
@@ -936,11 +1128,10 @@ export class Village {
           Math.hypot(x, z) < 4
         )
           continue;
-        const type = rand() > 0.16 ? "tree" : "rock";
         const m = this.model(type, x, z);
-        const s = type === "tree" ? 0.65 + rand() * 0.7 : 0.35 + rand() * 0.65;
+        const s = candidate.scale;
         m.scale.setScalar(s);
-        m.rotation.y = rand() * 6;
+        m.rotation.y = candidate.rotationY;
         const tree = type === "tree";
         const treeMeshes = [];
         if (tree) {
@@ -948,9 +1139,9 @@ export class Village {
             if (part.isMesh) treeMeshes.push(part);
           });
           m.userData.baseZ = 0;
-          m.userData.phase = rand() * Math.PI * 2;
-          m.userData.speed = 0.55 + rand() * 0.3;
-          m.userData.amount = 0.012 + rand() * 0.015;
+          m.userData.phase = candidate.phase;
+          m.userData.speed = candidate.speed;
+          m.userData.amount = candidate.amount;
           this.swayers.push(m);
         }
         const savedTree = tree
@@ -983,33 +1174,32 @@ export class Village {
         }
         if (tree) this.updateTreeVisual(this.decor[this.decor.length - 1]);
       }
-      for (let i = 0; i < 350; i++) {
-        const x = rand() * 49 - 25,
-          z = rand() * 47 - 24;
+      for (const blade of grassCandidates()) {
+        const { x, z } = blade;
         if (x > riverX(z) - 0.5) continue;
         if (
           this.blocked(x, z, 0) ||
           this.roads.has(`${Math.round(x)},${Math.round(z)}`)
         )
           continue;
-        const color = rand() > 0.88 ? "#f4d587" : "#728844";
         const m = this.mesh(
-          new THREE.ConeGeometry(0.06 + rand() * 0.05, 0.2 + rand() * 0.18, 3),
-          color,
+          new THREE.ConeGeometry(blade.radius, blade.height, 3),
+          blade.color,
           x,
           0.12,
           z,
         );
-        m.rotation.z = (rand() - 0.5) * 0.5;
+        m.rotation.z = blade.rotationZ;
         m.userData.baseZ = m.rotation.z;
-        m.userData.phase = rand() * Math.PI * 2;
-        m.userData.speed = 0.8 + rand() * 0.5;
-        m.userData.amount = 0.04 + rand() * 0.04;
+        m.userData.phase = blade.phase;
+        m.userData.speed = blade.speed;
+        m.userData.amount = blade.amount;
         this.swayers.push(m);
       }
+      const bankRandom = createRandom(WORLD_SEED + 2);
       for (let z = -28; z < 28; z += 2.4) {
         const m = this.model("rock", riverX(z) - 0.3, z);
-        m.scale.setScalar(0.3 + rand() * 0.6);
+        m.scale.setScalar(0.3 + bankRandom() * 0.6);
       }
       const population = restoredPopulation(
         this.saved?.population,
@@ -1069,18 +1259,10 @@ export class Village {
       mesh.receiveShadow = true;
       group.add(mesh);
     };
-    if (type === "flowerbed") {
-      part(new THREE.BoxGeometry(0.76, 0.12, 0.55), "#8b603e", 0, 0.08, 0);
-      for (const [x, z, color] of [[-0.25, 0, "#e5a46e"], [0, 0.12, "#e7d47a"], [0.25, -0.05, "#a8b86d"]])
-        part(new THREE.ConeGeometry(0.11, 0.3, 5), color, x, 0.26, z);
-    } else if (type === "bench") {
-      part(new THREE.BoxGeometry(0.9, 0.12, 0.25), "#9b6a3f", 0, 0.5, 0);
-      part(new THREE.BoxGeometry(0.9, 0.38, 0.12), "#7e5635", 0, 0.74, 0.08);
-      for (const x of [-0.32, 0.32]) part(new THREE.BoxGeometry(0.1, 0.48, 0.12), "#6d4b31", x, 0.24, 0);
-    } else {
-      part(new THREE.BoxGeometry(0.1, 0.9, 0.1), "#76502e", 0, 0.45, 0);
-      part(new THREE.BoxGeometry(0.72, 0.42, 0.08), "#b47d49", 0, 0.78, 0);
-    }
+    // The sign is the only built decoration, and its post-and-board shape
+    // doubles as the placeholder marker for any type without a loaded GLB.
+    part(new THREE.BoxGeometry(0.1, 0.9, 0.1), "#76502e", 0, 0.45, 0);
+    part(new THREE.BoxGeometry(0.72, 0.42, 0.08), "#b47d49", 0, 0.78, 0);
     return group;
   }
   restoreView() {
@@ -1119,8 +1301,12 @@ export class Village {
       const m =
         key === "road"
           ? new THREE.Mesh(
-              new THREE.BoxGeometry(3, 0.12, 1.5),
-              new THREE.MeshStandardMaterial({ color: "#bca46c" }),
+              applyRoadUvs(new THREE.BoxGeometry(3, 0.12, 1.5), 0, 0),
+              new THREE.MeshStandardMaterial({
+                color: "#f4f2ea",
+                roughness: 1,
+                map: this.roadSurfaceTexture() || null,
+              }),
             )
           : (this.models[key] || this.makeDecorationModel(key)).clone(true);
       s.add(m);
@@ -1385,6 +1571,8 @@ export class Village {
               [-0.32, 0.95, 1.34],
             ];
     const group = new THREE.Group();
+    // No PointLight here: the shared pool in `syncLanternLights` lights whichever
+    // lamps are nearest the camera, so adding a cottage can never add a light.
     const lamps = positions.map(([x, y, z]) => {
       const glow = new THREE.Mesh(
         new THREE.SphereGeometry(0.085, 8, 6),
@@ -1395,14 +1583,84 @@ export class Village {
           depthWrite: false,
         }),
       );
-      const light = new THREE.PointLight("#ffc56e", 0.04, 4.5, 2);
       glow.position.set(x, y, z);
-      light.position.set(x, y, z);
-      group.add(glow, light);
-      return { glow, light, phase: rand() * Math.PI * 2 };
+      group.add(glow);
+      return { glow, phase: rand() * Math.PI * 2 };
     });
     b.m.add(group);
     b.lanterns = { group, lamps };
+    this.syncLanternLightPool();
+  }
+  lanternLamps() {
+    const lamps = [];
+    for (const building of this.buildings)
+      if (building.lanterns) lamps.push(...building.lanterns.lamps);
+    return lamps;
+  }
+  // Keeps the pool at exactly `min(budget, lamps)` lights. Growing or shrinking
+  // it recompiles materials, so it only ever runs when a village gains its first
+  // few lanterns or the player changes the graphics preset.
+  syncLanternLightPool() {
+    if (typeof this.scene?.add !== "function") return 0;
+    this.lanternLights ||= [];
+    const target = Math.min(
+      lanternLightBudget(this.graphicsPreset),
+      this.lanternLamps().length,
+    );
+    while (this.lanternLights.length > target) {
+      const light = this.lanternLights.pop();
+      this.scene.remove(light);
+      light.dispose?.();
+    }
+    while (this.lanternLights.length < target) {
+      const light = new THREE.PointLight("#ffc56e", 0, 4.5, 2);
+      this.scene.add(light);
+      this.lanternLights.push(light);
+    }
+    return this.lanternLights.length;
+  }
+  updateLanternLights(time, motion = 1, dt = 0) {
+    const lights = this.lanternLights || [];
+    if (!lights.length) return;
+    this.lanternReaim = (this.lanternReaim || 0) - dt;
+    if (this.lanternReaim <= 0) {
+      this.aimLanternLights();
+      this.lanternReaim = LANTERN_REAIM_SECONDS;
+    }
+    const glow = this.atmosphere?.nightAmount || 0;
+    for (const light of lights) {
+      const phase = light.userData.lamp?.phase || 0;
+      const flicker = 0.98 + motion * Math.sin(time * 5.5 + phase) * 0.08;
+      light.intensity = (0.025 + glow * 1.35) * flicker;
+    }
+  }
+  // Aims the pool at the lamps closest to whatever the camera is looking at, and
+  // returns the chosen lamps so the caller can drive their flicker.
+  aimLanternLights(lamps = this.lanternLamps()) {
+    const lights = this.lanternLights || [];
+    if (!lights.length) return [];
+    const focus = this.controls?.target || this.camera?.position;
+    const anchor = new THREE.Vector3();
+    const ranked = lamps
+      .map((lamp) => {
+        lamp.glow.getWorldPosition(anchor);
+        return {
+          lamp,
+          x: anchor.x,
+          y: anchor.y,
+          z: anchor.z,
+          distance: focus
+            ? Math.hypot(anchor.x - focus.x, anchor.z - focus.z)
+            : 0,
+        };
+      })
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, lights.length);
+    ranked.forEach((entry, index) => {
+      lights[index].position.set(entry.x, entry.y, entry.z);
+      lights[index].userData.lamp = entry.lamp;
+    });
+    return ranked.map((entry) => entry.lamp);
   }
   addBirds() {
     for (let i = 0; i < 4; i++) {
@@ -2348,7 +2606,7 @@ export class Village {
       (child) => child.userData?.road && child.position.x === x && child.position.z === z,
     );
     if (roadMesh) this.disposeOwnedObject(roadMesh);
-    this.created = reconcileRoadCount(this.created, this.roads);
+    this.created = reconcileRoadCount(this.created, this.roads, this.baseRoads);
     this.resources.stone += CATALOG.road.cost.stone;
     const message = "Path removed. 1 stone returned.";
     this.announce(message);
@@ -2640,6 +2898,18 @@ export class Village {
         roughness: 0.8,
         flatShading: true,
       }),
+      // Only the woodcutter wears these, so they keep fixed colours instead of
+      // joining the per-role palette.
+      straw: new THREE.MeshStandardMaterial({
+        color: "#e3b551",
+        roughness: 0.92,
+        flatShading: true,
+      }),
+      moss: new THREE.MeshStandardMaterial({
+        color: "#5f7a3e",
+        roughness: 0.92,
+        flatShading: true,
+      }),
     };
     const part = (geometry, material) => {
       const mesh = new THREE.Mesh(geometry, material);
@@ -2675,13 +2945,14 @@ export class Village {
     builderHelmet.children[0].position.y = 0.9;
     builderHelmet.children[1].position.set(0, 0.865, -0.01);
     const woodcutterHat = addHeadgear(WORKER_TYPES.WOODCUTTER, [
-      part(new THREE.CylinderGeometry(0.16, 0.135, 0.075, 8), materials.wood),
-      part(new THREE.CylinderGeometry(0.22, 0.22, 0.035, 8), materials.accent),
-      part(new THREE.BoxGeometry(0.16, 0.035, 0.025), materials.dark),
+      part(new THREE.CylinderGeometry(0.172, 0.172, 0.026, 10), materials.straw),
+      part(new THREE.ConeGeometry(0.142, 0.185, 8), materials.straw),
+      part(new THREE.TorusGeometry(0.128, 0.014, 6, 10), materials.dark),
     ]);
-    woodcutterHat.children[0].position.y = 0.93;
-    woodcutterHat.children[1].position.y = 0.885;
-    woodcutterHat.children[2].position.set(0, 0.92, -0.135);
+    woodcutterHat.children[0].position.y = 0.874;
+    woodcutterHat.children[1].position.y = 0.965;
+    woodcutterHat.children[2].position.y = 0.886;
+    woodcutterHat.children[2].rotation.x = Math.PI / 2;
     const minerHelmet = addHeadgear(WORKER_TYPES.MINER, [
       part(new THREE.CylinderGeometry(0.155, 0.135, 0.08, 8), materials.metal),
       part(new THREE.BoxGeometry(0.2, 0.035, 0.18), materials.metal),
@@ -2733,20 +3004,19 @@ export class Village {
     const leftArm = makeArm(-0.16);
     const rightArm = makeArm(0.16);
     const axe = new THREE.Group();
-    const axeHandle = part(
-      new THREE.BoxGeometry(0.035, 0.34, 0.035),
-      materials.wood,
-    );
-    axeHandle.position.y = -0.17;
-    axe.add(axeHandle);
-    const axeHead = part(
-      new THREE.BoxGeometry(0.16, 0.1, 0.035),
-      materials.dark,
-    );
-    axeHead.position.set(0.055, -0.02, 0);
-    axe.add(axeHead);
-    axe.position.set(0, -0.31, -0.05);
-    axe.rotation.z = -0.6;
+    const axeHaft = part(new THREE.BoxGeometry(0.036, 0.44, 0.036), materials.wood);
+    axeHaft.position.y = 0.22;
+    const axeCheek = part(new THREE.BoxGeometry(0.06, 0.11, 0.05), materials.dark);
+    axeCheek.position.set(0.022, 0.395, 0);
+    const axeBlade = part(new THREE.BoxGeometry(0.09, 0.15, 0.05), materials.metal);
+    axeBlade.position.set(0.072, 0.4, 0);
+    const axeBit = part(new THREE.BoxGeometry(0.035, 0.075, 0.055), materials.metal);
+    axeBit.position.set(0.125, 0.4, 0);
+    const axeButt = part(new THREE.BoxGeometry(0.035, 0.05, 0.04), materials.dark);
+    axeButt.position.set(-0.01, 0.03, 0);
+    axe.add(axeHaft, axeCheek, axeBlade, axeBit, axeButt);
+    axe.position.set(0.015, -0.3, 0.03);
+    axe.rotation.z = AXE_CARRY_ANGLE;
     axe.visible = false;
     rightArm.add(axe);
     const makeTool = (headWidth, headHeight) => {
@@ -2819,14 +3089,38 @@ export class Village {
     builderBelt.position.set(0, 0.45, 0);
     builderBelt.visible = false;
     rig.add(builderBelt);
-    const woodcutterSash = part(
-      new THREE.BoxGeometry(0.045, 0.3, 0.025),
+    const woodcutterGear = new THREE.Group();
+    const scarfBand = part(
+      new THREE.TorusGeometry(0.088, 0.022, 6, 10),
       materials.accent,
     );
-    woodcutterSash.position.set(-0.07, 0.52, -0.095);
-    woodcutterSash.rotation.z = -0.26;
-    woodcutterSash.visible = false;
-    rig.add(woodcutterSash);
+    scarfBand.position.y = 0.715;
+    scarfBand.rotation.x = Math.PI / 2;
+    const scarfKnot = part(new THREE.ConeGeometry(0.075, 0.13, 4), materials.accent);
+    scarfKnot.position.set(0, 0.655, 0.075);
+    scarfKnot.rotation.x = Math.PI;
+    const toolBelt = part(new THREE.BoxGeometry(0.245, 0.05, 0.175), materials.dark);
+    toolBelt.position.y = 0.44;
+    const satchel = part(new THREE.BoxGeometry(0.115, 0.12, 0.075), materials.moss);
+    satchel.position.set(-0.105, 0.435, -0.085);
+    const satchelFlap = part(new THREE.BoxGeometry(0.12, 0.045, 0.08), materials.dark);
+    satchelFlap.position.set(-0.105, 0.495, -0.085);
+    const satchelStrap = part(new THREE.BoxGeometry(0.05, 0.32, 0.03), materials.dark);
+    satchelStrap.position.set(0.055, 0.53, 0.09);
+    satchelStrap.rotation.z = 0.42;
+    const shoulderPad = part(new THREE.BoxGeometry(0.115, 0.05, 0.16), materials.moss);
+    shoulderPad.position.set(-0.105, 0.655, 0);
+    woodcutterGear.add(
+      scarfBand,
+      scarfKnot,
+      toolBelt,
+      satchel,
+      satchelFlap,
+      satchelStrap,
+      shoulderPad,
+    );
+    woodcutterGear.visible = false;
+    rig.add(woodcutterGear);
     const minerLamp = part(
       new THREE.SphereGeometry(0.055, 8, 6),
       materials.light,
@@ -2861,7 +3155,7 @@ export class Village {
       bakerApron,
       roleHeadgear,
       builderBelt,
-      woodcutterSash,
+      woodcutterGear,
       minerLamp,
       farmerOveralls,
       cap,
@@ -2886,11 +3180,11 @@ export class Village {
         accent: "#f0b94b",
       },
       [WORKER_TYPES.WOODCUTTER]: {
-        tunic: "#7c4e31",
-        cap: "#d2a261",
-        dark: "#29231d",
-        shoe: "#5c3824",
-        accent: "#d44d37",
+        tunic: "#6f4a2c",
+        cap: "#d9a95c",
+        dark: "#2a2420",
+        shoe: "#5a3a22",
+        accent: "#c4402f",
       },
       [WORKER_TYPES.MINER]: {
         tunic: "#5f666e",
@@ -2924,7 +3218,11 @@ export class Village {
       workerType === WORKER_TYPES.BAKER ? "#fff7df" : "#fff1bd",
     );
     materials.metal.color.set(
-      workerType === WORKER_TYPES.MINER ? "#98a3a8" : "#7b858c",
+      workerType === WORKER_TYPES.MINER
+        ? "#98a3a8"
+        : workerType === WORKER_TYPES.WOODCUTTER
+          ? "#9098a0"
+          : "#7b858c",
     );
     worker.rig.cap.scale.set(
       workerType === WORKER_TYPES.MINER ? 1.12 : 1,
@@ -2943,10 +3241,11 @@ export class Village {
     worker.rig.farmerBrim.visible = false;
     worker.rig.bakerApron.visible = workerType === WORKER_TYPES.BAKER;
     worker.rig.builderBelt.visible = workerType === WORKER_TYPES.BUILDER;
-    worker.rig.woodcutterSash.visible = workerType === WORKER_TYPES.WOODCUTTER;
+    worker.rig.woodcutterGear.visible = workerType === WORKER_TYPES.WOODCUTTER;
     worker.rig.minerLamp.visible = workerType === WORKER_TYPES.MINER;
     worker.rig.farmerOveralls.visible = workerType === WORKER_TYPES.FARMER;
     worker.rig.axe.visible = workerType === WORKER_TYPES.WOODCUTTER;
+    worker.rig.axe.rotation.z = AXE_CARRY_ANGLE;
     worker.rig.pickaxe.visible = workerType === WORKER_TYPES.MINER;
     worker.workerType = workerType;
     return workerType;
@@ -3027,6 +3326,7 @@ export class Village {
       stone: "#9ca8a3",
       food: "#c98a43",
       wheat: "#e1b74e",
+      wine: "#6e2450",
     }[resource] || "#d6bd7c";
   }
   showCarry(w, resource, variant = null) {
@@ -3036,6 +3336,8 @@ export class Village {
         ? new THREE.DodecahedronGeometry(0.13, 0)
         : resource === "food"
           ? new THREE.ConeGeometry(0.11, 0.23, 5)
+        : resource === "wine"
+          ? new THREE.CylinderGeometry(0.11, 0.11, 0.24, 10)
           : variant === "logs"
             ? new THREE.CylinderGeometry(0.08, 0.08, 0.28, 8)
             : new THREE.BoxGeometry(0.24, 0.13, 0.13);
@@ -3286,13 +3588,21 @@ export class Village {
     if (!worker) return;
     worker.insideBuilding = Boolean(inside);
     const openBuilding =
-      inside && ["bakery", "inn"].includes(worker.building?.type);
+      inside && ["bakery", "inn", "vineyard"].includes(worker.building?.type);
     if (worker.m) {
       worker.m.visible = !inside || openBuilding;
       if (inside && worker.building?.type === "bakery") {
         // Keep the baker in the open prep area instead of hiding them at the
         // building origin behind the roof and shell.
         worker.m.position.set(worker.building.x + 0.25, 0, worker.building.z - 0.42);
+      }
+      if (inside && worker.building?.type === "vineyard") {
+        // Stand the vintner beside the treading vat in the open bay so the
+        // wine cycle stays visible from the street.
+        const [x, z] = this.vineyardTreadingPoint(worker.building);
+        worker.m.position.set(x, 0, z);
+        worker.m.rotation.y =
+          (worker.building.rotation || 0) + Math.atan2(0.62, -0.4);
       }
     }
     if (worker.contactShadow) worker.contactShadow.visible = !inside || openBuilding;
@@ -3433,6 +3743,13 @@ export class Village {
     const local = new THREE.Vector3([-1.05, 0, 1.05][seat] || 0, 0, 1.98);
     local.applyAxisAngle(new THREE.Vector3(0, 1, 0), inn.rotation || 0);
     return [inn.x + local.x, inn.z + local.z];
+  }
+  vineyardTreadingPoint(vineyard) {
+    // Blender's negative-Y frontage becomes positive Z in the exported GLB,
+    // so the open bay beside the vat sits at local (-1.36, +1.0).
+    const local = new THREE.Vector3(-1.36, 0, 1);
+    local.applyAxisAngle(new THREE.Vector3(0, 1, 0), vineyard?.rotation || 0);
+    return [(vineyard?.x || 0) + local.x, (vineyard?.z || 0) + local.z];
   }
   availableInnFor(worker) {
     return this.completedInns()
@@ -3604,7 +3921,7 @@ export class Village {
       // Farmers work at the actual grain plot so the player can see them
       // cutting the crop. Processing buildings keep their indoor work loop.
       const workInside =
-        !material && ["bakery", "windmill"].includes(b.type);
+        !material && ["bakery", "windmill", "vineyard"].includes(b.type);
       w.workInside = workInside;
       const [x, z] = tree
         ? [tree.x, tree.z]
@@ -3955,8 +4272,10 @@ export class Village {
     return true;
   }
   simulate(dt) {
-    if (!this.delivered) this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0 };
-    if (!this.trends) this.trends = { wood: 0, stone: 0, food: 0, wheat: 0 };
+    if (!this.delivered)
+      this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 };
+    if (!this.trends)
+      this.trends = { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 };
     this.elapsed += dt;
     this.updateGrainFields();
     this.updateTrees();
@@ -4584,7 +4903,9 @@ export class Village {
                 : assigned.some((w) => w.waitingForInput)
                   ? `Waiting for ${CATALOG[b.type]?.inputResource || "food"}`
                 : assigned.some((w) => w.phase === "work")
-                  ? "Working"
+                  ? b.type === "vineyard"
+                    ? "Pressing grapes"
+                    : "Working"
                   : b.type === "farm" && !farmFields.length
                     ? "Needs grain fields"
                   : b.type === "farm" && !this.readyGrainFields(b).length
@@ -4817,6 +5138,7 @@ export class Village {
     if (!["low", "balanced", "high"].includes(preset)) return false;
     this.graphicsPreset = preset;
     this.renderer.shadowMap.enabled = preset !== "low";
+    this.syncLanternLightPool();
     try {
       localStorage.setItem(
         "hearth-settings",
@@ -4975,7 +5297,10 @@ export class Village {
           w.rig.axe.visible = w.workerType === WORKER_TYPES.WOODCUTTER;
           if (chopping) {
             const swing = Math.max(0, Math.sin(t * 7.5 + w.walkPhase));
-            w.rig.axe.rotation.z = -0.7 + swing * 1.75;
+            w.rig.axe.rotation.z = AXE_CARRY_ANGLE + swing * 1.7;
+          } else {
+            w.rig.axe.rotation.z +=
+              (AXE_CARRY_ANGLE - w.rig.axe.rotation.z) * 0.18;
           }
         }
       }
@@ -5075,13 +5400,12 @@ export class Village {
       if (b.lanterns) {
         const glow = this.atmosphere.nightAmount || 0;
         b.lanterns.lamps.forEach((lamp) => {
-          const flicker = 0.98 + motion * Math.sin(t * 5.5 + lamp.phase) * 0.08;
-          lamp.light.intensity = (0.025 + glow * 1.35) * flicker;
           lamp.glow.material.opacity = 0.025 + glow * 0.86;
           lamp.glow.scale.setScalar(0.8 + glow * 0.45);
         });
       }
     }
+    this.updateLanternLights(t, motion, dt);
     const daylight = this.atmosphere.sunHeight ?? 1;
     for (const bird of this.birds) {
       const visible = daylight > 0.16 && !this.reduceMotion;
@@ -5153,6 +5477,11 @@ export class Village {
     this.controls.dispose();
     this.clearHighlight();
     this.clearGhost();
+    for (const light of this.lanternLights || []) {
+      this.scene?.remove(light);
+      light.dispose?.();
+    }
+    this.lanternLights = [];
     this.disposeSceneResources();
     this.renderer.renderLists.dispose?.();
     this.renderer.dispose();

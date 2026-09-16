@@ -113,6 +113,17 @@ export const CATALOG = {
     effect: "Civic landmark · needs no workers once built",
     seconds: 22,
   },
+  vineyard: {
+    name: "Vineyard",
+    size: 4,
+    cost: { wood: 45, stone: 30 },
+    description:
+      "Trellised vines and a treading vat where a vintner presses the harvest.",
+    effect: "+6 wine per delivery · 20 seconds",
+    resource: "wine",
+    amount: 6,
+    seconds: 20,
+  },
   road: {
     name: "Path",
     size: 1,
@@ -120,24 +131,6 @@ export const CATALOG = {
     description: "Connect your hamlet. Villagers move faster on paths.",
     effect: "+50% walking speed",
     seconds: 0,
-  },
-  flowerbed: {
-    name: "Flower bed",
-    size: 1,
-    cost: { wood: 3 },
-    description: "A little color for a path-side corner.",
-    effect: "Decorative · does not block walking",
-    seconds: 0,
-    decoration: true,
-  },
-  bench: {
-    name: "Bench",
-    size: 1,
-    cost: { wood: 6 },
-    description: "A quiet seat where villagers can watch the day go by.",
-    effect: "Decorative · does not block walking",
-    seconds: 0,
-    decoration: true,
   },
   sign: {
     name: "Sign",
