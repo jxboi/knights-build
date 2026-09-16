@@ -104,6 +104,15 @@ export const CATALOG = {
     effect: "+3 tiles of buildable land",
     seconds: 16,
   },
+  school: {
+    name: "School",
+    size: 4,
+    cost: { wood: 60, stone: 45 },
+    description:
+      "A clock-gabled schoolhouse where the village's children learn their letters.",
+    effect: "Civic landmark · needs no workers once built",
+    seconds: 22,
+  },
   road: {
     name: "Path",
     size: 1,

@@ -774,6 +774,7 @@ export class Village {
         "mine",
         "windmill",
         "watchtower",
+        "school",
         "townhall",
         "worker",
       ];
