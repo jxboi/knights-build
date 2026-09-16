@@ -60,7 +60,8 @@ Copy `.env.example` to `.env.local` only when testing the optional advisor. Neve
 - Three.js owns mutable scene resources. Dispose geometry, materials, listeners, effects, and controls that a new feature creates.
 - React receives state through `Village.emit()` and sends commands to the `Village` instance. Do not create a second simulation state in React.
 - Validate placement before subtracting resources or mutating the scene. Routing must avoid building footprints, river/boundary limits, active blocking scenery, and invalid paths.
-- Production is credited on delivery to the town hall, not at a remote worksite. Workers retry an unreachable delivery instead of teleporting resources.
+- Production is credited when a carrier delivers to a store, never at the worksite. A finished good first sits in the producing building's own stock (`building.stock`, capped by `CATALOG[type].outputCap`); a carrier then walks it to an Inn or a store. Workers retry an unreachable delivery instead of teleporting resources.
+- The village pool is bounded by storage. `capacityFor(resource)` sums `TOWNHALL_STORAGE` plus every completed Storehouse, and Inn pantries on top for food. When every store is full, hauling stops, producers fill their own stock and stall. A load that nothing can accept goes back to the building that made it rather than being destroyed.
 - Preserve `prefers-reduced-motion`, keyboard focus return paths, accessible names/live feedback, and narrow/mobile layouts. See `DESIGN.md` for the established patterns.
 - The build palette uses real GLB model thumbnails. Do not substitute generic icon cards or a raster background for the interactive 3D scene.
 - The advisor API key remains server-only. The advisor is optional and failures must leave the village playable.
@@ -105,9 +106,9 @@ Then use the smallest relevant browser pass:
 
 ## Useful product behavior
 
-- Workers are automatically assigned. Builders construct; lumberyards use woodcutters, farms use farmers, mines use miners, bakeries use bakers, and windmills use a baker slot.
+- Workers are automatically assigned. Builders construct; lumberyards use woodcutters, farms use farmers, mines use miners, bakeries use bakers, and windmills use a baker slot. Carriers haul finished goods between buildings; the town hall and each Storehouse post them, and builders fall back to hauling when nothing needs building.
 - Cottages add housing; the simulation caps population at 24. Player-built cottages, farms, and delivered timber drive the three starter milestones.
-- Grain fields grow through stages before harvest. Trees regrow; lumberyards process logs; bakeries turn wheat into food; windmills require food input.
+- Grain fields grow through stages before harvest. Trees regrow; lumberyards process logs; bakeries turn wheat into bread (5 loaves per cycle, and the oven holds only 5); windmills require food input. A producer whose stock is full releases its worker so they can haul the backlog away.
 - Paths are a special drag-placement mode and improve walking speed. They are persisted separately from buildings.
 - The game supports save/import/export/reset, settings for graphics/audio, a short tutorial, time controls, and a health-check route.
 

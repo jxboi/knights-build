@@ -3,8 +3,8 @@ export const CATALOG = {
     name: "Cottage",
     size: 3,
     cost: { wood: 30, stone: 10 },
-    description: "A warm hearth and room for two more workers.",
-    effect: "+2 housing capacity · houses 2 workers (simulation limit 24)",
+    description: "A warm hearth and room for two more villagers to move into.",
+    effect: "+2 housing capacity · villagers are trained at the School",
     seconds: 12,
   },
   well: {
@@ -23,6 +23,7 @@ export const CATALOG = {
     effect: "Harvests ripe connected grain fields · +8 wheat per plot",
     resource: "wheat",
     amount: 8,
+    outputCap: 16,
     seconds: 14,
     upgrade: {
       name: "Rich soil",
@@ -35,20 +36,32 @@ export const CATALOG = {
     size: 3,
     cost: { wood: 40, stone: 25 },
     description: "A wood-fired oven turns farm wheat into fresh bread for the village.",
-    effect: "4 wheat → 8 bread (food) per cycle · 16 seconds",
+    effect: "3 wheat → 5 bread per cycle · holds 5 bread until a carrier collects it",
     resource: "food",
-    amount: 8,
-    input: 4,
+    amount: 5,
+    outputCap: 5,
+    input: 3,
     inputResource: "wheat",
-    seconds: 16,
+    seconds: 12,
   },
   inn: {
     name: "Inn",
     size: 4,
     cost: { wood: 55, stone: 25 },
     description: "A welcoming table where hungry villagers share fresh bread.",
-    effect: "Receives bread from bakeries · seats 3 hungry workers",
+    effect: "Holds 8 bread for 3 hungry villagers · overflow goes to a Storehouse",
+    breadCap: 8,
     seconds: 18,
+  },
+  storehouse: {
+    name: "Storehouse",
+    size: 4,
+    cost: { wood: 40, stone: 60 },
+    description:
+      "A fortified gatehouse store. Carriers stack the village's wood, stone and bread behind its gates.",
+    effect: "+150 storage for every resource · posts 3 carriers",
+    storage: 150,
+    seconds: 24,
   },
   grainfield: {
     name: "Grain field",
@@ -65,9 +78,10 @@ export const CATALOG = {
     size: 3,
     cost: { wood: 20, stone: 10 },
     description: "Workers fell nearby trees, then saw the logs into wooden planks.",
-    effect: "+8 wooden planks per delivery · trees regrow over time",
+    effect: "+8 wooden planks per cycle · holds 16 until a carrier collects them",
     resource: "wood",
     amount: 8,
+    outputCap: 16,
     seconds: 12,
   },
   mine: {
@@ -75,9 +89,10 @@ export const CATALOG = {
     size: 4,
     cost: { wood: 35, stone: 15 },
     description: "A steady source of stone from beneath the hills.",
-    effect: "+6 stone per delivery",
+    effect: "+6 stone per cycle · holds 12 until a carrier collects them",
     resource: "stone",
     amount: 6,
+    outputCap: 12,
     seconds: 18,
   },
   windmill: {
@@ -85,9 +100,10 @@ export const CATALOG = {
     size: 4,
     cost: { wood: 50, stone: 35 },
     description: "Grinds the harvest into flour. Requires food to work.",
-    effect: "2 food → 8 food per cycle",
+    effect: "2 food → 8 food per cycle · holds 16 until a carrier collects it",
     resource: "food",
     amount: 8,
+    outputCap: 16,
     input: 2,
     seconds: 20,
     upgrade: {
@@ -110,7 +126,8 @@ export const CATALOG = {
     cost: { wood: 60, stone: 45 },
     description:
       "A clock-gabled schoolhouse where villagers are trained for the trades.",
-    effect: "Trains woodcutters, miners, farmers and bakers · needs housing room",
+    effect: "Trains builders and tradesfolk · 18 seconds each · needs housing room",
+    trainSeconds: 18,
     seconds: 22,
   },
   vineyard: {
@@ -119,9 +136,10 @@ export const CATALOG = {
     cost: { wood: 45, stone: 30 },
     description:
       "Trellised vines and a treading vat where a vintner presses the harvest.",
-    effect: "+6 wine per delivery · 20 seconds",
+    effect: "+6 wine per cycle · holds 12 until a carrier collects it",
     resource: "wine",
     amount: 6,
+    outputCap: 12,
     seconds: 20,
   },
   road: {
@@ -142,3 +160,7 @@ export const CATALOG = {
     decoration: true,
   },
 };
+
+// The town hall is the village's first store, so a new settlement can trade
+// before it can afford a Storehouse. Storehouses add their own capacity on top.
+export const TOWNHALL_STORAGE = 200;

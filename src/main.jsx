@@ -94,29 +94,45 @@ function AdvisorContent({ content }) {
     ),
   );
 }
-const Resource = React.memo(function Resource({ type, value, trend = 0 }) {
+const Resource = React.memo(function Resource({ type, value, trend = 0, storage = 0 }) {
   const Icon = resourceIcons[type];
   const trendValue = Math.round(Number(trend || 0) * 10) / 10;
   const TrendIcon = trendValue > 0 ? ArrowUpRight : ArrowDownRight;
+  const held = Math.floor(Number(value) || 0);
+  const capacity = Math.floor(Number(storage) || 0);
+  const full = capacity > 0 && held >= capacity;
+  // The ceiling only earns HUD space once it is close enough to bite.
+  const tight = capacity > 0 && held >= capacity * 0.8;
   return (
     <div
-      className={`resource ${type}`}
-      title={`${type[0].toUpperCase() + type.slice(1)} in storage`}
+      className={`resource ${type} ${full ? "at-capacity" : ""}`}
+      title={
+        capacity > 0
+          ? `${type[0].toUpperCase() + type.slice(1)}: ${held} of ${capacity} storage.${full ? " Storage is full — build a Storehouse." : ""}`
+          : `${type[0].toUpperCase() + type.slice(1)} in storage`
+      }
     >
       <span className="resource-icon">
         <Icon size={23} strokeWidth={1.7} />
       </span>
       <div>
         <small>{type}</small>
-        <strong className="resource-value" key={Math.floor(value || 0)}>
+        <strong className="resource-value" key={held}>
           {formatCount(value)}
+          {tight && <em className="resource-cap"> / {capacity}</em>}
         </strong>
-        <span
-          className={`resource-trend ${trendValue > 0 ? "positive" : trendValue < 0 ? "negative" : "steady"}`}
-          title={`${type} change over the last simulation window`}
-        >
-          {trendValue === 0 ? "· steady" : <><TrendIcon size={10} /> {trendValue > 0 ? "+" : ""}{trendValue}/m</>}
-        </span>
+        {full ? (
+          <span className="resource-trend negative" title={`${type} storage is full`}>
+            · storage full
+          </span>
+        ) : (
+          <span
+            className={`resource-trend ${trendValue > 0 ? "positive" : trendValue < 0 ? "negative" : "steady"}`}
+            title={`${type} change over the last simulation window`}
+          >
+            {trendValue === 0 ? "· steady" : <><TrendIcon size={10} /> {trendValue > 0 ? "+" : ""}{trendValue}/m</>}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -139,6 +155,7 @@ function App() {
   const [state, setState] = useState({
     name: "Willowbrook",
     resources: { wood: 140, stone: 95, food: 80, wheat: 0, wine: 0 },
+    storage: { wood: 200, stone: 200, food: 200, wheat: 200, wine: 200 },
     population: 8,
     capacity: 10,
     day: 1,
@@ -1010,12 +1027,12 @@ function App() {
           </div>
         </div>
         <div className="resources">
-          <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} />
-          <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} />
-          <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} />
-          <Resource type="food" value={state.resources.food} trend={state.trends.food} />
+          <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} storage={state.storage?.wood} />
+          <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} storage={state.storage?.stone} />
+          <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} storage={state.storage?.wheat} />
+          <Resource type="food" value={state.resources.food} trend={state.trends.food} storage={state.storage?.food} />
           {showWine && (
-            <Resource type="wine" value={state.resources.wine} trend={state.trends.wine} />
+            <Resource type="wine" value={state.resources.wine} trend={state.trends.wine} storage={state.storage?.wine} />
           )}
           <div
             className={`resource population ${housingFull ? "at-capacity" : ""}`}
@@ -1502,10 +1519,29 @@ function App() {
                 Deliveries<strong>{inspected?.cycles || 0}</strong>
               </span>
             )}
+            {detail.type !== "worker" && inspected?.stockCap > 0 && (
+              <span
+                title="Finished goods waiting here. Production stops when this is full until a carrier collects them."
+              >
+                Waiting for a carrier
+                <strong>
+                  {inspected.stock || 0} / {inspected.stockCap}
+                </strong>
+              </span>
+            )}
+            {detail.type !== "worker" && inspected?.villageStorage > 0 && (
+              <span title="Storage this building adds to the village total.">
+                Storage<strong>+{inspected.storage}</strong>
+              </span>
+            )}
             {detail.type !== "worker" && detail.type === "inn" && (
               <>
                 <span>
-                  Bread in pantry<strong>{inspected?.breadStock || 0}</strong>
+                  Bread in pantry
+                  <strong>
+                    {inspected?.breadStock || 0}
+                    {inspected?.breadCap ? ` / ${inspected.breadCap}` : ""}
+                  </strong>
                 </span>
                 <span>
                   Meals served<strong>{inspected?.cycles || 0}</strong>
@@ -1524,30 +1560,60 @@ function App() {
                   ? ` · room for ${state.capacity - state.population} more`
                   : " · build a cottage for more room"}
               </p>
+              {inspected.trainingSession && (
+                <div className="training-session" role="status" aria-live="polite">
+                  <div className="training-session-line">
+                    <span>
+                      {inspected.trainingSession.waiting
+                        ? `${inspected.trainingSession.label} needs housing`
+                        : `Training a ${inspected.trainingSession.label.toLowerCase()}`}
+                    </span>
+                    <strong>
+                      {inspected.trainingSession.waiting
+                        ? "On hold"
+                        : `~${inspected.trainingSession.remaining}s`}
+                    </strong>
+                  </div>
+                  <div className="training-bar" aria-hidden="true">
+                    <i
+                      style={{
+                        width: `${Math.round(inspected.trainingSession.progress * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="training-options">
-                {inspected.training.map((option) => (
-                  <button
-                    key={option.type}
-                    className="training-option"
-                    disabled={!option.canTrain}
-                    title={
-                      option.canTrain
-                        ? `Train a ${option.label.toLowerCase()} (${option.trained} of ${option.posts} posts filled)`
-                        : option.reason
-                    }
-                    aria-label={
-                      option.canTrain
-                        ? `Train a ${option.label.toLowerCase()}. ${option.trained} of ${option.posts} posts filled.`
-                        : `Cannot train a ${option.label.toLowerCase()}. ${option.reason}.`
-                    }
-                    onClick={() => game.current?.trainWorker(inspected.id, option.type)}
-                  >
-                    <span className="training-role">{option.label}</span>
-                    <em className="training-count">
-                      {option.trained}/{option.posts}
-                    </em>
-                  </button>
-                ))}
+                {inspected.training.map((option) => {
+                  const busy = Boolean(inspected.trainingSession);
+                  const counts =
+                    option.posts === null
+                      ? "any"
+                      : `${option.trained + option.pending}/${option.posts}`;
+                  const blocked = busy
+                    ? "The School is already training someone"
+                    : option.reason;
+                  return (
+                    <button
+                      key={option.type}
+                      className="training-option"
+                      disabled={busy || !option.canTrain}
+                      title={
+                        blocked ||
+                        `Train a ${option.label.toLowerCase()} · ${counts} posts filled`
+                      }
+                      aria-label={
+                        blocked
+                          ? `Cannot train a ${option.label.toLowerCase()}. ${blocked}.`
+                          : `Train a ${option.label.toLowerCase()}. ${counts} posts filled. Takes ${CATALOG.school.trainSeconds} seconds.`
+                      }
+                      onClick={() => game.current?.trainWorker(inspected.id, option.type)}
+                    >
+                      <span className="training-role">{option.label}</span>
+                      <em className="training-count">{counts}</em>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -2410,7 +2476,8 @@ function App() {
                     <strong>Let your villagers take care of it</strong>
                     <span>
                       Workers travel to jobs, build new structures, and deliver
-                      wood, stone, and food. Cottages welcome two new workers.
+                      wood, stone, and food. You start with two builders:
+                      cottages add room, and a School trains everyone else.
                     </span>
                   </div>
                 </div>

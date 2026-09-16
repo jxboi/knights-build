@@ -197,8 +197,14 @@ h1 span {
   font-weight: 400;
 }
 .resource.population.at-capacity strong,
-.resource.population.at-capacity .resource-icon {
+.resource.population.at-capacity .resource-icon,
+.resource.at-capacity .resource-value,
+.resource.at-capacity .resource-icon {
   color: #b16d4e;
+}
+/* The storage ceiling sits beside the count, quieter than the number itself. */
+.resource-cap {
+  letter-spacing: 0.01em;
 }
 .day {
   border-left: 1px solid var(--line);

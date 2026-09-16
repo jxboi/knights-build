@@ -411,6 +411,79 @@ def vineyard():
  cyl('Pole finial',(-1.52,0,4.12),.075,.11,'wheatLight',8)
  cube('Pennant',(-1.24,0,3.86),(.52,.03,.26),'roof')
  for z in [3.95,3.77]:cube('Pennant tail',(-.94,0,z),(.18,.03,.09),'roof')
+def storehouse():
+ # Redesigned from the reference art: a fortified gatehouse store. A rubble
+ # curtain wall carries a crenellated parapet between two round turrets with
+ # amber conical roofs and red pennants; a central gatehouse tower rises over
+ # the arched cart entry, and the village's crates, casks and sacks are stacked
+ # at the gate. Front is -Y.
+ cube('Storehouse footing',(0,.05,.09),(3.46,2.44,.18),'stoneBlue')
+ cube('Footing cap',(0,.05,.24),(3.30,2.28,.12),'stoneLight')
+
+ # Rubble curtain wall. The facing blocks are cut into the wall face rather
+ # than left floating, and they step around the archway.
+ cube('Curtain wall',(0,.12,1.12),(2.52,1.92,1.64),'stone')
+ for row in range(5):
+  for i in range(8):
+   x=-1.12+i*.32+(row%2)*.16
+   if abs(x)<.78 and .30+row*.32<1.50:continue
+   if abs(x)>1.20:continue
+   cube('Wall facing stone',(x,-.87,.46+row*.32),(.28,.06,.24),'stoneLight' if (i+row)%3 else 'stoneBlue')
+
+ # Arched cart entry with dressed jambs and voussoirs, doors swung inward.
+ cube('Gateway',(0,-.78,.78),(.94,.30,.96),'dark')
+ cyl('Gateway head',(0,-.78,1.26),.47,.30,'dark',16).rotation_euler.x=math.pi/2
+ for x in [-.60,.60]:cube('Gate jamb',(x,-.90,.78),(.22,.16,.96),'stoneLight')
+ for i in range(9):
+  a=math.pi*i/8
+  o=cube('Arch voussoir',(math.cos(a)*.60,-.90,1.26+math.sin(a)*.60),(.22,.16,.26),'stoneLight' if i%2 else 'stone')
+  o.rotation_euler.y=math.pi/2-a
+ for x in [-.38,.38]:
+  cube('Gate door',(x,-.66,.74),(.18,.09,.88),'timber')
+  cube('Gate door band',(x,-.72,1.02),(.20,.04,.09),'cut')
+ cube('Stored crate',(-.24,-.44,.52),(.36,.34,.44),'cut')
+ cyl('Stored cask',(.26,-.42,.50),.20,.50,'timber',10,.18)
+
+ # Parapet walk and merlons, stepping either side of the gatehouse tower.
+ cube('Parapet walk',(0,.12,2.00),(2.60,2.00,.14),'stoneLight')
+ for y in [-.86,1.00]:
+  for x in [-1.00,-.70,.70,1.00]:cube('Merlon',(x,y,2.24),(.22,.22,.34),'stoneLight')
+
+ # Central gatehouse tower with a quoined shell, lit niche and amber cap.
+ cube('Gatehouse tower',(0,.02,2.42),(1.18,1.40,1.04),'stoneLight')
+ for x in [-.54,.54]:
+  for y in [-.64,.68]:cube('Gatehouse quoin',(x,y,2.42),(.15,.15,1.04),'stone')
+ cube('Niche surround',(0,-.75,2.42),(.48,.07,.54),'stone')
+ cube('Gatehouse niche',(0,-.79,2.40),(.30,.05,.40),'dark')
+ cyl('Niche head',(0,-.79,2.60),.15,.05,'dark',12).rotation_euler.x=math.pi/2
+ roof(1.38,1.62,2.94,.86,'gold',.02)
+ cyl('Ridge finial',(0,.02,3.92),.10,.28,'goldLight',8,0)
+
+ # Round corner turrets: battered base, banded drum, corbel and conical cap.
+ for x in [-1.22,1.22]:
+  cyl('Turret base',(x,-.32,.46),.64,.44,'stone',12,.58)
+  cyl('Turret drum',(x,-.32,1.42),.56,1.52,'stoneLight',12,.53)
+  for z in [1.02,1.60]:cyl('Turret band',(x,-.32,z),.58,.10,'stone',12,.57)
+  cyl('Turret corbel',(x,-.32,2.28),.68,.20,'stoneLight',12,.62)
+  cyl('Turret roof',(x,-.32,2.94),.72,1.12,'gold',12,0)
+  for z,r in [(2.58,.61),(2.88,.43),(3.16,.25)]:cyl('Turret tile band',(x,-.32,z),r,.07,'goldLight',12,r-.05)
+  cube('Turret slit',(x,-.86,1.40),(.14,.10,.44),'dark')
+  beam('Turret pole',(x,-.32,3.46),(x,-.32,3.96),.045,'wood')
+  cube('Turret pennant',(x,-.70,3.80),(.07,.54,.22),'roof')
+  ico('Pole finial',(x,-.32,4.00),(.06,.06,.07),'goldLight')
+
+ # Steps up to the gate, and the stores the building is named for.
+ cube('Gate step',(0,-1.12,.15),(1.40,.24,.30),'stoneLight')
+ cube('Gate step',(0,-1.34,.09),(1.60,.24,.18),'stone')
+ cube('Storehouse crate',(1.00,-1.30,.28),(.52,.46,.56),'cut')
+ for z in [.12,.44]:cube('Crate band',(1.00,-1.54,z),(.55,.05,.06),'timber')
+ cube('Storehouse crate',(1.04,-1.24,.76),(.42,.38,.40),'cut')
+ for y in [-1.24,-1.60]:
+  cyl('Storehouse cask',(-1.02,y,.32),.24,.64,'timber',10,.21)
+  for z in [.14,.52]:cyl('Cask band',(-1.02,y,z),.25,.05,'stone',10,.22)
+ for x,y,z,s in [(-1.48,-1.10,.24,.95),(-1.40,-1.44,.22,.85)]:
+  sack=ico('Store sack',(x,y,z),(.26*s,.30*s,.24*s),'cream');sack.rotation_euler.z=(x+y)*.4
+  cyl('Sack tie',(x,y,z+.24*s),.08*s,.13*s,'cut',6)
 def tree():
  cyl('Trunk',(0,0,.65),.19,1.3,'wood',6)
  for z,r,d in [(1.4,.93,1.45),(2.07,.74,1.35),(2.66,.48,1.2)]:cyl('Pine',(0,0,z),r,d,'leaf' if z<2 else 'leafLight',5,0)
@@ -894,7 +967,7 @@ def worker():
  cube('Tunic',(0,0,.51),(.23,.16,.3),'blue');ico('Head',(0,0,.79),(.115,.1,.13),'skin');cyl('Cap',(0,0,.9),.13,.12,'cream',6,.11)
  for x in [-.075,.075]:beam('Leg',(x,0,.10),(x,0,.38),.08,'dark');cube('Shoe',(x,-.035,.07),(.09,.17,.09),'wood')
  for x in [-.16,.16]:beam('Arm',(x,0,.62),(x,-.02,.36),.07,'cream');ico('Hand',(x,-.02,.33),(.055,.055,.06),'skin')
-assets={'tree':tree,'rock':rock,'fence':fence,'house':house,'bakery':bakery,'inn':inn,'school':school,'vineyard':vineyard,'well':well,'farm':farm,'grainfield':lambda:grainfield('ripe'),'grainfield_sown':lambda:grainfield('sown'),'grainfield_sprout':lambda:grainfield('sprout'),'grainfield_growing':lambda:grainfield('growing'),'grainfield_ripe':lambda:grainfield('ripe'),'lumberyard':lumberyard,'mine':mine,'windmill':windmill,'watchtower':watchtower,'townhall':townhall,'worker':worker}
+assets={'tree':tree,'rock':rock,'fence':fence,'house':house,'bakery':bakery,'inn':inn,'school':school,'vineyard':vineyard,'storehouse':storehouse,'well':well,'farm':farm,'grainfield':lambda:grainfield('ripe'),'grainfield_sown':lambda:grainfield('sown'),'grainfield_sprout':lambda:grainfield('sprout'),'grainfield_growing':lambda:grainfield('growing'),'grainfield_ripe':lambda:grainfield('ripe'),'lumberyard':lumberyard,'mine':mine,'windmill':windmill,'watchtower':watchtower,'townhall':townhall,'worker':worker}
 only_asset=os.environ.get("ONLY_ASSET")
 if only_asset: assets={only_asset:assets[only_asset]}
 for name,fn in assets.items():

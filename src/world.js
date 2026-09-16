@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CATALOG } from "./catalog.js";
+import { CATALOG, TOWNHALL_STORAGE } from "./catalog.js";
 import { chapterGoalState } from "./progression.js";
-export { CATALOG } from "./catalog.js";
+export { CATALOG, TOWNHALL_STORAGE } from "./catalog.js";
 const initial = [
   ["townhall", -3, -3],
   ["house", -9, 2],
@@ -222,6 +222,17 @@ export const HUNGER_SECONDS = 75;
 export const HUNGRY_THRESHOLD = 0.82;
 export const EAT_SECONDS = 8;
 export const INN_SEATS = 3;
+// How much one carrier shoulders per trip, matching a builder's material load.
+export const CARRIER_LOAD = 10;
+// Phases where a villager is already holding goods. They finish the trip
+// rather than being pulled off it by a pause, a reroute or a blocked path.
+export const CARRYING_PHASES = Object.freeze([
+  "lumber_delivery",
+  "material_delivery",
+  "stock_delivery",
+  "haul_pickup",
+  "haul_deliver",
+]);
 export const MEAL_SATIETY = 0.12;
 // Every lantern-lit building used to own two real PointLights, so a village at
 // the population cap put 30+ of them in the scene. Three.js compiles the light
@@ -308,6 +319,7 @@ export const WORKER_TYPES = Object.freeze({
   MINER: "miner",
   FARMER: "farmer",
   BAKER: "baker",
+  CARRIER: "carrier",
 });
 export const WORKER_TYPE_LABELS = Object.freeze({
   [WORKER_TYPES.BUILDER]: "Builder",
@@ -315,6 +327,7 @@ export const WORKER_TYPE_LABELS = Object.freeze({
   [WORKER_TYPES.MINER]: "Miner",
   [WORKER_TYPES.FARMER]: "Farmer",
   [WORKER_TYPES.BAKER]: "Baker",
+  [WORKER_TYPES.CARRIER]: "Carrier",
 });
 export const workerTypeForBuilding = (type) =>
   ({
@@ -328,7 +341,25 @@ export const workerTypeForBuilding = (type) =>
     // A vintner tends vines and treads the harvest, so the vineyard shares
     // the farmer role rather than introducing a second field worker type.
     vineyard: WORKER_TYPES.FARMER,
+    // Stores are the carrier's post. The town hall counts too, so a village
+    // can move goods before it can afford its first Storehouse.
+    townhall: WORKER_TYPES.CARRIER,
+    storehouse: WORKER_TYPES.CARRIER,
   })[type] || null;
+// How many finished goods a producer can pile up before its worker stops.
+export const outputCapForBuilding = (type) =>
+  Math.max(0, Math.floor(finiteNumber(CATALOG[type]?.outputCap, 0)));
+// How much of each resource a finished store can hold.
+export const storageForBuilding = (type) =>
+  type === "townhall"
+    ? TOWNHALL_STORAGE
+    : Math.max(0, Math.floor(finiteNumber(CATALOG[type]?.storage, 0)));
+export const isStoreBuilding = (type) => storageForBuilding(type) > 0;
+// A load a full village handed back can briefly push a producer over its cap,
+// so saves keep one carrier load of headroom while still rejecting forged
+// figures. The building stays stalled until a carrier drains it either way.
+export const savedStockLimit = (type) =>
+  outputCapForBuilding(type) ? outputCapForBuilding(type) + CARRIER_LOAD : 0;
 export const workerCapacityForBuilding = (type) =>
   ({
     lumberyard: 2,
@@ -337,15 +368,40 @@ export const workerCapacityForBuilding = (type) =>
     bakery: 1,
     windmill: 1,
     vineyard: 1,
+    townhall: 2,
+    storehouse: 3,
   })[type] || 0;
-// Builders arrive with cottages; the School trains the trades, and only for
-// posts the village can actually staff.
+// The School trains the general builder plus each trade. A trade is capped by
+// the posts the village has actually built; builders answer only to housing.
 export const TRAINABLE_WORKER_TYPES = Object.freeze([
+  WORKER_TYPES.BUILDER,
   WORKER_TYPES.WOODCUTTER,
   WORKER_TYPES.MINER,
   WORKER_TYPES.FARMER,
   WORKER_TYPES.BAKER,
+  WORKER_TYPES.CARRIER,
 ]);
+export const TRAINING_SECONDS = Math.max(
+  1,
+  finiteNumber(CATALOG.school?.trainSeconds, 18),
+);
+export const normalizedTrainingSession = (buildingType, session) => {
+  if (buildingType !== "school" || !session) return null;
+  if (!TRAINABLE_WORKER_TYPES.includes(session.type)) return null;
+  return {
+    type: session.type,
+    remaining: Math.min(
+      TRAINING_SECONDS,
+      Math.max(0, finiteNumber(session.remaining, TRAINING_SECONDS)),
+    ),
+    waiting: Boolean(session.waiting),
+  };
+};
+export const pendingTrainingCount = (buildings = [], workerType) =>
+  (Array.isArray(buildings) ? buildings : []).filter(
+    (building) =>
+      building?.type === "school" && building.training?.type === workerType,
+  ).length;
 export const workplaceNamesForWorkerType = (workerType) =>
   Object.keys(CATALOG)
     .filter((type) => workerTypeForBuilding(type) === workerType)
@@ -364,22 +420,42 @@ export const trainedWorkerCount = (workers = [], workerType) =>
     (worker) => worker?.trainedType === workerType,
   ).length;
 export const trainingOptions = (buildings = [], workers = []) => {
+  const list = Array.isArray(buildings) ? buildings : [];
   const housed = (Array.isArray(workers) ? workers : []).length;
-  const capacity = Math.min(MAX_POPULATION, housingCapacity(buildings));
-  const housingRoom = capacity - housed;
+  const capacity = Math.min(MAX_POPULATION, housingCapacity(list));
+  // Villagers already in training have a bed and a post reserved for them.
+  const inTraining = list.filter(
+    (building) => building?.type === "school" && building.training,
+  ).length;
+  const housingRoom = capacity - housed - inTraining;
+  const noRoom = housingRoom <= 0 ? "No housing space for another villager" : null;
   return TRAINABLE_WORKER_TYPES.map((type) => {
     const label = WORKER_TYPE_LABELS[type];
-    const posts = jobCapacityForWorkerType(buildings, type);
+    const pending = pendingTrainingCount(list, type);
     const trained = trainedWorkerCount(workers, type);
+    // Builders take any job that needs hands, so housing is their only limit.
+    const posts =
+      type === WORKER_TYPES.BUILDER ? null : jobCapacityForWorkerType(list, type);
+    const filled = trained + pending;
     const reason =
-      posts === 0
-        ? `Needs a completed ${workplaceNamesForWorkerType(type).join(" or ")}`
-        : trained >= posts
-          ? `Every ${label.toLowerCase()} post is already filled`
-          : housingRoom <= 0
-            ? "No housing space for another villager"
-            : null;
-    return { type, label, trained, posts, canTrain: !reason, reason };
+      posts === null
+        ? noRoom
+        : posts === 0
+          ? `Needs a completed ${workplaceNamesForWorkerType(type).join(" or ")}`
+          : filled >= posts
+            ? pending > 0
+              ? `A ${label.toLowerCase()} is already in training`
+              : `Every ${label.toLowerCase()} post is already filled`
+            : noRoom;
+    return {
+      type,
+      label,
+      trained,
+      pending,
+      posts,
+      canTrain: !reason,
+      reason,
+    };
   });
 };
 export const housingCapacity = (buildings = []) =>
@@ -388,7 +464,8 @@ export const housingCapacity = (buildings = []) =>
     (building) => building?.type === "house" && building.progress === 1,
   ).length *
     2;
-export const safePopulation = (value, capacity, fallback = 8) =>
+export const STARTING_POPULATION = 2;
+export const safePopulation = (value, capacity, fallback = STARTING_POPULATION) =>
   Math.min(
     MAX_POPULATION,
     Math.max(0, Math.floor(finiteNumber(value, fallback))),
@@ -1170,6 +1247,7 @@ export class Village {
         "farm",
         "bakery",
         "inn",
+        "storehouse",
         "grainfield",
         "grainfield_sown",
         "grainfield_sprout",
@@ -1284,8 +1362,11 @@ export class Village {
             b.materials,
             b.plantedAt,
             b.breadStock,
+            b.training,
+            b.stock,
           );
         }
+        this.clampResourcesToStorage();
         if (!this.buildings.some((building) => building.type === "townhall"))
           initial.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
         const savedRoads = Array.isArray(this.saved.roads)
@@ -1537,6 +1618,8 @@ export class Village {
     materials = null,
     plantedAt = null,
     breadStock = 0,
+    training = null,
+    stock = 0,
   ) {
     const m = this.model(type, x, z);
     m.rotation.y = rotation;
@@ -1568,6 +1651,10 @@ export class Village {
         type === "inn"
           ? Math.max(0, Math.floor(finiteNumber(breadStock, 0)))
           : 0,
+      // Finished goods wait in the building that made them until a carrier
+      // hauls them to a store. Production stalls once this reaches outputCap.
+      stock: Math.max(0, Math.min(savedStockLimit(type), Math.floor(finiteNumber(stock, 0)))),
+      training: normalizedTrainingSession(type, training),
       pop: 0,
     };
     m.userData.building = b;
@@ -2856,6 +2943,8 @@ export class Village {
       this.resources[resource] += Math.floor(amount * refundRate);
     });
     for (const worker of this.workers) {
+      if (worker.haulSource === building || worker.haulTarget === building)
+        this.releaseHaul(worker);
       if (worker.building !== building) continue;
       this.clearCarry(worker);
       worker.carry = null;
@@ -2929,9 +3018,7 @@ export class Village {
     for (const worker of this.workers) {
       if (
         worker.building !== building ||
-        worker.phase === "deliver" ||
-        worker.phase === "lumber_delivery" ||
-        worker.phase === "material_delivery"
+        CARRYING_PHASES.includes(worker.phase)
       )
         continue;
       if (worker.field) worker.field.claimedBy = null;
@@ -2977,6 +3064,10 @@ export class Village {
       this.notify("The School is paused.");
       return false;
     }
+    if (school.training) {
+      this.notify("The School is already training someone.");
+      return false;
+    }
     const option = trainingOptions(this.buildings, this.workers).find(
       (candidate) => candidate.type === workerType,
     );
@@ -2985,17 +3076,47 @@ export class Village {
       this.notify(option.reason);
       return false;
     }
-    const worker = this.addWorker();
-    if (!worker) return false;
-    worker.trainedType = workerType;
-    this.setWorkerType(worker, workerType);
-    school.cycles = Math.max(0, Math.floor(finiteNumber(school.cycles, 0))) + 1;
-    this.announce(`The School trained a new ${option.label.toLowerCase()}.`);
-    this.notify(`${option.label} trained at the School.`);
-    this.playSound("complete");
+    school.training = { type: workerType, remaining: TRAINING_SECONDS, waiting: false };
+    this.announce(`The School has taken on a ${option.label.toLowerCase()} apprentice.`);
+    this.notify(
+      `${option.label} training started · ${Math.round(TRAINING_SECONDS)} seconds.`,
+    );
+    this.playSound("notice");
     this.save();
     this.emit();
     return true;
+  }
+  updateTraining(dt) {
+    for (const school of this.buildings) {
+      if (school.type !== "school" || !school.training) continue;
+      if (school.progress < 1 || school.paused) continue;
+      const session = school.training;
+      session.remaining = Math.max(0, finiteNumber(session.remaining, 0) - dt);
+      if (session.remaining > 0) continue;
+      // A graduate needs somewhere to sleep; hold them at the School until a
+      // cottage has room rather than dropping the training.
+      const capacity = Math.min(MAX_POPULATION, housingCapacity(this.buildings));
+      if (this.workers.length >= capacity) {
+        if (!session.waiting) {
+          session.waiting = true;
+          this.announce("A new apprentice is waiting for somewhere to live.");
+          this.emit();
+        }
+        continue;
+      }
+      const worker = this.addWorker();
+      if (!worker) continue;
+      worker.trainedType = session.type;
+      this.setWorkerType(worker, session.type);
+      school.training = null;
+      school.cycles = Math.max(0, Math.floor(finiteNumber(school.cycles, 0))) + 1;
+      const label = WORKER_TYPE_LABELS[session.type] || "Villager";
+      this.announce(`${label} finished training at the School.`);
+      this.notify(`A new ${label.toLowerCase()} has finished training.`);
+      this.playSound("complete");
+      this.save();
+      this.emit();
+    }
   }
   startFeast() {
     if (this.blockedByStorageConflict()) return false;
@@ -3206,6 +3327,16 @@ export class Village {
     minerHelmet.children[1].position.y = 0.874;
     minerHelmet.children[2].position.set(0, 0.9, 0.118);
     minerHelmet.children[3].position.set(0, 0.896, 0.152);
+    const carrierHood = addHeadgear(WORKER_TYPES.CARRIER, [
+      part(new THREE.SphereGeometry(0.132, 10, 7), materials.accent),
+      part(new THREE.TorusGeometry(0.136, 0.026, 6, 10), materials.dark),
+      part(new THREE.BoxGeometry(0.16, 0.085, 0.045), materials.accent),
+    ]);
+    carrierHood.children[0].position.y = 0.875;
+    carrierHood.children[0].scale.set(1, 0.86, 1.02);
+    carrierHood.children[1].position.y = 0.812;
+    carrierHood.children[1].rotation.x = Math.PI / 2;
+    carrierHood.children[2].position.set(0, 0.79, -0.1);
     const farmerHat = addHeadgear(WORKER_TYPES.FARMER, [
       part(new THREE.ConeGeometry(0.115, 0.11, 8), materials.cream),
       part(new THREE.CylinderGeometry(0.22, 0.22, 0.035, 10), materials.accent),
@@ -3432,6 +3563,22 @@ export class Village {
     farmerOveralls.position.set(0, 0.54, -0.095);
     farmerOveralls.visible = false;
     rig.add(farmerOveralls);
+    const carrierGear = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const strap = part(new THREE.BoxGeometry(0.036, 0.26, 0.03), materials.wood);
+      strap.position.set(side * 0.055, 0.55, 0.075);
+      strap.rotation.z = side * 0.22;
+      carrierGear.add(strap);
+    }
+    const carrierBelt = part(new THREE.BoxGeometry(0.245, 0.055, 0.175), materials.wood);
+    carrierBelt.position.set(0, 0.425, 0);
+    const backCrate = part(new THREE.BoxGeometry(0.2, 0.185, 0.095), materials.accent);
+    backCrate.position.set(0, 0.56, -0.13);
+    const crateBand = part(new THREE.BoxGeometry(0.215, 0.032, 0.105), materials.dark);
+    crateBand.position.set(0, 0.56, -0.13);
+    carrierGear.add(carrierBelt, backCrate, crateBand);
+    carrierGear.visible = false;
+    rig.add(carrierGear);
     const leftLeg = makeLeg(-0.075);
     const rightLeg = makeLeg(0.075);
     // Keep the role silhouettes readable at the game's normal isometric zoom.
@@ -3456,6 +3603,7 @@ export class Village {
       woodcutterGear,
       minerGear,
       farmerOveralls,
+      carrierGear,
       cap,
       materials,
     };
@@ -3505,6 +3653,13 @@ export class Village {
         shoe: "#6b4425",
         accent: "#c0483c",
       },
+      [WORKER_TYPES.CARRIER]: {
+        tunic: "#8d6a3f",
+        cap: "#d9c08a",
+        dark: "#3a2f26",
+        shoe: "#5b4029",
+        accent: "#9d7a43",
+      },
     }[workerType];
     const materials = worker.rig.materials;
     materials.tunic.color.set(palette.tunic);
@@ -3544,6 +3699,7 @@ export class Village {
     worker.rig.woodcutterGear.visible = workerType === WORKER_TYPES.WOODCUTTER;
     worker.rig.minerGear.visible = workerType === WORKER_TYPES.MINER;
     worker.rig.farmerOveralls.visible = workerType === WORKER_TYPES.FARMER;
+    worker.rig.carrierGear.visible = workerType === WORKER_TYPES.CARRIER;
     worker.rig.axe.visible = workerType === WORKER_TYPES.WOODCUTTER;
     worker.rig.axe.rotation.z = AXE_CARRY_ANGLE;
     worker.rig.pickaxe.visible = workerType === WORKER_TYPES.MINER;
@@ -4084,27 +4240,172 @@ export class Village {
           Math.hypot(worker.m.position.x - b.inn.x, worker.m.position.z - b.inn.z),
       )[0];
   }
-  bakeryDeliveryTarget(worker) {
-    const requested = worker?.carry?.destinationId;
-    const inns = this.completedInns();
-    if (requested) {
-      const destination = inns.find((inn) => inn.id === requested);
-      if (destination) return destination;
-    }
-    return inns.sort(
-      (a, b) =>
-        Math.hypot(worker.m.position.x - a.x, worker.m.position.z - a.z) -
-        Math.hypot(worker.m.position.x - b.x, worker.m.position.z - b.z),
-    )[0] || null;
+  // ---- building stores -------------------------------------------------
+  storedAt(building) {
+    return Math.max(0, Math.floor(finiteNumber(building?.stock, 0)));
   }
-  deliveryTarget(worker) {
-    if (worker?.building?.type === "bakery")
-      return this.bakeryDeliveryTarget(worker);
-    return (
-      this.buildings.find((building) => building.type === "townhall") ||
-      worker?.building ||
-      null
+  stockSpace(building) {
+    const cap = outputCapForBuilding(building?.type);
+    if (!cap) return Infinity;
+    return Math.max(0, cap - this.storedAt(building));
+  }
+  depositStock(building, amount) {
+    const wanted = Math.max(0, Math.floor(finiteNumber(amount, 0)));
+    const accepted = Math.min(wanted, this.stockSpace(building));
+    if (!Number.isFinite(accepted) || accepted <= 0) return 0;
+    building.stock = this.storedAt(building) + accepted;
+    return accepted;
+  }
+  // ---- village stores --------------------------------------------------
+  stores() {
+    return this.buildings.filter(
+      (building) => building.progress === 1 && isStoreBuilding(building.type),
     );
+  }
+  storageCapacity() {
+    return this.stores().reduce(
+      (total, building) => total + storageForBuilding(building.type),
+      0,
+    );
+  }
+  // An Inn's pantry is real food storage, so it counts toward the food
+  // ceiling on top of the stores. Everything else is stores only.
+  capacityFor(resource) {
+    const base = this.storageCapacity();
+    if (resource !== "food") return base;
+    const pantry = Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0));
+    return base + this.completedInns().length * pantry;
+  }
+  storageCapacities() {
+    return Object.keys(this.resources).reduce((map, resource) => {
+      map[resource] = this.capacityFor(resource);
+      return map;
+    }, {});
+  }
+  storageSpace(resource) {
+    if (!resource) return 0;
+    return Math.max(
+      0,
+      this.capacityFor(resource) -
+        Math.max(0, finiteNumber(this.resources[resource], 0)),
+    );
+  }
+  // Storage can shrink when a store is demolished or a save is restored with
+  // fewer stores than it was written with, so the pool is trimmed to fit.
+  clampResourcesToStorage() {
+    let spilled = 0;
+    for (const key of Object.keys(this.resources)) {
+      const capacity = this.capacityFor(key);
+      const held = Math.max(0, finiteNumber(this.resources[key], 0));
+      if (held <= capacity) {
+        this.resources[key] = held;
+        continue;
+      }
+      spilled += held - capacity;
+      this.resources[key] = capacity;
+    }
+    for (const inn of this.buildings.filter((b) => b.type === "inn"))
+      inn.breadStock = Math.min(
+        Math.max(0, finiteNumber(inn.breadStock, 0)),
+        Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0)),
+        Math.max(0, finiteNumber(this.resources.food, 0)),
+      );
+    return spilled;
+  }
+  innBreadSpace(inn) {
+    const cap = Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0));
+    return Math.max(0, cap - Math.max(0, finiteNumber(inn?.breadStock, 0)));
+  }
+  validHaulTarget(target, resource) {
+    if (!target || target.progress !== 1 || !this.buildings.includes(target))
+      return null;
+    if (this.storageSpace(resource) <= 0) return null;
+    if (target.type === "inn")
+      return resource === "food" && this.innBreadSpace(target) > 0 ? target : null;
+    return isStoreBuilding(target.type) ? target : null;
+  }
+  // Bread feeds the canteen first; the overflow goes into a store.
+  haulDestination(worker, resource) {
+    if (!resource || this.storageSpace(resource) <= 0) return null;
+    const origin = worker?.m?.position || { x: 0, z: 0 };
+    const nearest = (a, b) =>
+      Math.hypot(origin.x - a.x, origin.z - a.z) -
+      Math.hypot(origin.x - b.x, origin.z - b.z);
+    if (resource === "food") {
+      const inn = this.completedInns()
+        .filter((candidate) => this.innBreadSpace(candidate) > 0)
+        .sort(nearest)[0];
+      if (inn) return inn;
+    }
+    return this.stores().sort(nearest)[0] || null;
+  }
+  storeResource(target, resource, amount) {
+    const wanted = Math.max(0, Math.floor(finiteNumber(amount, 0)));
+    let accepted = Math.min(wanted, this.storageSpace(resource));
+    if (target?.type === "inn")
+      accepted = Math.min(accepted, this.innBreadSpace(target));
+    if (accepted <= 0) return 0;
+    if (target?.type === "inn")
+      target.breadStock = Math.max(0, finiteNumber(target.breadStock, 0)) + accepted;
+    this.resources[resource] = (this.resources[resource] || 0) + accepted;
+    this.delivered[resource] = (this.delivered[resource] || 0) + accepted;
+    if (resource === "wood") this.gathered += accepted;
+    return accepted;
+  }
+  releaseHaul(worker) {
+    this.clearCarry(worker);
+    worker.carry = null;
+    worker.haulSource = null;
+    worker.haulTarget = null;
+    worker.deliveryRetry = 0;
+    worker.workDuration = 0;
+    worker.workInside = false;
+    this.setWorkerInside(worker, false);
+    worker.building = null;
+    worker.phase = "idle";
+    worker.timer = 0;
+  }
+  // A haul job is a building with goods waiting and a store that can take
+  // them. Fullest building first, then nearest, so nothing stays blocked.
+  tryAssignHaul(worker) {
+    const claimed = new Set(
+      this.workers
+        .filter((candidate) => candidate !== worker && candidate.haulSource)
+        .map((candidate) => candidate.haulSource),
+    );
+    const fullness = (building) =>
+      this.storedAt(building) / Math.max(1, outputCapForBuilding(building.type));
+    const sources = this.buildings
+      .filter(
+        (building) =>
+          building.progress === 1 &&
+          this.storedAt(building) > 0 &&
+          !claimed.has(building) &&
+          this.haulDestination(worker, CATALOG[building.type]?.resource),
+      )
+      .sort(
+        (a, b) =>
+          fullness(b) - fullness(a) ||
+          Math.hypot(worker.m.position.x - a.x, worker.m.position.z - a.z) -
+            Math.hypot(worker.m.position.x - b.x, worker.m.position.z - b.z),
+      );
+    for (const source of sources) {
+      const [sx, sz] = this.jobPoint(source, worker);
+      if (!this.route(worker, sx, sz, source)) {
+        source.lastRouteBlocked = true;
+        continue;
+      }
+      source.lastRouteBlocked = false;
+      worker.haulSource = source;
+      worker.haulTarget = null;
+      worker.announcedFullStores = false;
+      worker.deliveryRetry = 0;
+      worker.phase = "haul_pickup";
+      worker.waitingForSpace = false;
+      this.setWorkerType(worker, WORKER_TYPES.CARRIER);
+      return true;
+    }
+    return false;
   }
   assign(w) {
     if (!WORKER_TYPE_LABELS[w.workerType])
@@ -4175,17 +4476,16 @@ export class Village {
         workerTypeForBuilding(b.type) &&
         workerLoad(b) < workerCapacityForBuilding(b.type) &&
         !b.paused &&
-        (b.type !== "bakery" || this.completedInns().length > 0) &&
+        // A building whose own store is full stops taking workers until a
+        // carrier has cleared it.
+        this.stockSpace(b) > 0 &&
         (b.type !== "farm" || this.readyGrainFields(b).length > 0),
     );
     const employedSites = sites
       .filter((building) => workerTypeForBuilding(building.type) === w.workerType)
       .sort(compareJobs);
-    const candidates =
-      w.workerType === WORKER_TYPES.BUILDER
-        ? [...construction, ...sites.sort(compareJobs)]
-        : [...employedSites, ...construction];
-    for (const b of candidates) {
+    const tryJobs = (list) => {
+      for (const b of list) {
       const productionType = workerTypeForBuilding(b.type);
       if (
         b.progress === 1 &&
@@ -4251,8 +4551,24 @@ export class Village {
       );
       w.phase = material ? "material_pickup" : "travel";
       w.waitingForSpace = false;
-      return;
+      return true;
+      }
+      return false;
+    };
+    // Carriers look for a haul first. Builders build, then haul, then fall
+    // back to production; a trade works its own post before anything else.
+    const isCarrier = w.workerType === WORKER_TYPES.CARRIER;
+    if (isCarrier && this.tryAssignHaul(w)) return;
+    if (w.workerType === WORKER_TYPES.BUILDER) {
+      if (tryJobs(construction)) return;
+      if (this.tryAssignHaul(w)) return;
+      if (tryJobs(sites.sort(compareJobs))) return;
+    } else {
+      if (tryJobs(employedSites)) return;
+      if (tryJobs(construction)) return;
+      if (!isCarrier && this.tryAssignHaul(w)) return;
     }
+    const candidates = isCarrier ? construction : [...employedSites, ...construction];
     const well = this.buildings.find(
       (building) => building.type === "well" && building.progress === 1 && !building.paused,
     );
@@ -4502,9 +4818,7 @@ export class Village {
     ) {
       w.path = [];
       if (
-        w.phase === "deliver" ||
-        w.phase === "lumber_delivery" ||
-        w.phase === "material_delivery"
+        CARRYING_PHASES.includes(w.phase)
       )
         w.deliveryRetry = 1.5;
       else {
@@ -4582,6 +4896,7 @@ export class Village {
     this.elapsed += dt;
     this.updateGrainFields();
     this.updateTrees();
+    this.updateTraining(dt);
     if (this.activityTime > 0) {
       this.activityTime = Math.max(0, this.activityTime - dt);
       if (this.activityTime === 0) this.activity = "";
@@ -4609,9 +4924,7 @@ export class Village {
     for (const w of movementOrder) {
       if (
         w.building?.paused &&
-        w.phase !== "deliver" &&
-        w.phase !== "lumber_delivery" &&
-        w.phase !== "material_delivery"
+        !CARRYING_PHASES.includes(w.phase)
       ) {
         if (w.field) w.field.claimedBy = null;
         if (w.tree) this.releaseTree(w.tree);
@@ -4800,16 +5113,9 @@ export class Village {
           w.phase = "idle";
           w.workDuration = 0;
           w.building = null;
-          const newcomers =
-            b.type === "house"
-              ? Math.min(2, Math.max(0, MAX_POPULATION - this.workers.length))
-              : 0;
-          if (b.type === "house")
-            for (let i = 0; i < 2 && this.workers.length < MAX_POPULATION; i++)
-              this.addWorker();
           const readyMessage = `${CATALOG[b.type].name} is ready.${
-            newcomers
-              ? ` ${newcomers} new villager${newcomers === 1 ? " has" : "s have"} arrived.`
+            b.type === "house"
+              ? " There is room for two more villagers, ready to be trained at a School."
               : ""
           }`;
           this.announce(readyMessage);
@@ -4880,20 +5186,17 @@ export class Village {
             w.phase = "idle";
             continue;
           }
-          w.carry = {
-            resource: "wood",
-            amount: TREE_LOG_AMOUNT,
-            product: "wooden plank",
-          };
-          this.showCarry(w, "wood", "plank");
-          w.phase = "deliver";
+          const stored = this.depositStock(lumberyard, TREE_LOG_AMOUNT);
           w.workDuration = 0;
-          const depot =
-            this.buildings.find((building) => building.type === "townhall") ||
-            lumberyard;
-          const [depotX, depotZ] = this.jobPoint(depot, w);
-          w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
-          this.announce("Wooden planks are ready. A worker is taking them to the hall.");
+          lumberyard.cycles =
+            Math.max(0, Math.floor(finiteNumber(lumberyard.cycles, 0))) + 1;
+          this.announce(
+            this.stockSpace(lumberyard) > 0
+              ? `Wooden planks +${stored} are stacked at the Lumberyard.`
+              : "The Lumberyard is full. A carrier is needed.",
+          );
+          w.phase = "idle";
+          w.building = null;
         }
       } else if (w.phase === "harvest") {
         w.timer -= dt;
@@ -4912,35 +5215,45 @@ export class Village {
           this.updateGrainFieldVisual(field, true);
           const amount =
             CATALOG.farm.amount + (farm.upgrade === "Rich soil" ? 4 : 0);
-          w.carry = { resource: "wheat", amount };
+          w.carry = { resource: "wheat", amount, toStock: true };
           w.field = null;
           w.workDuration = 0;
           this.showCarry(w, "wheat");
           this.setWorkerInside(w, false);
-          w.phase = "deliver";
-          const depot =
-            this.buildings.find((building) => building.type === "townhall") ||
-            farm;
-          const [depotX, depotZ] = this.jobPoint(depot, w);
-          w.deliveryRetry = this.route(w, depotX, depotZ) ? 0 : 1.5;
+          // The sheaves are carried back to the farmhouse store, not straight
+          // to the hall: only a carrier moves goods between buildings now.
+          w.phase = "stock_delivery";
+          const [farmX, farmZ] = this.jobPoint(farm, w);
+          w.deliveryRetry = this.route(w, farmX, farmZ) ? 0 : 1.5;
           this.announce("A farmer has gathered a ripe grain field.");
         }
       } else if (w.phase === "work") {
         w.timer -= dt;
         if (w.timer <= 0) {
-          const c = CATALOG[w.building.type];
+          const site = w.building;
+          const c = CATALOG[site.type];
           const inputResource = c.inputResource || "food";
-          const inn =
-            w.building.type === "bakery" ? this.bakeryDeliveryTarget(w) : null;
-          if (w.building.type === "bakery" && !inn) {
-            if (!w.waitingForInn)
-              this.announce("The Bakery needs a completed Inn before it can send out bread.");
-            w.waitingForInn = true;
+          // A full building stops its worker until a carrier clears the store.
+          if (this.stockSpace(site) <= 0) {
+            if (!w.waitingForStock)
+              this.announce(`The ${c.name} store is full. A carrier must collect the goods.`);
+            w.waitingForStock = true;
             w.workDuration = 0;
-            w.timer = 4;
+            // Standing at a full bench helps nobody. The post is released so
+            // this villager can haul the backlog away or find other work, and
+            // a full building is skipped when jobs are handed out.
+            w.workInside = false;
+            this.setWorkerInside(w, false);
+            if (w.m) {
+              const [outX, outZ] = this.jobPoint(site, w);
+              w.m.position.set(outX, 0, outZ);
+            }
+            w.building = null;
+            w.phase = "idle";
+            w.timer = 0;
             continue;
           }
-          w.waitingForInn = false;
+          w.waitingForStock = false;
           if (c.input && (this.resources[inputResource] || 0) < c.input) {
             if (!w.waitingForInput)
               this.announce(`${c.name} is waiting for ${inputResource}.`);
@@ -4953,73 +5266,43 @@ export class Village {
           w.waitingForInput = false;
           if (resumedFromWaiting) this.announce(`${c.name} has ${inputResource} again.`);
           if (c.input) this.resources[inputResource] -= c.input;
-          const amount = c.amount + (w.building.upgrade === "Rich soil" ? 4 : 0);
-          w.carry = {
-            resource: c.resource,
-            amount,
-            ...(w.building.type === "bakery"
-              ? { product: "bread", destinationId: inn.id }
-              : {}),
-          };
+          const batch = c.amount + (site.upgrade === "Rich soil" ? 4 : 0);
+          const stored = this.depositStock(site, batch);
+          site.cycles = Math.max(0, Math.floor(finiteNumber(site.cycles, 0))) + 1;
           w.workDuration = 0;
-          this.showCarry(w, c.resource);
-          this.setWorkerInside(w, false);
-          w.phase = "deliver";
-          const depot = this.deliveryTarget(w);
-          const [depotX, depotZ] = this.jobPoint(depot, w);
-          w.deliveryRetry = this.route(
-            w,
-            depotX,
-            depotZ,
-            w.workInside ? w.building : null,
-          )
-            ? 0
-            : 1.5;
+          const label = site.type === "bakery" ? "Bread" : c.resource;
+          this.announce(
+            `${label[0].toUpperCase() + label.slice(1)} +${stored} is ready at the ${c.name}.`,
+          );
+          // The worker keeps their post and starts the next cycle; hauling is
+          // a carrier's job now.
+          w.workDuration = c.seconds;
+          w.timer = w.workDuration;
         }
-      } else if (w.phase === "deliver") {
+      } else if (w.phase === "stock_delivery") {
+        // A producer bringing its own output home, e.g. a farmer walking
+        // sheaves back from the field to the farmhouse store.
+        const site = w.building;
+        if (!site || !w.carry) {
+          this.clearCarry(w);
+          w.carry = null;
+          w.phase = "idle";
+          w.building = null;
+          w.workDuration = 0;
+          continue;
+        }
         if (w.deliveryRetry > 0) {
           w.deliveryRetry -= dt;
           if (w.deliveryRetry <= 0) {
-            const depot = this.deliveryTarget(w);
-            if (depot) {
-              const [depotX, depotZ] = this.jobPoint(depot, w);
-              w.deliveryRetry = this.route(
-                w,
-                depotX,
-                depotZ,
-                w.workInside ? w.building : null,
-              )
-                ? 0
-                : 1.5;
-            } else w.deliveryRetry = 1.5;
+            const [siteX, siteZ] = this.jobPoint(site, w);
+            w.deliveryRetry = this.route(w, siteX, siteZ) ? 0 : 1.5;
           }
           continue;
         }
-        if (w.carry) {
-          const depot = this.deliveryTarget(w);
-          if (!depot) {
-            w.deliveryRetry = 1.5;
-            continue;
-          }
-          this.deliveryBurst(depot, w.carry.resource, w.carry.amount);
-          this.resources[w.carry.resource] = (this.resources[w.carry.resource] || 0) + w.carry.amount;
-          this.delivered[w.carry.resource] =
-            (this.delivered[w.carry.resource] || 0) + w.carry.amount;
-          if (w.carry.resource === "wood") this.gathered += w.carry.amount;
-          const bakeryDelivery = w.building.type === "bakery" && depot.type === "inn";
-          if (bakeryDelivery)
-            depot.breadStock = Math.max(0, finiteNumber(depot.breadStock, 0)) + w.carry.amount;
-          const deliveredLabel = w.carry.product || w.carry.resource;
-          this.announce(
-            bakeryDelivery
-              ? `Bread +${w.carry.amount} delivered from the Bakery to the Inn.`
-              : `${deliveredLabel[0].toUpperCase() + deliveredLabel.slice(1)} +${w.carry.amount} delivered to the hall.`,
-          );
-          w.building.cycles++;
-          this.clearCarry(w);
-          w.carry = null;
-          w.deliveryRetry = 0;
-        }
+        const stored = this.depositStock(site, w.carry.amount);
+        this.deliveryBurst(site, w.carry.resource, stored);
+        this.clearCarry(w);
+        w.carry = null;
         w.phase = "idle";
         w.workDuration = 0;
         w.workInside = false;
@@ -5027,6 +5310,110 @@ export class Village {
         w.field = null;
         w.tree = null;
         w.building = null;
+      } else if (w.phase === "haul_pickup") {
+        const source = w.haulSource;
+        if (!source || source.progress < 1 || this.storedAt(source) <= 0) {
+          this.releaseHaul(w);
+          continue;
+        }
+        if (w.deliveryRetry > 0) {
+          w.deliveryRetry -= dt;
+          if (w.deliveryRetry <= 0) {
+            const [sx, sz] = this.jobPoint(source, w);
+            w.deliveryRetry = this.route(w, sx, sz, source) ? 0 : 1.5;
+          }
+          continue;
+        }
+        const resource = CATALOG[source.type]?.resource;
+        const load = Math.min(
+          CARRIER_LOAD,
+          this.storedAt(source),
+          Math.max(0, this.storageSpace(resource)),
+        );
+        if (load <= 0) {
+          this.releaseHaul(w);
+          continue;
+        }
+        source.stock = Math.max(0, finiteNumber(source.stock, 0)) - load;
+        w.carry = {
+          resource,
+          amount: load,
+          haul: true,
+          ...(source.type === "bakery" ? { product: "bread" } : {}),
+        };
+        this.showCarry(w, resource, source.type === "lumberyard" ? "plank" : undefined);
+        const target = this.haulDestination(w, resource, load);
+        if (!target) {
+          w.deliveryRetry = 1.5;
+          w.phase = "haul_deliver";
+          continue;
+        }
+        w.haulTarget = target;
+        const [tx, tz] = this.jobPoint(target, w);
+        w.phase = "haul_deliver";
+        w.deliveryRetry = this.route(w, tx, tz) ? 0 : 1.5;
+      } else if (w.phase === "haul_deliver") {
+        if (!w.carry) {
+          this.releaseHaul(w);
+          continue;
+        }
+        const target =
+          this.validHaulTarget(w.haulTarget, w.carry.resource) ||
+          this.haulDestination(w, w.carry.resource);
+        if (!target) {
+          // Nowhere in the village can take this load. It goes back to the
+          // building that made it rather than evaporating, which leaves that
+          // producer stalled until the player makes room.
+          if (w.haulSource)
+            w.haulSource.stock =
+              this.storedAt(w.haulSource) + Math.max(0, w.carry.amount);
+          if (!w.announcedFullStores) {
+            w.announcedFullStores = true;
+            this.announce("Every store is full. Build a Storehouse to make room.");
+          }
+          this.clearCarry(w);
+          w.carry = null;
+          this.releaseHaul(w);
+          continue;
+        }
+        if (target !== w.haulTarget) {
+          w.haulTarget = target;
+          const [tx, tz] = this.jobPoint(target, w);
+          w.deliveryRetry = this.route(w, tx, tz) ? 0 : 1.5;
+          continue;
+        }
+        if (w.deliveryRetry > 0) {
+          w.deliveryRetry -= dt;
+          if (w.deliveryRetry <= 0) {
+            const [tx, tz] = this.jobPoint(target, w);
+            w.deliveryRetry = this.route(w, tx, tz) ? 0 : 1.5;
+          }
+          continue;
+        }
+        const accepted = this.storeResource(
+          target,
+          w.carry.resource,
+          w.carry.amount,
+        );
+        // Anything the store could not take goes back to the building it came
+        // from, so a full village never silently destroys goods.
+        const returned = w.carry.amount - accepted;
+        if (returned > 0 && w.haulSource)
+          w.haulSource.stock = this.storedAt(w.haulSource) + returned;
+        if (accepted > 0) {
+          this.deliveryBurst(target, w.carry.resource, accepted);
+          const label = w.carry.product || w.carry.resource;
+          const targetName =
+            target.type === "townhall"
+              ? "the hall"
+              : `the ${CATALOG[target.type]?.name || target.type}`;
+          this.announce(
+            `${label[0].toUpperCase() + label.slice(1)} +${accepted} carried to ${targetName}.`,
+          );
+        }
+        this.clearCarry(w);
+        w.carry = null;
+        this.releaseHaul(w);
       }
     }
     for (const b of this.buildings)
@@ -5100,12 +5487,13 @@ export class Village {
         CATALOG[building.type]?.resource &&
         (building.type !== "farm" || this.readyGrainFields(building).length > 0) &&
         (building.paused ||
-          (building.type === "bakery" && !this.completedInns().length) ||
+          this.stockSpace(building) <= 0 ||
           building.lastRouteBlocked ||
           !this.workers.some((worker) => worker.building === building)),
     ).length;
     this.onUpdate({
       resources: { ...this.resources },
+      storage: this.storageCapacities(),
       population: this.workers.length,
       capacity: housingCapacity(this.buildings),
       day: Math.floor(this.elapsed / 120) + 1,
@@ -5116,6 +5504,14 @@ export class Village {
         const assigned = this.workers.filter(
           (w) => w.building === b || w.field === b,
         );
+        const collectors = this.workers.filter(
+          (w) => w.haulSource === b && w.phase === "haul_pickup",
+        );
+        const incoming = this.workers.filter(
+          (w) => w.haulTarget === b && w.phase === "haul_deliver",
+        );
+        const stockCap = outputCapForBuilding(b.type);
+        const stored = this.storedAt(b);
         const materialsReady = constructionMaterialsReady(b);
         const work = this.workSnapshot(
           assigned.find(
@@ -5173,8 +5569,12 @@ export class Village {
               ? "Awaiting materials"
             : b.progress < 1
             ? "Building"
-            : b.type === "bakery" && !this.completedInns().length
-              ? "Needs an Inn"
+            : stockCap && stored >= stockCap
+              ? "Full — waiting for a carrier"
+            : b.type === "school" && b.training?.waiting
+              ? "Apprentice needs housing"
+            : b.type === "school" && b.training
+              ? `Training a ${(WORKER_TYPE_LABELS[b.training.type] || "villager").toLowerCase()}`
             : b.type === "inn" && innDiners > 0
               ? `Serving ${innDiners} meal${innDiners === 1 ? "" : "s"}`
             : b.type === "inn" && finiteNumber(b.breadStock, 0) > 0
@@ -5195,10 +5595,14 @@ export class Village {
                 ? "Taking logs to Lumberyard"
               : assigned.some((w) => w.phase === "process")
                 ? "Sawing wooden planks"
-              : assigned.some((w) => w.phase === "deliver")
-                ? b.type === "bakery"
-                  ? "Taking bread to Inn"
-                  : "Delivering"
+              : assigned.some((w) => w.phase === "stock_delivery")
+                ? "Carrying the harvest in"
+              : incoming.length
+                ? b.type === "inn"
+                  ? "Bread on the way"
+                  : "Goods on the way"
+              : collectors.length
+                ? "A carrier is collecting"
               : assigned.some((w) => w.phase === "travel")
                 ? "On the way"
                 : assigned.some((w) => w.phase === "harvest")
@@ -5245,10 +5649,39 @@ export class Village {
           upgrade: b.upgrade,
           fieldStage,
           ...(b.type === "inn"
-            ? { breadStock: Math.max(0, Math.floor(finiteNumber(b.breadStock, 0))) }
+            ? {
+                breadStock: Math.max(0, Math.floor(finiteNumber(b.breadStock, 0))),
+                breadCap: Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0)),
+              }
+            : {}),
+          ...(stockCap ? { stock: stored, stockCap } : {}),
+          ...(isStoreBuilding(b.type) && b.progress === 1
+            ? {
+                storage: storageForBuilding(b.type),
+                villageStorage: this.storageCapacity(),
+                storedCaps: this.storageCapacities(),
+                stored: { ...this.resources },
+              }
             : {}),
           ...(b.type === "school" && b.progress === 1
-            ? { training: trainingOptions(this.buildings, this.workers) }
+            ? {
+                training: trainingOptions(this.buildings, this.workers),
+                trainingSession: b.training
+                  ? {
+                      type: b.training.type,
+                      label: WORKER_TYPE_LABELS[b.training.type] || "Villager",
+                      remaining: Math.max(0, Math.ceil(b.training.remaining)),
+                      progress: Math.min(
+                        1,
+                        Math.max(
+                          0,
+                          1 - b.training.remaining / TRAINING_SECONDS,
+                        ),
+                      ),
+                      waiting: Boolean(b.training.waiting),
+                    }
+                  : null,
+              }
             : {}),
         };
       }),
@@ -5334,7 +5767,7 @@ export class Village {
             regrowAt: tree.regrowAt,
           })),
         buildings: this.buildings.map(
-          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt, breadStock }) => ({
+          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt, breadStock, training, stock }) => ({
             type,
             x,
             z,
@@ -5350,6 +5783,17 @@ export class Village {
               : {}),
             ...(type === "inn"
               ? { breadStock: Math.max(0, Math.floor(finiteNumber(breadStock, 0))) }
+              : {}),
+            ...(type === "school" && training
+              ? { training: normalizedTrainingSession(type, training) }
+              : {}),
+            ...(outputCapForBuilding(type)
+              ? {
+                  stock: Math.max(
+                    0,
+                    Math.min(savedStockLimit(type), Math.floor(finiteNumber(stock, 0))),
+                  ),
+                }
               : {}),
           }),
         ),

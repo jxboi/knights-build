@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { CATALOG } from "../src/catalog.js";
+import { CATALOG, TOWNHALL_STORAGE } from "../src/catalog.js";
 import {
   finiteNumber,
   housingCapacity,
@@ -11,6 +11,7 @@ import {
   sanitizeCameraView,
   savedBuildingFits,
   safePopulation,
+  STARTING_POPULATION,
   restoredPopulation,
   sanitizeVillageName,
   parseVillageImport,
@@ -37,7 +38,14 @@ import {
   WORKER_TYPES,
   AXE_CARRY_ANGLE,
   TRAINABLE_WORKER_TYPES,
+  TRAINING_SECONDS,
   jobCapacityForWorkerType,
+  outputCapForBuilding,
+  savedStockLimit,
+  CARRIER_LOAD,
+  storageForBuilding,
+  isStoreBuilding,
+  pendingTrainingCount,
   trainingOptions,
   workerTypeForBuilding,
   workerCapacityForBuilding,
@@ -61,6 +69,7 @@ function village() {
   const v = Object.create(Village.prototype);
   Object.assign(v, {
     resources: { wood: 100, stone: 100, food: 100, wheat: 0, wine: 0 },
+    delivered: { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 },
     buildings: [],
     workers: [],
     decor: [],
@@ -522,16 +531,12 @@ test("lumberyard workers chop trees, saw planks, and wait for regrowth", () => {
   assert.equal(worker.phase, "process");
   assert.equal(worker.timer, LUMBERYARD_PROCESS_SECONDS);
   v.simulate(LUMBERYARD_PROCESS_SECONDS);
-  assert.equal(worker.phase, "deliver");
-  assert.deepEqual(worker.carry, {
-    resource: "wood",
-    amount: TREE_LOG_AMOUNT,
-    product: "wooden plank",
-  });
-  v.simulate(0.1);
-  assert.equal(v.resources.wood, 108);
-  assert.equal(lumberyard.cycles, 1);
+  // Planks stack in the yard's own store; only a carrier moves them on.
   assert.equal(worker.phase, "idle");
+  assert.equal(worker.carry, null);
+  assert.equal(lumberyard.stock, TREE_LOG_AMOUNT);
+  assert.equal(v.resources.wood, 100);
+  assert.equal(lumberyard.cycles, 1);
   assert.ok(treeRegrowthProgress(tree.regrowAt, v.elapsed) > 0);
   assert.ok(treeRegrowthProgress(tree.regrowAt, v.elapsed) < 1);
   v.simulate(TREE_REGROW_SECONDS - 0.1);
@@ -602,7 +607,7 @@ test("grain plots must connect to a completed farmhouse and can extend as a chai
   assert.equal(v.valid(9, 6, "grainfield").ok, false);
 });
 
-test("a farmer harvests only ripe connected grain and carries it to the hall", () => {
+test("a farmer harvests only ripe connected grain and stocks it at the farmhouse", () => {
   const v = village();
   const hall = { type: "townhall", progress: 1, x: 0, z: 0 };
   const farm = { type: "farm", progress: 1, x: 6, z: 6, cycles: 0 };
@@ -648,16 +653,20 @@ test("a farmer harvests only ripe connected grain and carries it to the hall", (
   assert.equal(worker.insideBuilding, false);
   assert.equal(worker.m.visible, true);
   v.simulate(4);
-  assert.equal(worker.phase, "deliver");
+  // The harvest is carried back to the farmhouse store, not to the hall.
+  assert.equal(worker.phase, "stock_delivery");
   assert.equal(worker.insideBuilding, false);
   assert.equal(worker.m.visible, true);
-  assert.deepEqual(worker.carry, { resource: "wheat", amount: 8 });
+  assert.deepEqual(worker.carry, { resource: "wheat", amount: 8, toStock: true });
+  const [farmX, farmZ] = v.jobPoint(farm, worker);
+  assert.deepEqual(worker.routeTarget, { x: farmX, z: farmZ });
   assert.equal(field.claimedBy, null);
   assert.equal(field.cycles, 1);
   assert.equal(grainGrowthStage(field.plantedAt, v.elapsed), "sown");
   v.simulate(0.1);
-  assert.equal(v.resources.wheat, 8);
-  assert.equal(farm.cycles, 1);
+  assert.equal(farm.stock, 8);
+  assert.equal(v.resources.wheat, 0);
+  assert.equal(worker.carry, null);
 });
 
 test("a baker enters the bakery before starting a production cycle", () => {
@@ -732,7 +741,7 @@ test("job posts, not just housing, cap what the School can train", () => {
   assert.match(miner.reason, /Stone mine/);
 });
 
-test("the School trains a villager per open post, then refuses", () => {
+test("the School runs a countdown, then the villager arrives", () => {
   const school = { id: "school-1", type: "school", progress: 1, cycles: 0 };
   const buildings = [
     school,
@@ -741,21 +750,102 @@ test("the School trains a villager per open post, then refuses", () => {
     { type: "house", progress: 1 },
   ];
   const v = trainingVillage(buildings, [{ id: "w0" }, { id: "w1" }]);
-  // Housing: 4 base + two cottages = 8, so there is room for six more.
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.BAKER), true);
+  // Nobody arrives yet: the School holds an apprentice for the full term.
+  assert.equal(v.workers.length, 2);
+  assert.equal(school.training.type, WORKER_TYPES.BAKER);
+  assert.equal(school.training.remaining, TRAINING_SECONDS);
+  assert.equal(pendingTrainingCount(v.buildings, WORKER_TYPES.BAKER), 1);
+  // The reserved post is not offered twice.
+  const pendingOption = trainingOptions(v.buildings, v.workers).find(
+    (option) => option.type === WORKER_TYPES.BAKER,
+  );
+  assert.equal(pendingOption.canTrain, false);
+  assert.match(pendingOption.reason, /already in training/);
+  v.updateTraining(TRAINING_SECONDS / 2);
+  assert.equal(v.workers.length, 2);
+  assert.ok(school.training.remaining > 0);
+  v.updateTraining(TRAINING_SECONDS / 2 + 0.1);
   assert.equal(v.workers.length, 3);
   assert.equal(v.workers[2].trainedType, WORKER_TYPES.BAKER);
   assert.equal(v.workers[2].workerType, WORKER_TYPES.BAKER);
+  assert.equal(school.training, null);
   assert.equal(school.cycles, 1);
-  // The single bakery only has one post.
+  // The single bakery post is now filled for good.
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.BAKER), false);
+});
+
+test("a School already training refuses a second apprentice", () => {
+  const school = { id: "school-1", type: "school", progress: 1, cycles: 0 };
+  const buildings = [
+    school,
+    { type: "lumberyard", progress: 1 },
+    { type: "house", progress: 1 },
+    { type: "house", progress: 1 },
+  ];
+  const v = trainingVillage(buildings, [{}, {}]);
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), true);
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BUILDER), false);
+  assert.equal(v.workers.length, 2);
+  // A paused School suspends the countdown rather than losing it.
+  school.paused = true;
+  const remaining = school.training.remaining;
+  v.updateTraining(5);
+  assert.equal(school.training.remaining, remaining);
+  school.paused = false;
+  v.updateTraining(TRAINING_SECONDS + 0.1);
   assert.equal(v.workers.length, 3);
-  const baker = trainingOptions(v.buildings, v.workers).find(
-    (option) => option.type === WORKER_TYPES.BAKER,
+});
+
+test("the simulation ticks School training", () => {
+  const v = village();
+  v.buildings = [];
+  v.workers = [];
+  let ticked = 0;
+  v.updateTraining = (dt) => {
+    ticked += dt;
+  };
+  v.simulate(0.5);
+  assert.equal(ticked, 0.5);
+});
+
+test("builders can be trained too, limited only by housing", () => {
+  const school = { id: "school-1", type: "school", progress: 1, cycles: 0 };
+  // No workplaces at all, so only the builder is on offer.
+  const buildings = [school, { type: "house", progress: 1 }];
+  const v = trainingVillage(buildings, [{}, {}, {}, {}, {}]);
+  const options = trainingOptions(v.buildings, v.workers);
+  const builder = options.find((option) => option.type === WORKER_TYPES.BUILDER);
+  assert.equal(builder.posts, null);
+  assert.equal(builder.canTrain, true);
+  assert.ok(
+    options
+      .filter((option) => option.type !== WORKER_TYPES.BUILDER)
+      .every((option) => !option.canTrain),
   );
-  assert.equal(baker.trained, 1);
-  assert.equal(baker.posts, 1);
-  assert.equal(baker.canTrain, false);
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BUILDER), true);
+  v.updateTraining(TRAINING_SECONDS + 0.1);
+  assert.equal(v.workers.length, 6);
+  assert.equal(v.workers[5].trainedType, WORKER_TYPES.BUILDER);
+  // Housing is now full: 4 base + one cottage = 6 beds.
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BUILDER), false);
+});
+
+test("a graduate waits at the School until a bed is free", () => {
+  const school = { id: "school-1", type: "school", progress: 1, cycles: 0 };
+  const cottage = { type: "house", progress: 1 };
+  const buildings = [school, cottage];
+  const v = trainingVillage(buildings, [{}, {}, {}, {}, {}]);
+  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BUILDER), true);
+  // A cottage is relocated mid-course and the village loses its spare bed.
+  cottage.progress = 0.3;
+  v.updateTraining(TRAINING_SECONDS + 0.1);
+  assert.equal(v.workers.length, 5);
+  assert.equal(school.training.waiting, true);
+  cottage.progress = 1;
+  v.updateTraining(0.1);
+  assert.equal(v.workers.length, 6);
+  assert.equal(school.training, null);
 });
 
 test("training stops when the village runs out of housing", () => {
@@ -789,6 +879,8 @@ test("training at the School adds a real villager wearing the trade's gear", () 
   ];
   v.workers = [];
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.BAKER), true);
+  assert.equal(v.workers.length, 0);
+  v.updateTraining(TRAINING_SECONDS + 0.1);
   const trained = v.workers[v.workers.length - 1];
   assert.equal(trained.trainedType, WORKER_TYPES.BAKER);
   assert.equal(trained.workerType, WORKER_TYPES.BAKER);
@@ -832,8 +924,6 @@ test("only a completed, working School trains anyone", () => {
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), false);
   site.paused = false;
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), true);
-  // Builders arrive with cottages and are never trained here.
-  assert.equal(v.trainWorker("school-1", WORKER_TYPES.BUILDER), false);
   assert.equal(v.trainWorker("bakery-1", WORKER_TYPES.WOODCUTTER), false);
 });
 
@@ -939,14 +1029,11 @@ test("a vintner treads grapes in the open bay and delivers wine to the hall", ()
   );
   worker.timer = 0;
   v.simulate(0.1);
-  assert.equal(worker.phase, "deliver");
-  assert.deepEqual(worker.carry, {
-    resource: "wine",
-    amount: CATALOG.vineyard.amount,
-  });
-  v.simulate(0.1);
-  assert.equal(v.resources.wine, CATALOG.vineyard.amount);
-  assert.equal(v.delivered.wine, CATALOG.vineyard.amount);
+  // The vintner stays at the vat; the wine waits here for a carrier.
+  assert.equal(worker.phase, "work");
+  assert.equal(worker.carry, undefined);
+  assert.equal(vineyard.stock, CATALOG.vineyard.amount);
+  assert.equal(v.resources.wine, 0);
   assert.equal(vineyard.cycles, 1);
 });
 
@@ -1199,7 +1286,7 @@ test("temporary worker occupancy does not make a destination unreachable", () =>
   assert.equal(v.route(mover, 4, 0), true);
   assert.deepEqual(mover.path.at(-1).toArray(), [4, 0, 0]);
 });
-test("builder completes structure and welcomes two workers", () => {
+test("a finished cottage adds beds, but no villagers of its own", () => {
   const v = village(),
     m = new THREE.Object3D();
   const b = { type: "house", progress: 0, m, scaffolding: {} };
@@ -1217,8 +1304,11 @@ test("builder completes structure and welcomes two workers", () => {
   assert.equal(b.progress, 1);
   assert.equal(m.scale.y, 1);
   assert.equal(w.phase, "idle");
-  assert.equal(welcomed, 2);
-  assert.equal(v.activity, "Cottage is ready. 2 new villagers have arrived.");
+  // Villagers now come from the School, so the cottage only opens up housing.
+  assert.equal(welcomed, 0);
+  assert.equal(housingCapacity(v.buildings), 6);
+  assert.match(v.activity, /^Cottage is ready\./);
+  assert.match(v.activity, /School/);
   assert.equal(v.activityLog[0].message, v.activity);
 });
 
@@ -1358,15 +1448,16 @@ test("activity history moves repeated updates to the front without duplicates", 
   );
 });
 
-test("resources are credited only on delivery, not at the job site", () => {
+test("production fills the building's own store, never the village pool", () => {
   const v = village();
-  const b = {
-    type: "lumberyard",
+  const mine = {
+    type: "mine",
     progress: 1,
     m: new THREE.Object3D(),
     x: 5,
     z: 5,
     cycles: 0,
+    stock: 0,
   };
   const hall = {
     type: "townhall",
@@ -1380,35 +1471,166 @@ test("resources are credited only on delivery, not at the job site", () => {
     path: [],
     phase: "work",
     timer: 0,
-    building: b,
+    building: mine,
   };
-  v.buildings = [hall, b];
+  v.buildings = [hall, mine];
   v.workers = [w];
-  let routeTarget;
-  v.route = (_worker, x, z) => {
-    routeTarget = [x, z];
-    return true;
-  };
   v.simulate(0.1);
-  assert.equal(v.resources.wood, 100);
-  assert.deepEqual(w.carry, { resource: "wood", amount: 8 });
-  assert.equal(w.phase, "deliver");
-  assert.deepEqual(routeTarget, v.jobPoint(hall, w));
-  v.simulate(0.1);
-  assert.equal(v.resources.wood, 108);
-  assert.equal(v.gathered, 8);
-  assert.equal(b.cycles, 1);
-  assert.equal(v.activity, "Wood +8 delivered to the hall.");
+  assert.equal(v.resources.stone, 100);
+  assert.equal(mine.stock, CATALOG.mine.amount);
+  assert.equal(mine.cycles, 1);
+  // The miner keeps their post; hauling is a carrier's job now.
+  assert.equal(w.phase, "work");
+  assert.equal(w.carry, undefined);
 });
-test("blocked deliveries wait instead of crediting resources remotely", () => {
+
+test("a producer stops once its own store is full", () => {
   const v = village();
-  const b = {
+  const bakery = {
+    type: "bakery",
+    progress: 1,
+    m: new THREE.Object3D(),
+    x: 5,
+    z: 5,
+    cycles: 0,
+    stock: CATALOG.bakery.outputCap,
+  };
+  v.resources.wheat = 50;
+  const w = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "work",
+    timer: 0,
+    building: bakery,
+  };
+  v.buildings = [bakery];
+  v.workers = [w];
+  v.simulate(0.1);
+  assert.equal(w.waitingForStock, true);
+  // The baker steps away from a full oven so they can haul or take other work.
+  assert.equal(w.phase, "idle");
+  assert.equal(w.building, null);
+  // No wheat is burned and no bread appears while the oven is backed up.
+  assert.equal(v.resources.wheat, 50);
+  assert.equal(bakery.stock, CATALOG.bakery.outputCap);
+  assert.equal(bakery.cycles, 0);
+  assert.equal(
+    v.activity,
+    "The Bakery store is full. A carrier must collect the goods.",
+  );
+});
+
+test("a carrier collects a full building and credits the pool on arrival", () => {
+  const v = village();
+  const bakery = {
+    type: "bakery",
+    progress: 1,
+    m: new THREE.Object3D(),
+    x: 6,
+    z: 0,
+    cycles: 0,
+    stock: 5,
+  };
+  const hall = {
+    type: "townhall",
+    progress: 1,
+    x: 0,
+    z: 0,
+    m: new THREE.Object3D(),
+  };
+  const carrier = {
+    id: "carrier-1",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+    workerType: WORKER_TYPES.CARRIER,
+  };
+  v.buildings = [hall, bakery];
+  v.workers = [carrier];
+  v.route = () => true;
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+  v.resources.food = 0;
+
+  v.simulate(0.1);
+  assert.equal(carrier.phase, "haul_pickup");
+  assert.equal(carrier.haulSource, bakery);
+
+  carrier.path = [];
+  v.simulate(0.1);
+  // Picking up empties the bakery so its baker can start again.
+  assert.equal(bakery.stock, 0);
+  assert.equal(carrier.phase, "haul_deliver");
+  assert.equal(carrier.carry.amount, 5);
+  assert.equal(carrier.carry.resource, "food");
+  assert.equal(carrier.haulTarget, hall);
+  assert.equal(v.resources.food, 0);
+
+  carrier.path = [];
+  v.simulate(0.1);
+  assert.equal(v.resources.food, 5);
+  assert.equal(v.delivered.food, 5);
+  assert.equal(carrier.carry, null);
+  assert.equal(carrier.phase, "idle");
+});
+
+test("bread fills the canteen first and only then spills into a store", () => {
+  const v = village();
+  const inn = {
+    id: "inn-1",
+    type: "inn",
+    progress: 1,
+    x: 2,
+    z: 0,
+    m: new THREE.Object3D(),
+    breadStock: CATALOG.inn.breadCap - 2,
+  };
+  const hall = {
+    type: "townhall",
+    progress: 1,
+    x: 8,
+    z: 0,
+    m: new THREE.Object3D(),
+  };
+  const bakery = {
+    type: "bakery",
+    progress: 1,
+    x: 0,
+    z: 0,
+    m: new THREE.Object3D(),
+    cycles: 0,
+    stock: 5,
+  };
+  v.buildings = [hall, inn, bakery];
+  v.workers = [];
+  v.resources.food = 0;
+  const worker = { m: new THREE.Object3D() };
+
+  // Two seats left in the pantry, so the Inn is still the nearest valid target.
+  assert.equal(v.haulDestination(worker, "food"), inn);
+  assert.equal(v.storeResource(inn, "food", 5), 2);
+  assert.equal(inn.breadStock, CATALOG.inn.breadCap);
+  assert.equal(v.resources.food, 2);
+
+  // Full canteen: the rest of the load goes to a store instead.
+  assert.equal(v.haulDestination(worker, "food"), hall);
+  assert.equal(v.storeResource(hall, "food", 3), 3);
+  assert.equal(v.resources.food, 5);
+});
+
+test("a blocked carrier waits instead of crediting resources remotely", () => {
+  const v = village();
+  const yard = {
     type: "lumberyard",
     progress: 1,
     m: new THREE.Object3D(),
     x: 5,
     z: 5,
     cycles: 0,
+    stock: 8,
   };
   const hall = {
     type: "townhall",
@@ -1417,33 +1639,116 @@ test("blocked deliveries wait instead of crediting resources remotely", () => {
     z: -3,
     m: new THREE.Object3D(),
   };
-  const w = {
+  const carrier = {
     m: new THREE.Object3D(),
     path: [],
-    phase: "work",
+    phase: "haul_deliver",
     timer: 0,
-    building: b,
+    building: null,
+    haulSource: yard,
+    haulTarget: hall,
+    deliveryRetry: 1.5,
+    carry: { resource: "wood", amount: 8, haul: true },
+    workerType: WORKER_TYPES.CARRIER,
   };
-  v.buildings = [hall, b];
-  v.workers = [w];
+  v.buildings = [hall, yard];
+  v.workers = [carrier];
   v.route = () => false;
-  v.simulate(0.1);
-  assert.equal(w.phase, "deliver");
-  assert.deepEqual(w.carry, { resource: "wood", amount: 8 });
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
   v.simulate(6);
   assert.equal(v.resources.wood, 100);
-  assert.equal(b.cycles, 0);
-  assert.deepEqual(w.carry, { resource: "wood", amount: 8 });
+  assert.equal(carrier.phase, "haul_deliver");
+  assert.deepEqual(carrier.carry, { resource: "wood", amount: 8, haul: true });
 });
+
+test("a full village hands the load back rather than destroying it", () => {
+  const v = village();
+  const hall = {
+    type: "townhall",
+    progress: 1,
+    x: 0,
+    z: 0,
+    m: new THREE.Object3D(),
+  };
+  const mine = {
+    type: "mine",
+    progress: 1,
+    x: 4,
+    z: 0,
+    m: new THREE.Object3D(),
+    cycles: 0,
+    stock: 0,
+  };
+  v.buildings = [hall, mine];
+  v.resources.stone = TOWNHALL_STORAGE;
+  const carrier = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "haul_deliver",
+    timer: 0,
+    building: null,
+    haulSource: mine,
+    haulTarget: hall,
+    deliveryRetry: 0,
+    carry: { resource: "stone", amount: 6, haul: true },
+    workerType: WORKER_TYPES.CARRIER,
+  };
+  v.workers = [carrier];
+  v.route = () => true;
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+  assert.equal(v.storageSpace("stone"), 0);
+  v.simulate(0.1);
+  assert.equal(v.resources.stone, TOWNHALL_STORAGE);
+  assert.equal(mine.stock, 6);
+  assert.equal(carrier.carry, null);
+});
+
+test("a Storehouse raises the ceiling every resource is measured against", () => {
+  const v = village();
+  const hall = { type: "townhall", progress: 1, x: 0, z: 0 };
+  const store = { type: "storehouse", progress: 1, x: 6, z: 0 };
+  v.buildings = [hall];
+  assert.equal(v.storageCapacity(), TOWNHALL_STORAGE);
+  v.buildings = [hall, store];
+  assert.equal(
+    v.storageCapacity(),
+    TOWNHALL_STORAGE + CATALOG.storehouse.storage,
+  );
+  // An unfinished Storehouse holds nothing yet.
+  store.progress = 0.5;
+  assert.equal(v.storageCapacity(), TOWNHALL_STORAGE);
+});
+
+test("restoring a village trims resources to the storage it actually has", () => {
+  const v = village();
+  v.buildings = [{ type: "townhall", progress: 1, x: 0, z: 0 }];
+  v.resources = {
+    wood: TOWNHALL_STORAGE + 60,
+    stone: 10,
+    food: 5,
+    wheat: 0,
+    wine: 0,
+  };
+  const spilled = v.clampResourcesToStorage();
+  assert.equal(spilled, 60);
+  assert.equal(v.resources.wood, TOWNHALL_STORAGE);
+  assert.equal(v.resources.stone, 10);
+});
+
 test("windmill waits for input rather than producing free food", () => {
   const v = village();
   v.resources.food = 1;
+  const windmill = { type: "windmill", cycles: 0, stock: 0 };
   const w = {
     m: new THREE.Object3D(),
     path: [],
     phase: "work",
     timer: 0,
-    building: { type: "windmill" },
+    building: windmill,
   };
   v.workers = [w];
   v.simulate(1);
@@ -1456,8 +1761,8 @@ test("windmill waits for input rather than producing free food", () => {
   v.route = () => true;
   v.simulate(0.1);
   assert.equal(v.resources.food, 0);
-  assert.equal(w.carry.amount, 8);
-  assert.equal(v.activity, "Windmill has food again.");
+  assert.equal(windmill.stock, 8);
+  assert.equal(v.activity, "Food +8 is ready at the Windmill.");
 });
 
 test("building inspector reports the worker's current phase", () => {
@@ -1471,10 +1776,13 @@ test("building inspector reports the worker's current phase", () => {
     cycles: 2,
   };
   v.buildings = [b];
-  v.workers = [{ building: b, phase: "deliver" }];
+  v.workers = [
+    { building: b, phase: "work", timer: 4, workDuration: 8 },
+    { haulSource: b, phase: "haul_pickup" },
+  ];
   v.emit();
   assert.equal(state.buildings[0].workers, 1);
-  assert.equal(state.buildings[0].status, "Delivering");
+  assert.equal(state.buildings[0].status, "A carrier is collecting");
 });
 
 test("building snapshots expose live production-cycle progress", () => {
@@ -1799,7 +2107,8 @@ test("saved population cannot exceed completed cottage housing", () => {
   ];
   assert.equal(housingCapacity(buildings), 6);
   assert.equal(safePopulation(24, housingCapacity(buildings)), 6);
-  assert.equal(safePopulation("not-a-number", 6), 6);
+  // A village with no readable population opens with the starting crew.
+  assert.equal(safePopulation("not-a-number", 6), STARTING_POPULATION);
   assert.equal(restoredPopulation(0, 6), 1);
   assert.equal(restoredPopulation(24, 6), 6);
   assert.equal(restoredPopulation(0, 0), 0);
@@ -2166,42 +2475,63 @@ test("feasts spend food and pause controls release current workers", () => {
 });
 
 
-test("bakery waits for wheat, then delivers bread to the Inn", () => {
+test("a bakery waits for wheat, then stacks loaves up to its own limit", () => {
   const v = village();
-  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0 };
-  const inn = { id: "inn-1", type: "inn", progress: 1, x: 10, z: 6, cycles: 0, paused: false, breadStock: 0 };
-  const worker = { m: new THREE.Object3D(), path: [], phase: "work", timer: 0, building: bakery };
+  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0, stock: 0 };
+  const inn = {
+    id: "inn-1",
+    type: "inn",
+    progress: 1,
+    x: 10,
+    z: 6,
+    cycles: 0,
+    paused: false,
+    breadStock: 0,
+  };
+  const worker = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "work",
+    timer: 0,
+    building: bakery,
+  };
   v.buildings = [bakery, inn];
   v.workers = [worker];
   v.route = () => true;
   v.showCarry = () => {};
   v.clearCarry = () => {};
   v.deliveryBurst = () => {};
+  v.resources.wheat = 0;
   v.simulate(1);
   assert.equal(worker.waitingForInput, true);
-  assert.equal(worker.carry, undefined);
-  assert.equal(v.resources.food, 100);
+  assert.equal(bakery.stock, 0);
+
   v.resources.wheat = 8;
   v.simulate(4);
   assert.equal(worker.waitingForInput, false);
-  assert.equal(v.resources.wheat, 4);
-  assert.deepEqual(worker.carry, {
-    resource: "food",
-    amount: 8,
-    product: "bread",
-    destinationId: "inn-1",
-  });
+  assert.equal(v.resources.wheat, 8 - CATALOG.bakery.input);
+  // Loaves land in the bakery, not in the village pool or the Inn.
+  assert.equal(bakery.stock, CATALOG.bakery.outputCap);
   assert.equal(v.resources.food, 100);
-  v.simulate(.1);
-  assert.equal(v.resources.food, 108);
-  assert.equal(inn.breadStock, 8);
-  assert.equal(v.resources.wheat, 4);
+  assert.equal(inn.breadStock, 0);
+  assert.equal(bakery.cycles, 1);
+
+  // The oven is now full, so the next cycle refuses to burn more wheat.
+  const wheatLeft = v.resources.wheat;
+  worker.timer = 0;
+  worker.phase = "work";
+  worker.building = bakery;
+  v.simulate(0.1);
+  assert.equal(worker.waitingForStock, true);
+  assert.equal(v.resources.wheat, wheatLeft);
+  assert.equal(bakery.stock, CATALOG.bakery.outputCap);
   assert.equal(bakery.cycles, 1);
 });
 
-test("bakery does not consume wheat until a completed Inn is available", () => {
+test("a bakery bakes without an Inn, because a store can take the bread", () => {
   const v = village();
-  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0 };
+  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0, stock: 0 };
+  const hall = { type: "townhall", progress: 1, x: 0, z: 0 };
   const worker = {
     m: new THREE.Object3D(),
     path: [],
@@ -2210,12 +2540,12 @@ test("bakery does not consume wheat until a completed Inn is available", () => {
     building: bakery,
   };
   v.resources.wheat = 8;
-  v.buildings = [bakery];
+  v.buildings = [bakery, hall];
   v.workers = [worker];
   v.simulate(1);
-  assert.equal(worker.waitingForInn, true);
-  assert.equal(worker.carry, undefined);
-  assert.equal(v.resources.wheat, 8);
+  assert.equal(worker.waitingForStock, false);
+  assert.equal(bakery.stock, CATALOG.bakery.outputCap);
+  assert.equal(v.resources.wheat, 8 - CATALOG.bakery.input);
 });
 
 test("hungry workers reserve an Inn seat, eat one bread, and return satisfied", () => {
@@ -2329,16 +2659,29 @@ test("the real route loop carries Bakery bread to the Inn and serves a meal", ()
     carry: null,
     hunger: 0.95,
   };
+  const hall = {
+    id: "hall-1",
+    type: "townhall",
+    progress: 1,
+    x: 0,
+    z: 4,
+    cycles: 0,
+    paused: false,
+    m: new THREE.Object3D(),
+  };
   v.resources.wheat = 40;
-  v.buildings = [bakery, inn];
+  v.resources.food = 0;
+  v.buildings = [bakery, inn, hall];
   v.workers = [worker];
   v.showCarry = () => {};
   v.clearCarry = () => {};
   v.deliveryBurst = () => {};
-  for (let step = 0; step < 900; step++) v.simulate(0.1);
+  for (let step = 0; step < 1800; step++) v.simulate(0.1);
   assert.ok(bakery.cycles >= 1);
-  assert.ok(inn.cycles >= 1);
+  // The one villager bakes, then carries the loaves out, then eats one.
+  assert.ok(bakery.stock < CATALOG.bakery.outputCap || v.delivered.food > 0);
   assert.ok(v.delivered.food >= CATALOG.bakery.amount);
+  assert.ok(inn.cycles >= 1);
 });
 
 test("path totals discount the starter village's own roads", () => {
@@ -2667,4 +3010,99 @@ test("an empty grass field and a scene-less village stay harmless", () => {
   headless.scene = { remove() {} };
   assert.equal(headless.ensureRoadSurface(), null);
   assert.equal(headless.rebuildRoadSurface(), false);
+});
+
+test("a Storehouse is a carrier's post, so the School can train more of them", () => {
+  assert.equal(workerTypeForBuilding("storehouse"), WORKER_TYPES.CARRIER);
+  assert.equal(workerTypeForBuilding("townhall"), WORKER_TYPES.CARRIER);
+  // The town hall alone posts carriers, so a new village can move goods
+  // before it can afford its first Storehouse.
+  const hall = { type: "townhall", progress: 1 };
+  const store = { type: "storehouse", progress: 1 };
+  assert.equal(
+    jobCapacityForWorkerType([hall], WORKER_TYPES.CARRIER),
+    workerCapacityForBuilding("townhall"),
+  );
+  assert.equal(
+    jobCapacityForWorkerType([hall, store], WORKER_TYPES.CARRIER),
+    workerCapacityForBuilding("townhall") + workerCapacityForBuilding("storehouse"),
+  );
+  const option = trainingOptions(
+    [hall, store, { type: "house", progress: 1 }],
+    [],
+  ).find((entry) => entry.type === WORKER_TYPES.CARRIER);
+  assert.ok(option, "carriers appear in the School's training list");
+  assert.equal(option.label, "Carrier");
+});
+
+test("stores hold goods and producers hold a capped backlog", () => {
+  assert.equal(storageForBuilding("townhall"), TOWNHALL_STORAGE);
+  assert.equal(storageForBuilding("storehouse"), CATALOG.storehouse.storage);
+  assert.equal(storageForBuilding("bakery"), 0);
+  assert.equal(isStoreBuilding("storehouse"), true);
+  assert.equal(isStoreBuilding("bakery"), false);
+  assert.equal(outputCapForBuilding("bakery"), 5);
+  assert.equal(outputCapForBuilding("storehouse"), 0);
+});
+
+test("a building with a full store is passed over when work is handed out", () => {
+  const v = village();
+  const full = {
+    type: "mine",
+    progress: 1,
+    x: 2,
+    z: 0,
+    cycles: 0,
+    m: new THREE.Object3D(),
+    stock: CATALOG.mine.outputCap,
+  };
+  const open = {
+    type: "lumberyard",
+    progress: 1,
+    x: 10,
+    z: 0,
+    cycles: 0,
+    m: new THREE.Object3D(),
+    stock: 0,
+  };
+  const w = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+  };
+  w.m.position.set(0, 0, 0);
+  v.buildings = [full, open];
+  v.workers = [w];
+  v.route = () => true;
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  // The nearer mine is skipped because nobody can collect from it; the
+  // villager walks past it to the yard that still has room.
+  v.assign(w);
+  assert.notEqual(w.building, full);
+});
+
+test("a saved producer keeps the goods still waiting for a carrier", () => {
+  const stock = 3;
+  const saved = {
+    type: "bakery",
+    stock,
+    cycles: 1,
+  };
+  // The save shape only carries a stock figure for buildings that buffer.
+  assert.ok(outputCapForBuilding(saved.type) > 0);
+  const clamped = Math.max(
+    0,
+    Math.min(outputCapForBuilding(saved.type), Math.floor(saved.stock)),
+  );
+  assert.equal(clamped, stock);
+  // A forged figure is still bounded, with one carrier load of headroom for a
+  // load a full village handed back.
+  assert.equal(
+    Math.max(0, Math.min(savedStockLimit("bakery"), Math.floor(9999))),
+    CATALOG.bakery.outputCap + CARRIER_LOAD,
+  );
+  assert.equal(savedStockLimit("storehouse"), 0);
 });
