@@ -81,6 +81,7 @@ export const grassCandidates = (count = GRASS_COUNT, seedValue = WORLD_SEED + 1)
 // squares. Every tile samples a single shared texture through world-space UVs,
 // so the stones run straight across tile joins no matter how a path is drawn.
 const ROAD_PATTERN_TILES = 4;
+// Still used for the build-palette thumbnail, which renders a single lone tile.
 const applyRoadUvs = (geometry, x, z) => {
   const position = geometry.attributes.position;
   const uv = geometry.attributes.uv;
@@ -91,6 +92,76 @@ const applyRoadUvs = (geometry, x, z) => {
       (z + position.getZ(i)) / ROAD_PATTERN_TILES,
     );
   uv.needsUpdate = true;
+  return geometry;
+};
+export const ROAD_TILE = Object.freeze({ size: 1.02, height: 0.04, y: 0.002 });
+export const ROAD_TINTS = Object.freeze(["#f4f2ea", "#ebe8de", "#f7f5ed"]);
+let roadTileTemplate = null;
+const roadTemplate = () => {
+  if (!roadTileTemplate) {
+    const geometry = new THREE.BoxGeometry(
+      ROAD_TILE.size,
+      ROAD_TILE.height,
+      ROAD_TILE.size,
+    );
+    roadTileTemplate = {
+      position: Float32Array.from(geometry.attributes.position.array),
+      normal: Float32Array.from(geometry.attributes.normal.array),
+      index: Uint16Array.from(geometry.index.array),
+      vertexCount: geometry.attributes.position.count,
+    };
+    geometry.dispose();
+  }
+  return roadTileTemplate;
+};
+// Paths used to be one mesh, one geometry and one material per tile, so every
+// tile a player laid cost another draw call for the rest of the session. They
+// are merged into a single surface instead. UVs were already world-space, so
+// baking them per vertex keeps the cobbles running unbroken across tile joins,
+// and the per-tile tint moves from the material into a vertex-color attribute.
+export const buildRoadSurfaceGeometry = (tiles = []) => {
+  const geometry = new THREE.BufferGeometry();
+  if (!tiles.length) return geometry;
+  const template = roadTemplate();
+  const verts = template.vertexCount;
+  const stride = template.index.length;
+  const positions = new Float32Array(tiles.length * verts * 3);
+  const normals = new Float32Array(tiles.length * verts * 3);
+  const uvs = new Float32Array(tiles.length * verts * 2);
+  const colors = new Float32Array(tiles.length * verts * 3);
+  const indices = new Uint32Array(tiles.length * stride);
+  const tint = new THREE.Color();
+  tiles.forEach((tile, t) => {
+    const vertexBase = t * verts;
+    tint.set(tile.tint || ROAD_TINTS[0]);
+    for (let i = 0; i < verts; i++) {
+      const from = i * 3;
+      const to = (vertexBase + i) * 3;
+      const localX = template.position[from];
+      const localZ = template.position[from + 2];
+      positions[to] = localX + tile.x;
+      positions[to + 1] = template.position[from + 1] + ROAD_TILE.y;
+      positions[to + 2] = localZ + tile.z;
+      normals[to] = template.normal[from];
+      normals[to + 1] = template.normal[from + 1];
+      normals[to + 2] = template.normal[from + 2];
+      colors[to] = tint.r;
+      colors[to + 1] = tint.g;
+      colors[to + 2] = tint.b;
+      const uvAt = (vertexBase + i) * 2;
+      uvs[uvAt] = (tile.x + localX) / ROAD_PATTERN_TILES;
+      uvs[uvAt + 1] = (tile.z + localZ) / ROAD_PATTERN_TILES;
+    }
+    const indexBase = t * stride;
+    for (let i = 0; i < stride; i++)
+      indices[indexBase + i] = template.index[i] + vertexBase;
+  });
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.computeBoundingSphere();
   return geometry;
 };
 // Workers are small on screen, but giving them a little extra room keeps their
@@ -219,8 +290,8 @@ export const sanitizeCameraView = (view) => {
     zoom: clamp(finiteNumber(view.zoom, 1), 0.65, 2.4),
   };
 };
-// The woodcutter shoulders the axe between swings; the chop animation and
-// the rest pose both work from this angle.
+// The woodcutter shoulders the axe and the miner his pick between swings; the
+// swing animations and the rest poses both work from this angle.
 export const AXE_CARRY_ANGLE = -0.25;
 export const WORKER_TYPES = Object.freeze({
   BUILDER: "builder",
@@ -413,6 +484,10 @@ export class Village {
     this.lanternLights = [];
     this.lanternReaim = 0;
     this.roads = new Set();
+    this.roadTiles = new Map();
+    this.roadSurfaceMesh = null;
+    this.roadsDirty = false;
+    this.grassField = null;
     this.baseRoads = new Set();
     this.resources = { wood: 140, stone: 95, food: 80, wheat: 0, wine: 0 };
     this.name = DEFAULT_VILLAGE_NAME;
@@ -732,18 +807,31 @@ export class Village {
       }),
     );
     this.scene.add(this.water);
-    // Sandy river banks follow the water's curve.
-    for (let z = -65; z < 65; z += 0.6) {
-      for (const side of [0, 8]) {
-        this.mesh(
-          new THREE.CircleGeometry(0.69, 7),
-          "#b8b47c",
-          riverX(z) + side,
-          0.001,
-          z,
-        ).rotation.x = -Math.PI / 2;
-      }
-    }
+    // Sandy river banks follow the water's curve. Every disc is the same opaque
+    // circle in the same colour and none of them ever move, so they ride in a
+    // single instanced draw rather than ~430 meshes with ~430 materials.
+    const bank = [];
+    for (let z = -65; z < 65; z += 0.6)
+      for (const side of [0, 8]) bank.push([riverX(z) + side, z]);
+    this.riverBank = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(0.69, 7),
+      new THREE.MeshStandardMaterial({
+        color: "#b8b47c",
+        roughness: 1,
+        flatShading: true,
+      }),
+      bank.length,
+    );
+    this.riverBank.receiveShadow = true;
+    const bankPose = new THREE.Object3D();
+    bankPose.rotation.x = -Math.PI / 2;
+    bank.forEach(([x, z], index) => {
+      bankPose.position.set(x, 0.001, z);
+      bankPose.updateMatrix();
+      this.riverBank.setMatrixAt(index, bankPose.matrix);
+    });
+    this.riverBank.instanceMatrix.needsUpdate = true;
+    this.scene.add(this.riverBank);
     for (let x = -16; x <= 13; x++)
       for (let z of [0, 1]) this.addRoad(x, z, false, true);
     for (let z = -15; z <= 14; z++)
@@ -928,22 +1016,94 @@ export class Village {
     if (this.roads.has(key)) return;
     this.roads.add(key);
     if (base) this.baseRoads.add(key);
-    const m = this.mesh(
-      applyRoadUvs(new THREE.BoxGeometry(1.02, 0.04, 1.02), x, z),
-      ["#f4f2ea", "#ebe8de", "#f7f5ed"][Math.floor(rand() * 3)],
+    this.roadTiles ||= new Map();
+    this.roadTiles.set(key, {
       x,
-      0.002,
       z,
-    );
-    const surface = this.roadSurfaceTexture();
-    if (surface) {
-      m.material.map = surface;
-      m.material.needsUpdate = true;
-    }
-    m.userData.road = true;
+      tint: ROAD_TINTS[Math.floor(rand() * ROAD_TINTS.length)],
+    });
+    // Painting a path calls this once per tile; the surface is rebuilt once on
+    // the next frame instead of once per tile.
+    this.roadsDirty = true;
     if (custom) {
       this.created.road = (this.created.road || 0) + 1;
     }
+  }
+  // Grass was ~350 meshes with ~350 unique materials, none of which ever moved
+  // apart from a shared sway. One instanced draw replaces all of them; the per
+  // blade size lives in the instance scale and the two tints in instance color.
+  buildGrassField(blades = []) {
+    if (!blades.length || typeof this.scene?.add !== "function") return null;
+    const mesh = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(1, 1, 3),
+      new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true }),
+      blades.length,
+    );
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.receiveShadow = true;
+    const tint = new THREE.Color();
+    blades.forEach((blade, index) => {
+      tint.set(blade.color);
+      mesh.setColorAt(index, tint);
+    });
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.scene.add(mesh);
+    this.grassField = { mesh, blades, dummy: new THREE.Object3D(), settled: false };
+    this.updateGrassField(0, 0);
+    return mesh;
+  }
+  updateGrassField(time = 0, motion = 1) {
+    const field = this.grassField;
+    if (!field) return false;
+    // With reduced motion the blades never move, so they are posed once and the
+    // per-frame matrix upload is skipped entirely.
+    if (!motion && field.settled) return false;
+    const { mesh, blades, dummy } = field;
+    for (let i = 0; i < blades.length; i++) {
+      const blade = blades[i];
+      dummy.position.set(blade.x, 0.12, blade.z);
+      dummy.rotation.set(
+        0,
+        0,
+        blade.rotationZ +
+          Math.sin(time * blade.speed + blade.phase) * blade.amount * motion,
+      );
+      dummy.scale.set(blade.radius, blade.height, blade.radius);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    field.settled = !motion;
+    return true;
+  }
+  ensureRoadSurface() {
+    if (typeof this.scene?.add !== "function") return null;
+    if (!this.roadSurfaceMesh) {
+      const material = new THREE.MeshStandardMaterial({
+        roughness: 1,
+        flatShading: true,
+        vertexColors: true,
+      });
+      const surface = this.roadSurfaceTexture();
+      if (surface) material.map = surface;
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+      mesh.receiveShadow = true;
+      mesh.userData.road = true;
+      this.scene.add(mesh);
+      this.roadSurfaceMesh = mesh;
+    }
+    return this.roadSurfaceMesh;
+  }
+  rebuildRoadSurface() {
+    this.roadsDirty = false;
+    const mesh = this.ensureRoadSurface();
+    if (!mesh) return false;
+    const tiles = [...(this.roadTiles?.values() || [])];
+    const next = buildRoadSurfaceGeometry(tiles);
+    mesh.geometry.dispose();
+    mesh.geometry = next;
+    mesh.visible = tiles.length > 0;
+    return true;
   }
   async load() {
     try {
@@ -1174,6 +1334,7 @@ export class Village {
         }
         if (tree) this.updateTreeVisual(this.decor[this.decor.length - 1]);
       }
+      const grass = [];
       for (const blade of grassCandidates()) {
         const { x, z } = blade;
         if (x > riverX(z) - 0.5) continue;
@@ -1182,20 +1343,9 @@ export class Village {
           this.roads.has(`${Math.round(x)},${Math.round(z)}`)
         )
           continue;
-        const m = this.mesh(
-          new THREE.ConeGeometry(blade.radius, blade.height, 3),
-          blade.color,
-          x,
-          0.12,
-          z,
-        );
-        m.rotation.z = blade.rotationZ;
-        m.userData.baseZ = m.rotation.z;
-        m.userData.phase = blade.phase;
-        m.userData.speed = blade.speed;
-        m.userData.amount = blade.amount;
-        this.swayers.push(m);
+        grass.push(blade);
       }
+      this.buildGrassField(grass);
       const bankRandom = createRandom(WORLD_SEED + 2);
       for (let z = -28; z < 28; z += 2.4) {
         const m = this.model("rock", riverX(z) - 0.3, z);
@@ -2602,10 +2752,8 @@ export class Village {
       return false;
     }
     this.roads.delete(key);
-    const roadMesh = this.scene.children.find(
-      (child) => child.userData?.road && child.position.x === x && child.position.z === z,
-    );
-    if (roadMesh) this.disposeOwnedObject(roadMesh);
+    this.roadTiles?.delete(key);
+    this.roadsDirty = true;
     this.created = reconcileRoadCount(this.created, this.roads, this.baseRoads);
     this.resources.stone += CATALOG.road.cost.stone;
     const message = "Path removed. 1 stone returned.";
@@ -2898,8 +3046,8 @@ export class Village {
         roughness: 0.8,
         flatShading: true,
       }),
-      // Only the woodcutter wears these, so they keep fixed colours instead of
-      // joining the per-role palette.
+      // Role props with colours of their own, rather than palette entries every
+      // worker would carry: the woodcutter's hat and satchel, the baker's loaves.
       straw: new THREE.MeshStandardMaterial({
         color: "#e3b551",
         roughness: 0.92,
@@ -2908,6 +3056,11 @@ export class Village {
       moss: new THREE.MeshStandardMaterial({
         color: "#5f7a3e",
         roughness: 0.92,
+        flatShading: true,
+      }),
+      bread: new THREE.MeshStandardMaterial({
+        color: "#c98c43",
+        roughness: 0.9,
         flatShading: true,
       }),
     };
@@ -2954,13 +3107,19 @@ export class Village {
     woodcutterHat.children[2].position.y = 0.886;
     woodcutterHat.children[2].rotation.x = Math.PI / 2;
     const minerHelmet = addHeadgear(WORKER_TYPES.MINER, [
-      part(new THREE.CylinderGeometry(0.155, 0.135, 0.08, 8), materials.metal),
-      part(new THREE.BoxGeometry(0.2, 0.035, 0.18), materials.metal),
-      part(new THREE.SphereGeometry(0.042, 8, 6), materials.light),
+      part(
+        new THREE.SphereGeometry(0.128, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+        materials.metal,
+      ),
+      part(new THREE.CylinderGeometry(0.152, 0.152, 0.026, 10), materials.metal),
+      part(new THREE.BoxGeometry(0.055, 0.05, 0.05), materials.dark),
+      part(new THREE.SphereGeometry(0.048, 8, 6), materials.light),
     ]);
-    minerHelmet.children[0].position.y = 0.91;
-    minerHelmet.children[1].position.set(0, 0.875, -0.015);
-    minerHelmet.children[2].position.set(0, 0.89, -0.145);
+    minerHelmet.children[0].position.y = 0.868;
+    minerHelmet.children[0].scale.set(1, 0.92, 1.05);
+    minerHelmet.children[1].position.y = 0.874;
+    minerHelmet.children[2].position.set(0, 0.9, 0.118);
+    minerHelmet.children[3].position.set(0, 0.896, 0.152);
     const farmerHat = addHeadgear(WORKER_TYPES.FARMER, [
       part(new THREE.ConeGeometry(0.115, 0.11, 8), materials.cream),
       part(new THREE.CylinderGeometry(0.22, 0.22, 0.035, 10), materials.accent),
@@ -2971,11 +3130,14 @@ export class Village {
     farmerHat.children[2].position.set(0, 0.94, 0);
     farmerHat.children[2].rotation.x = Math.PI / 2;
     const bakerToque = addHeadgear(WORKER_TYPES.BAKER, [
-      part(new THREE.CylinderGeometry(0.12, 0.14, 0.14, 8), materials.light),
-      part(new THREE.SphereGeometry(0.1, 8, 5), materials.light),
+      part(new THREE.CylinderGeometry(0.138, 0.138, 0.05, 10), materials.light),
+      part(new THREE.CylinderGeometry(0.152, 0.126, 0.19, 10), materials.light),
+      part(new THREE.SphereGeometry(0.138, 10, 7), materials.light),
     ]);
-    bakerToque.children[0].position.y = 0.96;
-    bakerToque.children[1].position.y = 1.035;
+    bakerToque.children[0].position.y = 0.888;
+    bakerToque.children[1].position.y = 1.0;
+    bakerToque.children[2].position.y = 1.1;
+    bakerToque.children[2].scale.set(1, 0.78, 1);
     const makeArm = (x) => {
       const pivot = new THREE.Group();
       pivot.position.set(x, 0.62, 0);
@@ -3040,8 +3202,22 @@ export class Village {
     };
     const hammer = makeTool(0.14, 0.08);
     leftArm.add(hammer);
-    const pickaxe = makeTool(0.2, 0.045);
-    pickaxe.rotation.z = -0.95;
+    const pickaxe = new THREE.Group();
+    const pickHaft = part(new THREE.BoxGeometry(0.034, 0.40, 0.034), materials.wood);
+    pickHaft.position.y = 0.2;
+    const pickHead = part(new THREE.BoxGeometry(0.22, 0.048, 0.042), materials.metal);
+    pickHead.position.y = 0.375;
+    const pickCollar = part(new THREE.BoxGeometry(0.05, 0.075, 0.05), materials.dark);
+    pickCollar.position.y = 0.365;
+    pickaxe.add(pickHaft, pickHead, pickCollar);
+    for (const side of [-1, 1]) {
+      const tip = part(new THREE.BoxGeometry(0.042, 0.03, 0.03), materials.dark);
+      tip.position.set(side * 0.125, 0.375, 0);
+      pickaxe.add(tip);
+    }
+    pickaxe.position.set(0.015, -0.3, 0.03);
+    pickaxe.rotation.z = AXE_CARRY_ANGLE;
+    pickaxe.visible = false;
     rightArm.add(pickaxe);
     const sickle = new THREE.Group();
     const sickleHandle = part(
@@ -3065,7 +3241,7 @@ export class Village {
       materials.wood,
     );
     rollingPin.rotation.z = Math.PI / 2;
-    rollingPin.position.set(0, -0.3, -0.07);
+    rollingPin.position.set(0, -0.3, 0.07);
     rollingPin.visible = false;
     rightArm.add(rollingPin);
     const farmerBrim = part(
@@ -3075,13 +3251,42 @@ export class Village {
     farmerBrim.position.y = 0.9;
     farmerBrim.visible = false;
     rig.add(farmerBrim);
-    const bakerApron = part(
-      new THREE.BoxGeometry(0.18, 0.21, 0.025),
+    const bakerGear = new THREE.Group();
+    const bakerCollar = part(
+      new THREE.TorusGeometry(0.092, 0.024, 6, 10),
       materials.light,
     );
-    bakerApron.position.set(0, 0.51, -0.09);
-    bakerApron.visible = false;
-    rig.add(bakerApron);
+    bakerCollar.position.y = 0.68;
+    bakerCollar.rotation.x = Math.PI / 2;
+    const bakerBelly = part(new THREE.SphereGeometry(0.118, 10, 7), materials.tunic);
+    bakerBelly.position.set(0, 0.5, 0.05);
+    bakerBelly.scale.set(1.06, 0.94, 0.86);
+    const bakerSkirt = part(new THREE.BoxGeometry(0.215, 0.15, 0.155), materials.light);
+    bakerSkirt.position.set(0, 0.405, 0.015);
+    bakerGear.add(bakerCollar, bakerBelly, bakerSkirt);
+    for (const side of [-1, 1]) {
+      const button = part(new THREE.BoxGeometry(0.028, 0.028, 0.02), materials.dark);
+      button.position.set(side * 0.05, 0.58, 0.13);
+      bakerGear.add(button);
+    }
+    bakerGear.visible = false;
+    rig.add(bakerGear);
+    // A board of fresh loaves carried in front, swapped for the rolling pin
+    // once the baker is at the oven.
+    const breadTray = new THREE.Group();
+    const trayBoard = part(new THREE.BoxGeometry(0.28, 0.028, 0.135), materials.wood);
+    const trayLip = part(new THREE.BoxGeometry(0.28, 0.045, 0.022), materials.dark);
+    trayLip.position.set(0, 0.02, 0.068);
+    breadTray.add(trayBoard, trayLip);
+    for (const offset of [-0.09, 0, 0.09]) {
+      const loaf = part(new THREE.SphereGeometry(0.045, 8, 6), materials.bread);
+      loaf.position.set(offset, 0.035, 0);
+      loaf.scale.set(1, 0.72, 0.82);
+      breadTray.add(loaf);
+    }
+    breadTray.position.set(0, 0.495, 0.175);
+    breadTray.visible = false;
+    rig.add(breadTray);
     const builderBelt = part(
       new THREE.BoxGeometry(0.255, 0.055, 0.19),
       materials.accent,
@@ -3121,13 +3326,19 @@ export class Village {
     );
     woodcutterGear.visible = false;
     rig.add(woodcutterGear);
-    const minerLamp = part(
-      new THREE.SphereGeometry(0.055, 8, 6),
-      materials.light,
-    );
-    minerLamp.position.set(0, 0.89, -0.19);
-    minerLamp.visible = false;
-    rig.add(minerLamp);
+    const minerGear = new THREE.Group();
+    const minerBelt = part(new THREE.BoxGeometry(0.25, 0.05, 0.18), materials.dark);
+    minerBelt.position.y = 0.44;
+    const orePouch = part(new THREE.BoxGeometry(0.11, 0.11, 0.075), materials.accent);
+    orePouch.position.set(-0.115, 0.415, 0.07);
+    const pouchFlap = part(new THREE.BoxGeometry(0.115, 0.042, 0.08), materials.dark);
+    pouchFlap.position.set(-0.115, 0.472, 0.07);
+    const minerStrap = part(new THREE.BoxGeometry(0.05, 0.3, 0.03), materials.dark);
+    minerStrap.position.set(-0.05, 0.53, 0.09);
+    minerStrap.rotation.z = -0.4;
+    minerGear.add(minerBelt, orePouch, pouchFlap, minerStrap);
+    minerGear.visible = false;
+    rig.add(minerGear);
     const farmerOveralls = part(
       new THREE.BoxGeometry(0.19, 0.18, 0.03),
       materials.accent,
@@ -3151,12 +3362,13 @@ export class Village {
       pickaxe,
       sickle,
       rollingPin,
+      breadTray,
       farmerBrim,
-      bakerApron,
+      bakerGear,
       roleHeadgear,
       builderBelt,
       woodcutterGear,
-      minerLamp,
+      minerGear,
       farmerOveralls,
       cap,
       materials,
@@ -3187,11 +3399,11 @@ export class Village {
         accent: "#c4402f",
       },
       [WORKER_TYPES.MINER]: {
-        tunic: "#5f666e",
-        cap: "#b4bbb6",
-        dark: "#30343a",
-        shoe: "#45484a",
-        accent: "#98a3a8",
+        tunic: "#d8a72f",
+        cap: "#e6c96d",
+        dark: "#33302b",
+        shoe: "#4d4a46",
+        accent: "#b23a2e",
       },
       [WORKER_TYPES.FARMER]: {
         tunic: "#6e8651",
@@ -3201,11 +3413,11 @@ export class Village {
         accent: "#e2bf54",
       },
       [WORKER_TYPES.BAKER]: {
-        tunic: "#b85f55",
-        cap: "#f0d8b5",
+        tunic: "#f0e4cd",
+        cap: "#c0483c",
         dark: "#43302c",
-        shoe: "#70452b",
-        accent: "#b85f55",
+        shoe: "#6b4425",
+        accent: "#c0483c",
       },
     }[workerType];
     const materials = worker.rig.materials;
@@ -3233,16 +3445,18 @@ export class Village {
     worker.rig.hammer.visible = workerType === WORKER_TYPES.BUILDER;
     worker.rig.pickaxe.visible = workerType === WORKER_TYPES.MINER;
     worker.rig.sickle.visible = workerType === WORKER_TYPES.FARMER;
-    worker.rig.rollingPin.visible = workerType === WORKER_TYPES.BAKER;
+    worker.rig.rollingPin.visible = false;
+    worker.rig.breadTray.visible = workerType === WORKER_TYPES.BAKER;
+    worker.rig.pickaxe.rotation.z = AXE_CARRY_ANGLE;
     Object.values(worker.rig.roleHeadgear).forEach((headgear) => {
       headgear.visible = false;
     });
     worker.rig.roleHeadgear[workerType].visible = true;
     worker.rig.farmerBrim.visible = false;
-    worker.rig.bakerApron.visible = workerType === WORKER_TYPES.BAKER;
+    worker.rig.bakerGear.visible = workerType === WORKER_TYPES.BAKER;
     worker.rig.builderBelt.visible = workerType === WORKER_TYPES.BUILDER;
     worker.rig.woodcutterGear.visible = workerType === WORKER_TYPES.WOODCUTTER;
-    worker.rig.minerLamp.visible = workerType === WORKER_TYPES.MINER;
+    worker.rig.minerGear.visible = workerType === WORKER_TYPES.MINER;
     worker.rig.farmerOveralls.visible = workerType === WORKER_TYPES.FARMER;
     worker.rig.axe.visible = workerType === WORKER_TYPES.WOODCUTTER;
     worker.rig.axe.rotation.z = AXE_CARRY_ANGLE;
@@ -5262,9 +5476,11 @@ export class Village {
           w.workerType === WORKER_TYPES.BAKER &&
           w.phase === "work" &&
           w.insideBuilding;
+        const mining =
+          w.workerType === WORKER_TYPES.MINER && w.phase === "work";
         const workBeat = Math.sin(t * (baking ? 5.5 : 7) + (w.walkPhase || 0));
         w.rig.leftArm.rotation.x +=
-          ((chopping
+          ((chopping || mining
             ? -0.72
             : harvesting
               ? -0.92 + Math.max(0, workBeat) * 0.85
@@ -5276,7 +5492,7 @@ export class Village {
             w.rig.leftArm.rotation.x) *
           0.35;
         w.rig.rightArm.rotation.x +=
-          ((chopping
+          ((chopping || mining
             ? -0.72
             : harvesting
               ? -0.5 - workBeat * 0.4
@@ -5290,14 +5506,26 @@ export class Village {
         if (w.rig.sickle) {
           w.rig.sickle.rotation.z = harvesting ? -0.9 + workBeat * 1.2 : -0.5;
         }
-        if (w.rig.rollingPin) {
+        if (w.rig.rollingPin && w.rig.breadTray) {
+          const isBaker = w.workerType === WORKER_TYPES.BAKER;
+          w.rig.rollingPin.visible = isBaker && baking;
+          w.rig.breadTray.visible = isBaker && !baking;
           w.rig.rollingPin.rotation.y = baking ? workBeat * 0.75 : 0;
+        }
+        if (w.rig.pickaxe) {
+          if (mining) {
+            const swing = Math.max(0, Math.sin(t * 6.5 + w.walkPhase));
+            w.rig.pickaxe.rotation.z = AXE_CARRY_ANGLE + swing * 1.2;
+          } else {
+            w.rig.pickaxe.rotation.z +=
+              (AXE_CARRY_ANGLE - w.rig.pickaxe.rotation.z) * 0.18;
+          }
         }
         if (w.rig.axe) {
           w.rig.axe.visible = w.workerType === WORKER_TYPES.WOODCUTTER;
           if (chopping) {
             const swing = Math.max(0, Math.sin(t * 7.5 + w.walkPhase));
-            w.rig.axe.rotation.z = AXE_CARRY_ANGLE + swing * 1.7;
+            w.rig.axe.rotation.z = AXE_CARRY_ANGLE + swing * 1.35;
           } else {
             w.rig.axe.rotation.z +=
               (AXE_CARRY_ANGLE - w.rig.axe.rotation.z) * 0.18;
@@ -5329,6 +5557,8 @@ export class Village {
       const amount = motion * (m.userData.amount || 0.02);
       m.rotation.z = (m.userData.baseZ || 0) + Math.sin(t * speed + phase) * amount;
     }
+    this.updateGrassField(t, motion);
+    if (this.roadsDirty) this.rebuildRoadSurface();
     for (const tree of this.decor || []) {
       if (tree.type !== "tree" || tree.state !== "chopping" || !tree.m?.visible)
         continue;

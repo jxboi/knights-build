@@ -40,6 +40,9 @@ import {
   GRASS_COUNT,
   lanternLightBudget,
   LANTERN_LIGHT_BUDGET,
+  buildRoadSurfaceGeometry,
+  ROAD_TILE,
+  ROAD_TINTS,
   Village,
 } from "../src/world.js";
 import {
@@ -681,6 +684,38 @@ test("the woodcutter wears the straw hat, scarf and satchel and shoulders the ax
   assert.equal(rig.woodcutterGear.visible, false);
   assert.equal(rig.axe.visible, false);
   assert.equal(rig.roleHeadgear[WORKER_TYPES.BAKER].visible, true);
+});
+
+test("the baker wears the toque and carries bread until the oven needs a pin", () => {
+  const v = Object.create(Village.prototype);
+  const rig = v.createWorkerRig(new THREE.Object3D());
+  const worker = { rig };
+  v.setWorkerType(worker, WORKER_TYPES.BAKER);
+  assert.equal(rig.roleHeadgear[WORKER_TYPES.BAKER].visible, true);
+  assert.equal(rig.bakerGear.visible, true);
+  // The tray is the travelling pose; the rolling pin only comes out at work.
+  assert.equal(rig.breadTray.visible, true);
+  assert.equal(rig.rollingPin.visible, false);
+  v.setWorkerType(worker, WORKER_TYPES.MINER);
+  assert.equal(rig.bakerGear.visible, false);
+  assert.equal(rig.breadTray.visible, false);
+});
+
+test("the miner wears the helm and ore pouch and shoulders the pick", () => {
+  const v = Object.create(Village.prototype);
+  const rig = v.createWorkerRig(new THREE.Object3D());
+  const worker = { rig };
+  v.setWorkerType(worker, WORKER_TYPES.MINER);
+  assert.equal(rig.roleHeadgear[WORKER_TYPES.MINER].visible, true);
+  assert.equal(rig.minerGear.visible, true);
+  assert.equal(rig.pickaxe.visible, true);
+  assert.equal(rig.pickaxe.rotation.z, AXE_CARRY_ANGLE);
+  rig.pickaxe.rotation.z = 0.9;
+  v.setWorkerType(worker, WORKER_TYPES.MINER);
+  assert.equal(rig.pickaxe.rotation.z, AXE_CARRY_ANGLE);
+  v.setWorkerType(worker, WORKER_TYPES.BUILDER);
+  assert.equal(rig.minerGear.visible, false);
+  assert.equal(rig.pickaxe.visible, false);
 });
 
 test("every worker role has its own headgear", () => {
@@ -2334,4 +2369,132 @@ test("lantern flicker drives the pooled lights and brightens with nightfall", ()
   const still = v.lanternLights.map((l) => l.intensity);
   v.updateLanternLights(9.876, 0, 1);
   assert.deepEqual(v.lanternLights.map((l) => l.intensity), still);
+});
+
+test("path tiles merge into one surface instead of one mesh each", () => {
+  const tiles = [
+    { x: 0, z: 0, tint: ROAD_TINTS[0] },
+    { x: 1, z: 0, tint: ROAD_TINTS[1] },
+    { x: 1, z: 1, tint: ROAD_TINTS[2] },
+  ];
+  const geometry = buildRoadSurfaceGeometry(tiles);
+  const perTile = geometry.attributes.position.count / tiles.length;
+  assert.equal(perTile, 24, "one box worth of vertices per tile");
+  assert.equal(geometry.index.count, tiles.length * 36);
+  assert.ok(geometry.attributes.color, "tint moved into a vertex attribute");
+  assert.equal(geometry.attributes.color.count, geometry.attributes.position.count);
+
+  // Tiles must land at their own world position, lifted to the road height.
+  const position = geometry.attributes.position;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity;
+  for (let i = 0; i < position.count; i++) {
+    minX = Math.min(minX, position.getX(i));
+    maxX = Math.max(maxX, position.getX(i));
+    minY = Math.min(minY, position.getY(i));
+  }
+  assert.ok(Math.abs(minX - (0 - ROAD_TILE.size / 2)) < 1e-6);
+  assert.ok(Math.abs(maxX - (1 + ROAD_TILE.size / 2)) < 1e-6);
+  assert.ok(Math.abs(minY - (ROAD_TILE.y - ROAD_TILE.height / 2)) < 1e-6);
+
+  // Continuity across joins holds precisely when UV is a pure function of world
+  // position: two tiles meeting at the same world point then sample the same
+  // texel, whichever tile the vertex belongs to.
+  const uv = geometry.attributes.uv;
+  const scale = position.getX(0) / uv.getX(0);
+  assert.ok(Number.isFinite(scale) && scale !== 0);
+  for (let i = 0; i < position.count; i++) {
+    assert.ok(
+      Math.abs(uv.getX(i) * scale - position.getX(i)) < 1e-5,
+      `vertex ${i} u must map to its world x`,
+    );
+    assert.ok(
+      Math.abs(uv.getY(i) * scale - position.getZ(i)) < 1e-5,
+      `vertex ${i} v must map to its world z`,
+    );
+  }
+
+  assert.equal(buildRoadSurfaceGeometry([]).attributes.position, undefined);
+});
+
+test("laying and lifting paths rebuilds the surface without adding meshes", () => {
+  const v = village();
+  v.baseRoads = new Set();
+  v.roadTiles = new Map();
+  v.created = {};
+  let added = 0;
+  v.scene = { add() { added++; }, remove() {} };
+  v.announce = () => {};
+  v.emit = () => {};
+  v.notify = () => {};
+  v.roadSurfaceTexture = () => null;
+
+  for (let i = 0; i < 25; i++) v.addRoad(i, 0);
+  assert.equal(v.roadTiles.size, 25);
+  assert.equal(v.created.road, 25);
+  assert.equal(v.roadsDirty, true, "painting marks the surface dirty once");
+
+  assert.equal(v.rebuildRoadSurface(), true);
+  assert.equal(v.roadsDirty, false);
+  assert.equal(added, 1, "25 tiles cost exactly one scene object");
+  assert.equal(v.roadSurfaceMesh.geometry.index.count, 25 * 36);
+
+  assert.equal(v.removeRoad(5, 0), true);
+  assert.equal(v.roadTiles.size, 24);
+  assert.equal(v.roadsDirty, true);
+  v.rebuildRoadSurface();
+  assert.equal(added, 1, "removing a tile does not create another object");
+  assert.equal(v.roadSurfaceMesh.geometry.index.count, 24 * 36);
+});
+
+test("grass blades share one instanced draw and sway together", () => {
+  const v = village();
+  const scene = new THREE.Scene();
+  v.scene = scene;
+  const blades = grassCandidates(40).map((blade) => blade);
+  const mesh = v.buildGrassField(blades);
+  assert.ok(mesh, "a grass field is built");
+  assert.equal(mesh.isInstancedMesh, true);
+  assert.equal(mesh.count, blades.length);
+
+  let meshCount = 0;
+  scene.traverse((o) => {
+    if (o.isMesh) meshCount++;
+  });
+  assert.equal(meshCount, 1, "40 blades occupy a single scene mesh");
+
+  // Each blade carries its own size in the instance scale.
+  const matrix = new THREE.Matrix4();
+  const scale = new THREE.Vector3();
+  mesh.getMatrixAt(3, matrix);
+  matrix.decompose(new THREE.Vector3(), new THREE.Quaternion(), scale);
+  assert.ok(Math.abs(scale.y - blades[3].height) < 1e-5);
+  assert.ok(Math.abs(scale.x - blades[3].radius) < 1e-5);
+
+  // Sway moves the blades; reduced motion settles them and stops the upload.
+  const poseAt = (index) => {
+    const m = new THREE.Matrix4();
+    mesh.getMatrixAt(index, m);
+    return m.elements.join(",");
+  };
+  v.updateGrassField(0, 1);
+  const calm = poseAt(0);
+  v.updateGrassField(1.7, 1);
+  assert.notEqual(poseAt(0), calm, "blades sway over time");
+
+  v.updateGrassField(2.5, 0);
+  const settled = poseAt(0);
+  assert.equal(v.updateGrassField(9.9, 0), false, "no work while motion is off");
+  assert.equal(poseAt(0), settled);
+});
+
+test("an empty grass field and a scene-less village stay harmless", () => {
+  const v = village();
+  v.scene = new THREE.Scene();
+  assert.equal(v.buildGrassField([]), null);
+  assert.equal(v.updateGrassField(0, 1), false);
+
+  const headless = village();
+  headless.scene = { remove() {} };
+  assert.equal(headless.ensureRoadSurface(), null);
+  assert.equal(headless.rebuildRoadSurface(), false);
 });
