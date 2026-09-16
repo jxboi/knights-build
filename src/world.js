@@ -7,8 +7,6 @@ export { CATALOG, TOWNHALL_STORAGE } from "./catalog.js";
 export const STARTER_BUILDINGS = Object.freeze([
   ["townhall", 3, -3],
   ["house", -9, 3],
-  ["house", -9, -5],
-  ["house", -4, 8],
   ["well", 2, 3],
   ["farm", 6, 6],
   ["lumberyard", -8, -11],
@@ -2766,9 +2764,6 @@ export class Village {
         this.onSelect({
           type: b.type,
           name: CATALOG[b.type]?.name || "Village hall",
-          description:
-            CATALOG[b.type]?.description ||
-            "The heart of Hearth & Hamlet. Workers deliver their goods here.",
           effect: CATALOG[b.type]?.effect || "Your village begins here",
           id: b.id,
         });
@@ -5988,7 +5983,6 @@ export class Village {
     this.onSelect?.({
       type: building.type,
       name: CATALOG[building.type]?.name || "Village hall",
-      description: CATALOG[building.type]?.description || "A village landmark.",
       effect: CATALOG[building.type]?.effect || "",
       id: building.id,
     });

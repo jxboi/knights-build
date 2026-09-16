@@ -35,7 +35,6 @@ import {
   FileUp,
   Eraser,
   Move,
-  CirclePause,
   Sparkles,
   ArrowDownRight,
 } from "lucide-react";
@@ -629,7 +628,6 @@ function App() {
     activeType === "road-remove"
       ? {
           name: "Remove paths",
-          description: "Clear player-laid paths and recover their stone.",
           effect: "1 stone returned per path tile",
           cost: {},
           seconds: 0,
@@ -1318,15 +1316,15 @@ function App() {
               ? inspectedWorker?.workerTypeLabel || detail.name
               : detail.name}
           </h3>
-          <p>
-            {detail.type === "worker"
-              ? inspectedWorker
+          {detail.type === "worker" && (
+            <p>
+              {inspectedWorker
                 ? inspectedWorker.buildingType
                   ? `${inspectedWorkerStatus} at ${CATALOG[inspectedWorker.buildingType]?.name || "the village"}.`
                   : `${inspectedWorker.workerTypeLabel || "Builder"} is ready for the next structure.`
-                : "This villager is no longer in the settlement."
-              : detail.description}
-          </p>
+                : "This villager is no longer in the settlement."}
+            </p>
+          )}
           <div className="effect">
             <Leaf size={15} />
             {detail.type === "worker"
@@ -1585,29 +1583,6 @@ function App() {
           )}
           {detail.type !== "worker" && inspected && (
             <div className="inspector-actions" aria-label="Building controls">
-              {(inspected.progress < 1 || CATALOG[detail.type]?.resource) && (
-                <>
-                  <span className="inspector-action-label">Work priority</span>
-                  <div className="segmented-actions">
-                    <button
-                      className={inspected.priority === "normal" ? "active" : ""}
-                      aria-pressed={inspected.priority === "normal"}
-                      onClick={() => game.current?.setPriority(inspected.id, "normal")}
-                    >Normal</button>
-                    <button
-                      className={inspected.priority === "priority" ? "active" : ""}
-                      aria-pressed={inspected.priority === "priority"}
-                      onClick={() => game.current?.setPriority(inspected.id, "priority")}
-                    >Priority</button>
-                  </div>
-                  <button
-                    className="inspector-control"
-                    onClick={() => game.current?.setPaused(inspected.id, !inspected.paused)}
-                  >
-                    <CirclePause size={14} /> {inspected.paused ? "Resume work" : "Pause work"}
-                  </button>
-                </>
-              )}
               {inspected.progress < 1 && (
                 <button
                   className="inspector-control danger"
@@ -1690,7 +1665,6 @@ function App() {
                     : "GROW YOUR VILLAGE"}
               </span>
               <h3>{active.name}</h3>
-              <p>{active.description}</p>
               <span className="effect">
                 <Leaf size={14} />
                 {activeEffect}
@@ -1823,7 +1797,7 @@ function App() {
           <span className="palette-scroll-hint" aria-hidden="true">
             Swipe for more <ArrowDownRight size={10} />
           </span>
-          {Object.entries(CATALOG).map(([type, c], i) => {
+          {Object.entries(CATALOG).map(([type, c]) => {
               const missing = Object.entries(c.cost)
                 .filter(
                   ([resource, amount]) =>
@@ -1838,17 +1812,13 @@ function App() {
               const availability = affordable
                 ? "Resources ready"
                 : `Needs ${missing}`;
-              const shortcut = i < 9 ? String(i + 1).padStart(2, "0") : null;
               const costSummary = Object.entries(c.cost)
                 .map(([resource, amount]) => `${amount} ${resource}`)
                 .join(" · ") + (c.tileTool || type === "road" ? " per tile" : "");
-              const shortcutHint = shortcut
-                ? ` Keyboard shortcut ${Number(shortcut)}`
-                : "";
               return (
                 <button
                   key={type}
-                  aria-label={`Build ${c.name}. Costs ${costSummary}. ${availability}.${shortcutHint}`}
+                  aria-label={`Build ${c.name}. Costs ${costSummary}. ${availability}`}
                   aria-pressed={selected === type}
                   title={`${c.name}: ${costSummary}. ${availability}`}
                   className={`build-card ${
@@ -1870,7 +1840,6 @@ function App() {
                   onBlur={() => setHover(null)}
                   disabled={!loaded || !!error}
                 >
-                  {shortcut && <span className="building-number">{shortcut}</span>}
                   {!affordable && (
                     <span className="build-card-warning" aria-hidden="true">
                       !

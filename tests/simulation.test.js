@@ -108,6 +108,11 @@ test("placement rejects occupied sites, river, scenery, and insufficient resourc
   assert.match(v.valid(-8, -8, "house").reason, /Need 30 wood \+ 10 stone/);
 });
 test("starter village buildings never overlap starter paths", () => {
+  assert.equal(
+    STARTER_BUILDINGS.filter(([type]) => type === "house").length,
+    1,
+    "starter village has one cottage",
+  );
   for (const [type, x, z] of STARTER_BUILDINGS) {
     const halfSize = (CATALOG[type]?.size || 4) / 2;
     const pathCrossesSite = STARTER_ROADS.some(
