@@ -125,6 +125,14 @@ h1 span {
 }
 .resources {
   display: flex;
+  align-items: center;
+  flex: 1;
+}
+.resources-toggle {
+  display: none;
+}
+.resources-list {
+  display: flex;
   gap: 37px;
   align-items: center;
   justify-content: center;
@@ -1259,9 +1267,6 @@ h1 span {
 .hunger-progress span {
   background: linear-gradient(90deg, #b69248, #b16d4e);
 }
-.inspector-state.paused strong {
-  color: #b16d4e;
-}
 .inspector-actions {
   display: grid;
   gap: 7px;
@@ -2089,7 +2094,7 @@ h1 span {
   h1 {
     font-size: 28px;
   }
-  .resources {
+  .resources-list {
     gap: 55px;
   }
   .resource strong {
@@ -2120,7 +2125,7 @@ h1 span {
   h1 {
     font-size: 22px;
   }
-  .resources {
+  .resources-list {
     gap: 17px;
   }
   .resource {
@@ -2187,7 +2192,7 @@ h1 span {
     letter-spacing: 1.6px;
     margin-top: 5px;
   }
-  .resources {
+  .resources-list {
     gap: 8px;
   }
   .resource {
@@ -2324,11 +2329,53 @@ h1 span {
   .resources {
     grid-row: 2;
     grid-column: 1/4;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: stretch;
     border-top: 1px solid #e4dbc7;
     padding-top: 9px;
     margin-top: 9px;
+    gap: 8px;
+  }
+  .resources-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #8a7c60;
+    cursor: pointer;
+  }
+  .resources-toggle svg {
+    transition: transform 0.2s ease;
+  }
+  .resources-toggle svg.collapsed {
+    transform: rotate(-90deg);
+  }
+  .resources-list {
+    justify-content: space-between;
     gap: 10px;
+  }
+  .resources.is-collapsed .resources-list {
+    display: none;
+  }
+  .game-shell.resources-open .topbar {
+    height: calc(125px + env(safe-area-inset-top));
+  }
+  .game-shell.resources-open .world {
+    top: calc(120px + env(safe-area-inset-top));
+  }
+  .game-shell.resources-open .left-stack {
+    top: calc(145px + env(safe-area-inset-top));
+  }
+  .game-shell.resources-open .top-right {
+    top: calc(142px + env(safe-area-inset-top));
   }
   .resource {
     min-width: 0;
@@ -2672,7 +2719,7 @@ h1 span {
 @media (max-width: 360px) {
   /* Keep grouped five-digit storage values fully visible on the narrowest
      phones; the HUD has five compact counters sharing one row. */
-  .resources {
+  .resources-list {
     gap: 4px;
   }
   .resource strong {

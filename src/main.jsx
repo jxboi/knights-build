@@ -319,6 +319,7 @@ function App() {
       return !window.matchMedia("(max-width: 760px)").matches;
     }),
     [menu, setMenu] = useState(false),
+    [resourcesOpen, setResourcesOpen] = useState(false),
     [overview, setOverview] = useState(false),
     [reset, setReset] = useState(false),
     [rename, setRename] = useState(false),
@@ -1172,7 +1173,7 @@ function App() {
   const DayIcon = period === "Night" ? Moon : Sun;
   return (
     <main
-      className={`game-shell ${goals ? "goals-open" : ""}`}
+      className={`game-shell ${goals ? "goals-open" : ""} ${resourcesOpen ? "resources-open" : ""}`}
       aria-busy={!loaded && !error}
     >
       <div
@@ -1192,30 +1193,43 @@ function App() {
             <p>A LITTLE WORLD OF YOUR OWN</p>
           </div>
         </div>
-        <div className="resources">
-          <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} storage={state.storage?.wood} />
-          <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} storage={state.storage?.stone} />
-          <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} storage={state.storage?.wheat} />
-          <Resource type="food" value={state.resources.food} trend={state.trends.food} storage={state.storage?.food} />
-          {showWine && (
-            <Resource type="wine" value={state.resources.wine} trend={state.trends.wine} storage={state.storage?.wine} />
-          )}
-          <div
-            className={`resource population ${housingFull ? "at-capacity" : ""}`}
-            title={`Villagers / housing capacity. Simulation limit: 24 villagers. ${Math.max(0, state.capacity - state.population)} housing spaces available.`}
-            aria-label={`${state.population} villagers, ${state.capacity} housing capacity, simulation limit 24`}
+        <div className={`resources ${resourcesOpen ? "is-open" : "is-collapsed"}`}>
+          <button
+            type="button"
+            className="resources-toggle"
+            onClick={() => setResourcesOpen((open) => !open)}
+            aria-expanded={resourcesOpen}
+            aria-controls="resources-list"
+            aria-label={resourcesOpen ? "Hide resources" : "Show resources"}
           >
-            <span className="resource-icon">
-              <Users size={23} strokeWidth={1.7} />
-            </span>
-            <div>
-              <small>villagers</small>
-              <strong>
-                <span className="resource-value" key={state.population}>
-                  {formatCount(state.population)}
-                </span>
-                <em> / {formatCount(state.capacity)}</em>
-              </strong>
+            <span>Resources</span>
+            <ChevronDown size={14} className={resourcesOpen ? "" : "collapsed"} />
+          </button>
+          <div className="resources-list" id="resources-list">
+            <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} storage={state.storage?.wood} />
+            <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} storage={state.storage?.stone} />
+            <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} storage={state.storage?.wheat} />
+            <Resource type="food" value={state.resources.food} trend={state.trends.food} storage={state.storage?.food} />
+            {showWine && (
+              <Resource type="wine" value={state.resources.wine} trend={state.trends.wine} storage={state.storage?.wine} />
+            )}
+            <div
+              className={`resource population ${housingFull ? "at-capacity" : ""}`}
+              title={`Villagers / housing capacity. Simulation limit: 24 villagers. ${Math.max(0, state.capacity - state.population)} housing spaces available.`}
+              aria-label={`${state.population} villagers, ${state.capacity} housing capacity, simulation limit 24`}
+            >
+              <span className="resource-icon">
+                <Users size={23} strokeWidth={1.7} />
+              </span>
+              <div>
+                <small>villagers</small>
+                <strong>
+                  <span className="resource-value" key={state.population}>
+                    {formatCount(state.population)}
+                  </span>
+                  <em> / {formatCount(state.capacity)}</em>
+                </strong>
+              </div>
             </div>
           </div>
         </div>
@@ -1848,17 +1862,6 @@ function App() {
                       : "Prioritize building"}
                   </button>
                 )}
-              {detail.type !== "townhall" && detail.type !== "grainfield" && (
-                <button
-                  type="button"
-                  className="inspector-control"
-                  onClick={() => game.current?.setPaused(inspected.id, !inspected.paused)}
-                  aria-label={`${inspected.paused ? "Resume" : "Pause"} ${CATALOG[detail.type]?.name || "building"}`}
-                >
-                  {inspected.paused ? <Play size={14} /> : <Pause size={14} />}
-                  {inspected.paused ? "Resume building" : "Pause building"}
-                </button>
-              )}
               {inspected.progress < 1 && (
                 <button
                   type="button"
