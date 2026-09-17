@@ -406,6 +406,7 @@ function App() {
     setBuildDetailsOpen(false);
     setHover(null);
     setGrid(false);
+    setPaletteOpen(true);
   };
   useEffect(() => {
     const healthCheck = new URLSearchParams(window.location.search).has("healthcheck");
@@ -502,7 +503,10 @@ function App() {
     }
     const next = type === selected ? null : type;
     if (next) {
-      setPaletteOpen(true);
+      // Hide the carousel once placement starts so it doesn't cover the
+      // ground the player is trying to place on; it reopens when placement
+      // ends (see endPlacement).
+      setPaletteOpen(false);
       const active = document.activeElement;
       placementFocusReturn.current =
         focusReturn ||
@@ -547,6 +551,7 @@ function App() {
     if (!preserveHighlight) game.current?.clearHighlight();
     game.current?.select(null);
     setGrid(false);
+    setPaletteOpen(true);
   };
   const cancel = (restoreFocus = false) => {
     const returnTarget = placementFocusReturn.current;
