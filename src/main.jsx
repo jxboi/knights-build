@@ -9,7 +9,6 @@ import Mountain from "lucide-react/dist/esm/icons/mountain.js";
 import Users from "lucide-react/dist/esm/icons/users.js";
 import Sun from "lucide-react/dist/esm/icons/sun.js";
 import Moon from "lucide-react/dist/esm/icons/moon.js";
-import Compass from "lucide-react/dist/esm/icons/compass.js";
 import HelpCircle from "lucide-react/dist/esm/icons/circle-help.js";
 import Save from "lucide-react/dist/esm/icons/save.js";
 import X from "lucide-react/dist/esm/icons/x.js";
@@ -1868,16 +1867,6 @@ function App() {
         </div>
       )}
       <div className="bottom-left">
-        <button
-          type="button"
-          className="compass"
-          onClick={() => game.current?.home()}
-          title="Return to village center"
-          aria-label="Center camera"
-        >
-          <span>N</span>
-          <Compass size={38} strokeWidth={1} />
-        </button>
         <div className="palette-launcher">
           <button
             type="button"
