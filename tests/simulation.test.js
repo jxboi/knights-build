@@ -114,15 +114,19 @@ test("placement rejects occupied sites, river, scenery, and insufficient resourc
   assert.match(v.valid(6, 0, "house").reason, /path crosses/);
   v.resources.wood = 0;
   v.resources.stone = 0;
-  assert.match(v.valid(-8, -8, "house").reason, /resources/);
-  assert.match(v.valid(-8, -8, "house").reason, /Need 30 wood \+ 10 stone/);
+  // Regular buildings may be sited short on resources: the fence goes up
+  // immediately and workers haul in whatever is missing before construction.
+  assert.equal(v.valid(-8, -8, "house").ok, true);
+  v.resources.stone = 0;
+  assert.match(v.valid(-8, -8, "road").reason, /Need 1 stone/);
 });
 
 test("malformed resource values cannot satisfy costs or create NaN totals", () => {
   const v = village();
+  v.resources.stone = Number.NaN;
+  assert.equal(v.valid(-8, -8, "road").ok, false);
+  assert.match(v.valid(-8, -8, "road").reason, /1 stone/);
   v.resources.wood = Number.NaN;
-  assert.equal(v.valid(-8, -8, "house").ok, false);
-  assert.match(v.valid(-8, -8, "house").reason, /30 wood/);
   assert.equal(v.spendResource("wood", 5), 0);
   assert.equal(v.resources.wood, 0);
 

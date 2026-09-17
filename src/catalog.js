@@ -1,4 +1,11 @@
 export const CATALOG = {
+  watchtower: {
+    name: "Watchtower",
+    size: 3,
+    cost: { wood: 45, stone: 20 },
+    effect: "+3 tiles of buildable land",
+    seconds: 16,
+  },
   house: {
     name: "Cottage",
     size: 3,
@@ -12,6 +19,15 @@ export const CATALOG = {
     cost: { wood: 15, stone: 25 },
     effect: "A gathering place for your village",
     seconds: 10,
+  },
+  grainfield: {
+    name: "Grain field",
+    size: 1,
+    cost: { food: 1 },
+    effect: "Grows in 30 seconds · farmers harvest it automatically",
+    seconds: 0,
+    decoration: true,
+    tileTool: true,
   },
   farm: {
     name: "Farmhouse",
@@ -56,15 +72,6 @@ export const CATALOG = {
     storage: 150,
     seconds: 24,
   },
-  grainfield: {
-    name: "Grain field",
-    size: 1,
-    cost: { food: 1 },
-    effect: "Grows in 30 seconds · farmers harvest it automatically",
-    seconds: 0,
-    decoration: true,
-    tileTool: true,
-  },
   lumberyard: {
     name: "Lumberyard",
     size: 3,
@@ -100,13 +107,6 @@ export const CATALOG = {
       cost: { wood: 45, stone: 20 },
       effect: "Cycles 25% faster",
     },
-  },
-  watchtower: {
-    name: "Watchtower",
-    size: 3,
-    cost: { wood: 45, stone: 20 },
-    effect: "+3 tiles of buildable land",
-    seconds: 16,
   },
   school: {
     name: "School",

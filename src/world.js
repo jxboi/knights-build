@@ -2776,7 +2776,14 @@ export class Village {
         ok: false,
         reason: "Plant beside a completed farmhouse or connected grain field.",
       };
-    if (Object.entries(catalog.cost).some(([r, v]) => this.resourceAmount(r) < v))
+    // Instant items (paths, planted grain) are paid in full up front since
+    // they have no construction site to gather materials at. Real buildings
+    // may be placed short on resources: the site goes up immediately and
+    // workers haul in whatever is missing before construction begins.
+    if (
+      (catalog.decoration || buildingType === "road") &&
+      Object.entries(catalog.cost).some(([r, v]) => this.resourceAmount(r) < v)
+    )
       return {
         ok: false,
         reason: `Not enough resources. Need ${Object.entries(catalog.cost)
@@ -3059,8 +3066,10 @@ export class Village {
       return this.removeRoad(p.x, p.z);
     }
     const type = selected;
-    for (const [r, v] of Object.entries(CATALOG[type].cost)) {
-      this.spendResource(r, v);
+    if (type === "road" || CATALOG[type].decoration) {
+      for (const [r, v] of Object.entries(CATALOG[type].cost)) {
+        this.spendResource(r, v);
+      }
     }
     if (type === "road") {
       this.addRoad(p.x, p.z);
@@ -3395,17 +3404,28 @@ export class Village {
       return true;
     }
     if (!building || building.progress >= 1 || building.type === "townhall") return false;
+    // Only materials actually hauled to the site were ever taken from the
+    // stockpile, so refund those (scaled down once construction has started
+    // consuming them) rather than the building's full cost.
     const refundRate = Math.max(0, Math.min(1, 1 - building.progress));
+    const materials = building.materials || {};
     const refunded = Object.entries(CATALOG[building.type]?.cost || {})
-      .map(([resource, amount]) => [
-        resource,
-        this.refundResource(resource, Math.floor(amount * refundRate)),
-      ])
+      .map(([resource, cost]) => {
+        const delivered = Math.min(cost, finiteNumber(materials[resource], 0));
+        return [
+          resource,
+          this.refundResource(resource, Math.floor(delivered * refundRate)),
+        ];
+      })
       .filter(([, amount]) => amount > 0);
     for (const worker of this.workers) {
       if (worker.haulSource === building || worker.haulTarget === building)
         this.releaseHaul(worker);
       if (worker.building !== building) continue;
+      // A worker mid-haul is carrying material already pulled from the
+      // stockpile; hand it back rather than letting it vanish with the site.
+      if (worker.carry?.construction)
+        this.refundResource(worker.carry.resource, worker.carry.amount);
       this.clearCarry(worker);
       worker.carry = null;
       worker.building = null;
@@ -5293,6 +5313,12 @@ export class Village {
         )
           continue;
         const material = b.progress < 1 ? this.nextConstructionMaterial(b) : null;
+        // Nothing to haul yet: leave the site waiting rather than sending a
+        // worker to fetch a resource the village hasn't gathered.
+        if (material && this.resourceAmount(material) <= 0) {
+          b.lastRouteBlocked = true;
+          continue;
+        }
         const tree = !material && b.type === "lumberyard" && forestTrees.length
           ? this.availableTreeFor(b, w)
           : null;
@@ -5839,15 +5865,20 @@ export class Village {
         const resource = w.materialResource || this.nextConstructionMaterial(b);
         const required = CATALOG[b?.type]?.cost?.[resource] || 0;
         const delivered = finiteNumber(b?.materials?.[resource], 0);
-        const amount = Math.min(10, Math.max(0, required - delivered));
+        const wanted = Math.min(10, Math.max(0, required - delivered));
+        // Only take what the village actually has in stock; a partial load
+        // still ships out so the site keeps inching toward ready.
+        const amount = Math.min(wanted, this.resourceAmount(resource));
         if (!b || !resource || amount <= 0) {
           this.setWorkerInside(w, false);
           w.workInside = false;
           w.phase = "idle";
           w.building = null;
           w.materialResource = null;
+          w.timer = 0.35;
           continue;
         }
+        this.spendResource(resource, amount);
         w.carry = { resource, amount, construction: true };
         this.showCarry(w, resource);
         w.phase = "material_delivery";
