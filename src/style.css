@@ -776,13 +776,13 @@ h1 span {
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  max-width: min(620px, calc(100vw - 260px));
+  max-width: min(680px, calc(100vw - 130px));
   overflow-x: auto;
   overscroll-behavior-x: contain;
   scroll-snap-type: x proximity;
   scrollbar-width: thin;
   scrollbar-color: #b7a27d transparent;
-  padding: 13px 7px 7px;
+  padding: 7px;
   background: linear-gradient(135deg, #fbf7ebef, #eee4cef7);
   box-shadow: 0 7px 30px #30331c28;
   border-radius: 10px;
@@ -803,22 +803,6 @@ h1 span {
   opacity: 0;
   pointer-events: none;
   transform: translateX(-6px) scaleX(0.9);
-}
-.palette-scroll-hint {
-  position: absolute;
-  z-index: 2;
-  top: 2px;
-  right: 7px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: #f8f1e4e8;
-  color: #8c7858;
-  font-size: 6px;
-  letter-spacing: 0.3px;
-  pointer-events: none;
 }
 .build-card {
   position: relative;
@@ -2470,8 +2454,9 @@ h1 span {
     width: calc(100% - 24px);
   }
   .build-palette {
-    padding: 10px 4px 4px;
-    gap: 1px;
+    max-width: calc(100vw - 90px);
+    padding: 5px;
+    gap: 3px;
     border-radius: 6px;
   }
   .building-name {
@@ -2514,9 +2499,6 @@ h1 span {
   .palette-toggle {
     width: 36px;
     height: 36px;
-  }
-  .build-palette {
-    max-width: min(400px, calc(100vw - 210px));
   }
   .bottom-right {
     bottom: calc(146px + env(safe-area-inset-bottom));
@@ -2685,12 +2667,6 @@ h1 span {
   }
   .bottom-caption > i:first-of-type {
     display: inline;
-  }
-}
-@media (max-width: 480px) {
-  .build-card {
-    flex-basis: 48px;
-    width: 48px;
   }
 }
 @media (max-width: 360px) {

@@ -181,9 +181,6 @@ const BuildPalette = React.memo(function BuildPalette({
       inert={!paletteOpen}
       aria-label="Village building and path tools. On small screens, scroll horizontally to see every tool."
     >
-      <span className="palette-scroll-hint" aria-hidden="true">
-        Swipe for more <ArrowDownRight size={10} />
-      </span>
       {CATALOG_ENTRIES.map(({ type, catalog: c, costs, costSummary }) => {
         const missing = costs
           .filter(([resource, amount]) => (resources[resource] || 0) < amount)
