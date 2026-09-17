@@ -13,6 +13,8 @@ export const STARTER_BUILDINGS = Object.freeze([
   ["mine", 3, -11],
   ["windmill", 11, -3],
   ["watchtower", 10, -10],
+  ["storehouse", 3, -16],
+  ["school", 6, 14],
 ]);
 export const STARTER_ROADS = Object.freeze([
   ...Array.from({ length: 30 }, (_, index) => {
@@ -1961,6 +1963,8 @@ export class Village {
       try {
         renderThumbnail(m);
         this.thumbnails[key] = r.domElement.toDataURL();
+        this.onLoaded({ ...this.thumbnails }, undefined, "thumbnails");
+        this.emit();
       } finally {
         s.remove(m);
         // The road preview is the only thumbnail mesh created from fresh GPU

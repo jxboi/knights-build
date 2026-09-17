@@ -755,8 +755,8 @@ h1 span {
   position: relative;
 }
 .palette-toggle {
-  width: 48px;
-  height: 48px;
+  width: 70px;
+  height: 70px;
   border: 1px solid #eee3c282;
   border-radius: 50%;
   color: #fff6d8;
@@ -2120,6 +2120,13 @@ h1 span {
     bottom: 182px;
   }
 }
+@media (min-width: 1101px) {
+  /* Wide desktop viewports have room to lay out every building card in one
+     unscrolled row instead of the mobile-style horizontal carousel. */
+  .build-palette {
+    max-width: min(960px, calc(100vw - 130px));
+  }
+}
 @media (max-width: 1100px) {
   .topbar {
     gap: 13px;
@@ -2550,8 +2557,8 @@ h1 span {
     font-size: 7px;
   }
   .palette-toggle {
-    width: 36px;
-    height: 36px;
+    width: 42px;
+    height: 42px;
   }
   .bottom-right {
     bottom: calc(146px + env(safe-area-inset-bottom));

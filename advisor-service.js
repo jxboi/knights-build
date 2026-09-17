@@ -81,6 +81,30 @@ export async function createAdvisorReply(body, options = {}) {
     JSON.stringify(context, null, 2),
   ].join("\n");
 
+  const primaryModel = options.model || "deepseek/deepseek-v4-flash-0731";
+  const fallbackModel = options.fallbackModel || "deepseek/deepseek-v4-flash-0731";
+  const attempts = [primaryModel, primaryModel, fallbackModel];
+
+  let lastFailure;
+  for (const model of attempts) {
+    const result = await callOpenRouter({
+      apiKey,
+      model,
+      system,
+      messages,
+      referer: options.referer,
+    });
+    if (result.ok) {
+      return { status: 200, body: { message: result.message } };
+    }
+    lastFailure = result;
+    if (!result.retryable) break;
+  }
+
+  return { status: 502, body: { error: lastFailure?.error || "OpenRouter could not answer right now." } };
+}
+
+async function callOpenRouter({ apiKey, model, system, messages, referer }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
   let upstream;
@@ -91,11 +115,11 @@ export async function createAdvisorReply(body, options = {}) {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": options.referer || "http://localhost:5173",
+        "HTTP-Referer": referer || "http://localhost:5173",
         "X-OpenRouter-Title": "Hearth & Hamlet Village Advisor",
       },
       body: JSON.stringify({
-        model: options.model || "deepseek/deepseek-v4-flash-0731",
+        model,
         messages: [{ role: "system", content: system }, ...messages],
         reasoning: { effort: "none" },
         temperature: 0.65,
@@ -104,12 +128,11 @@ export async function createAdvisorReply(body, options = {}) {
     });
   } catch (error) {
     return {
-      status: 502,
-      body: {
-        error: error?.name === "AbortError"
-          ? "The advisor took too long to answer. Try again."
-          : cleanText(error?.message, 180) || "The advisor is unavailable right now.",
-      },
+      ok: false,
+      retryable: error?.name !== "AbortError",
+      error: error?.name === "AbortError"
+        ? "The advisor took too long to answer. Try again."
+        : cleanText(error?.message, 180) || "The advisor is unavailable right now.",
     };
   } finally {
     clearTimeout(timeout);
@@ -118,17 +141,17 @@ export async function createAdvisorReply(body, options = {}) {
   const data = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
     const detail = cleanText(data?.error?.message, 180);
+    const status = Number(data?.error?.code) || upstream.status;
     return {
-      status: 502,
-      body: {
-        error: detail ? `OpenRouter could not answer: ${detail}` : "OpenRouter could not answer right now.",
-      },
+      ok: false,
+      retryable: status === 429 || status >= 500,
+      error: detail ? `OpenRouter could not answer: ${detail}` : "OpenRouter could not answer right now.",
     };
   }
 
   const message = data?.choices?.[0]?.message?.content;
   if (typeof message !== "string" || !message.trim()) {
-    return { status: 502, body: { error: "The advisor returned an empty answer." } };
+    return { ok: false, retryable: true, error: "The advisor returned an empty answer." };
   }
-  return { status: 200, body: { message: message.trim() } };
+  return { ok: true, message: message.trim() };
 }

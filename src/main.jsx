@@ -459,7 +459,7 @@ function App() {
           notify,
           selectDetail,
           (images, err, phase = "interactive") => {
-            setThumbs(images);
+            setThumbs({ ...images });
             setError(err);
             setLoaded(true);
             if (window.parent !== window && new URLSearchParams(window.location.search).has("healthcheck")) {
@@ -2074,19 +2074,6 @@ function App() {
           </div>
         )}
         <div className="bottom-caption">
-          <span>
-            <MousePointer2 size={11} /> Drag to explore
-          </span>
-          <i>·</i>
-          <span>
-            <span className="mouse-hint">Scroll to zoom</span>
-            <span className="touch-hint">Pinch to zoom</span>
-          </span>
-          <i>·</i>
-          <span>
-            <span className="mouse-hint">Right-drag to orbit</span>
-            <span className="touch-hint">Two-finger orbit</span>
-          </span>
           {state.saveConflict ? (
             <button
               type="button"

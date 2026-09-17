@@ -70,6 +70,7 @@ async function handleAdvisor(request, response) {
     const result = await createAdvisorReply(body, {
       apiKey: env("OPENROUTER_API_KEY"),
       model: env("OPENROUTER_MODEL"),
+      fallbackModel: env("OPENROUTER_FALLBACK_MODEL"),
       referer: env("OPENROUTER_SITE_URL") || `http://localhost:${activePort}`,
     });
     sendJson(response, result.status, result.body);

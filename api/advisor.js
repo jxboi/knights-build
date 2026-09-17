@@ -25,6 +25,7 @@ export async function POST(request) {
   const result = await createAdvisorReply(body, {
     apiKey: process.env.OPENROUTER_API_KEY,
     model: process.env.OPENROUTER_MODEL,
+    fallbackModel: process.env.OPENROUTER_FALLBACK_MODEL,
     referer: process.env.OPENROUTER_SITE_URL || "https://hearth-and-hamlet.vercel.app",
   });
   return jsonResponse(result.status, result.body);
