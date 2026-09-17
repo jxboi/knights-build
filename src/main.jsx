@@ -406,7 +406,6 @@ function App() {
     setBuildDetailsOpen(false);
     setHover(null);
     setGrid(false);
-    setPaletteOpen(true);
   };
   useEffect(() => {
     const healthCheck = new URLSearchParams(window.location.search).has("healthcheck");
@@ -551,7 +550,6 @@ function App() {
     if (!preserveHighlight) game.current?.clearHighlight();
     game.current?.select(null);
     setGrid(false);
-    setPaletteOpen(true);
   };
   const cancel = (restoreFocus = false) => {
     const returnTarget = placementFocusReturn.current;
@@ -1916,8 +1914,31 @@ function App() {
           <span>N</span>
           <Compass size={38} strokeWidth={1} />
         </button>
+        <div className="palette-launcher">
+          <button
+            type="button"
+            className="palette-toggle"
+            aria-expanded={paletteOpen}
+            aria-controls="building-palette"
+            aria-label={paletteOpen ? "Collapse building menu" : "Expand building menu"}
+            title={paletteOpen ? "Collapse building menu" : "Expand building menu"}
+            onClick={() => setPaletteOpen((open) => !open)}
+          >
+            <Hammer size={22} strokeWidth={1.5} />
+          </button>
+          <BuildPalette
+            resources={state.resources}
+            thumbs={thumbs}
+            selected={selected}
+            paletteOpen={paletteOpen}
+            loaded={loaded}
+            error={error}
+            onChoose={choose}
+            onHover={setHover}
+          />
+        </div>
       </div>
-      <div className={`build-area ${paletteOpen ? "palette-open" : "palette-collapsed"}`}>
+      <div className="build-area">
         {active && (
           <div
             id="build-details"
@@ -1980,7 +2001,7 @@ function App() {
             </div>
           </div>
         )}
-        {selected ? (
+        {selected && (
           <div
             className={`placement-hint ${state.placement?.ok === false ? "invalid" : ""}`}
             aria-live="polite"
@@ -2032,35 +2053,7 @@ function App() {
               <kbd>ESC</kbd>
             </button>
           </div>
-        ) : (
-          <div className="build-title">
-            <span />
-            <Hammer size={14} />
-            <button
-              type="button"
-              className="palette-toggle"
-              aria-expanded={paletteOpen}
-              aria-controls="building-palette"
-              aria-label={paletteOpen ? "Collapse building menu" : "Expand building menu"}
-              title={paletteOpen ? "Collapse building menu" : "Expand building menu"}
-              onClick={() => setPaletteOpen((open) => !open)}
-            >
-              <span>MAKE YOURSELF AT HOME</span>
-              <ChevronDown size={13} aria-hidden="true" />
-            </button>
-            <span />
-          </div>
         )}
-        <BuildPalette
-          resources={state.resources}
-          thumbs={thumbs}
-          selected={selected}
-          paletteOpen={paletteOpen}
-          loaded={loaded}
-          error={error}
-          onChoose={choose}
-          onHover={setHover}
-        />
         <div className="bottom-caption">
           <span>
             <MousePointer2 size={11} /> Drag to explore
