@@ -1759,6 +1759,22 @@ function App() {
               </>
             )}
           </div>
+          {detail.type !== "worker" && inspected?.stored && (
+            <div className="storage-panel" aria-label="Village storage">
+              <span className="inspector-action-label">
+                In storage · shared village-wide
+              </span>
+              <div className="storage-breakdown">
+                <Resource type="wood" value={inspected.stored.wood} storage={inspected.storedCaps?.wood} />
+                <Resource type="stone" value={inspected.stored.stone} storage={inspected.storedCaps?.stone} />
+                <Resource type="wheat" value={inspected.stored.wheat} storage={inspected.storedCaps?.wheat} />
+                <Resource type="food" value={inspected.stored.food} storage={inspected.storedCaps?.food} />
+                {showWine && (
+                  <Resource type="wine" value={inspected.stored.wine} storage={inspected.storedCaps?.wine} />
+                )}
+              </div>
+            </div>
+          )}
           {detail.type === "school" && inspected?.training && (
             <div className="training-panel" aria-label="School training">
               <span className="inspector-action-label">

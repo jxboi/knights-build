@@ -1330,13 +1330,19 @@ h1 span {
   color: #897249;
   font-size: 8px;
 }
-.training-panel {
+.training-panel,
+.storage-panel {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-top: 12px;
   padding-top: 11px;
   border-top: 1px solid #e4dbc7;
+}
+.storage-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 18px;
 }
 .training-panel .inspector-action-label {
   display: flex;
