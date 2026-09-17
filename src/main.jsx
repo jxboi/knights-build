@@ -9,8 +9,6 @@ import Mountain from "lucide-react/dist/esm/icons/mountain.js";
 import Users from "lucide-react/dist/esm/icons/users.js";
 import Sun from "lucide-react/dist/esm/icons/sun.js";
 import Moon from "lucide-react/dist/esm/icons/moon.js";
-import Plus from "lucide-react/dist/esm/icons/plus.js";
-import Minus from "lucide-react/dist/esm/icons/minus.js";
 import Compass from "lucide-react/dist/esm/icons/compass.js";
 import HelpCircle from "lucide-react/dist/esm/icons/circle-help.js";
 import Save from "lucide-react/dist/esm/icons/save.js";
@@ -319,7 +317,6 @@ function App() {
       return !window.matchMedia("(max-width: 760px)").matches;
     }),
     [menu, setMenu] = useState(false),
-    [resourcesOpen, setResourcesOpen] = useState(false),
     [overview, setOverview] = useState(false),
     [reset, setReset] = useState(false),
     [rename, setRename] = useState(false),
@@ -879,7 +876,6 @@ function App() {
       observer?.disconnect();
     };
   }, [advisorOpen, buildDetailsOpen, detail, menu, modalOpen, selected]);
-  const housingFull = state.population >= state.capacity;
   const availableFood = Math.max(
     0,
     Number.isFinite(Number(state.resources.food))
@@ -1173,7 +1169,7 @@ function App() {
   const DayIcon = period === "Night" ? Moon : Sun;
   return (
     <main
-      className={`game-shell ${goals ? "goals-open" : ""} ${resourcesOpen ? "resources-open" : ""}`}
+      className={`game-shell ${goals ? "goals-open" : ""}`}
       aria-busy={!loaded && !error}
     >
       <div
@@ -1191,46 +1187,6 @@ function App() {
               Hearth <span>&</span> Hamlet
             </h1>
             <p>A LITTLE WORLD OF YOUR OWN</p>
-          </div>
-        </div>
-        <div className={`resources ${resourcesOpen ? "is-open" : "is-collapsed"}`}>
-          <button
-            type="button"
-            className="resources-toggle"
-            onClick={() => setResourcesOpen((open) => !open)}
-            aria-expanded={resourcesOpen}
-            aria-controls="resources-list"
-            aria-label={resourcesOpen ? "Hide resources" : "Show resources"}
-          >
-            <span>Resources</span>
-            <ChevronDown size={14} className={resourcesOpen ? "" : "collapsed"} />
-          </button>
-          <div className="resources-list" id="resources-list">
-            <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} storage={state.storage?.wood} />
-            <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} storage={state.storage?.stone} />
-            <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} storage={state.storage?.wheat} />
-            <Resource type="food" value={state.resources.food} trend={state.trends.food} storage={state.storage?.food} />
-            {showWine && (
-              <Resource type="wine" value={state.resources.wine} trend={state.trends.wine} storage={state.storage?.wine} />
-            )}
-            <div
-              className={`resource population ${housingFull ? "at-capacity" : ""}`}
-              title={`Villagers / housing capacity. Simulation limit: 24 villagers. ${Math.max(0, state.capacity - state.population)} housing spaces available.`}
-              aria-label={`${state.population} villagers, ${state.capacity} housing capacity, simulation limit 24`}
-            >
-              <span className="resource-icon">
-                <Users size={23} strokeWidth={1.7} />
-              </span>
-              <div>
-                <small>villagers</small>
-                <strong>
-                  <span className="resource-value" key={state.population}>
-                    {formatCount(state.population)}
-                  </span>
-                  <em> / {formatCount(state.capacity)}</em>
-                </strong>
-              </div>
-            </div>
           </div>
         </div>
         <div className="day">
@@ -1267,10 +1223,6 @@ function App() {
         </button>
       </header>
       <section className="left-stack">
-        <div className="village-label">
-          <span className="live-dot" /> {state.name.toUpperCase()}{" "}
-          <span className="label-line" />
-        </div>
         {goals && (
           <div className={`objectives parchment ${allGoals ? "complete" : ""}`}>
             <button
@@ -1413,10 +1365,6 @@ function App() {
           >
             4×
           </button>
-        </div>
-        <div className="season-caption">
-          <span className="live-dot" />{" "}
-          {state.speed === 0 ? "PAUSED" : "VILLAGE LIFE"}
         </div>
         {state.feast && (
           <div className="feast-pill parchment" role="status">
@@ -1761,9 +1709,6 @@ function App() {
           </div>
           {detail.type !== "worker" && inspected?.stored && (
             <div className="storage-panel" aria-label="Village storage">
-              <span className="inspector-action-label">
-                In storage · shared village-wide
-              </span>
               <div className="storage-breakdown">
                 <Resource type="wood" value={inspected.stored.wood} storage={inspected.storedCaps?.wood} />
                 <Resource type="stone" value={inspected.stored.stone} storage={inspected.storedCaps?.stone} />
@@ -2110,25 +2055,6 @@ function App() {
         >
           <Grid2X2 size={19} />
         </button>
-        <div className="zoom-controls parchment">
-          <button
-            type="button"
-            aria-label="Zoom in"
-            title="Zoom in"
-            onClick={() => game.current?.zoom(0.15)}
-          >
-            <Plus size={20} />
-          </button>
-          <span />
-          <button
-            type="button"
-            aria-label="Zoom out"
-            title="Zoom out"
-            onClick={() => game.current?.zoom(-0.15)}
-          >
-            <Minus size={20} />
-          </button>
-        </div>
       </div>
       {menu && (
         <div

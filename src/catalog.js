@@ -10,7 +10,7 @@ export const CATALOG = {
     name: "Cottage",
     size: 3,
     cost: { wood: 30, stone: 10 },
-    effect: "+2 housing capacity · villagers are trained at the School",
+    effect: "+2 housing capacity",
     seconds: 12,
   },
   well: {

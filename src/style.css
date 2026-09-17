@@ -123,21 +123,6 @@ h1 span {
   color: #988b73;
   margin-top: 7px;
 }
-.resources {
-  display: flex;
-  align-items: center;
-  flex: 1;
-}
-.resources-toggle {
-  display: none;
-}
-.resources-list {
-  display: flex;
-  gap: 37px;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
-}
 .resource {
   display: flex;
   gap: 11px;
@@ -292,16 +277,6 @@ h1 span {
 .left-stack > * {
   pointer-events: auto;
 }
-.village-label {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  font-size: 8px;
-  font-weight: 600;
-  letter-spacing: 1.7px;
-  color: #f6f4d8;
-  text-shadow: 0 1px 3px #3c512c44;
-}
 .live-dot {
   width: 5px;
   height: 5px;
@@ -309,15 +284,6 @@ h1 span {
   background: #809561;
   display: inline-block;
   flex-shrink: 0;
-}
-.village-label .live-dot {
-  background: #edf0bd;
-}
-.label-line {
-  height: 1px;
-  flex: 1;
-  background: #dfe6b654;
-  margin-left: 7px;
 }
 .village-heading {
   margin: 11px 0 23px;
@@ -997,30 +963,6 @@ h1 span {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.zoom-controls {
-  display: flex;
-  flex-direction: column;
-  padding: 3px;
-}
-.zoom-controls button {
-  height: 32px;
-  width: 31px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-.zoom-controls button svg {
-  display: block;
-}
-.zoom-controls button:hover {
-  background: #e7dcc4;
-}
-.zoom-controls > span {
-  height: 1px;
-  background: #dfd2ba;
-  margin: 1px 5px;
 }
 .bottom-right .active {
   color: #a46843;
@@ -2100,9 +2042,6 @@ h1 span {
   h1 {
     font-size: 28px;
   }
-  .resources-list {
-    gap: 55px;
-  }
   .resource strong {
     font-size: 20px;
   }
@@ -2124,7 +2063,7 @@ h1 span {
   /* Wide desktop viewports have room to lay out every building card in one
      unscrolled row instead of the mobile-style horizontal carousel. */
   .build-palette {
-    max-width: min(960px, calc(100vw - 130px));
+    max-width: calc(100vw - 130px);
   }
 }
 @media (max-width: 1100px) {
@@ -2137,9 +2076,6 @@ h1 span {
   }
   h1 {
     font-size: 22px;
-  }
-  .resources-list {
-    gap: 17px;
   }
   .resource {
     min-width: 60px;
@@ -2204,9 +2140,6 @@ h1 span {
     font-size: 7px;
     letter-spacing: 1.6px;
     margin-top: 5px;
-  }
-  .resources-list {
-    gap: 8px;
   }
   .resource {
     min-width: 58px;
@@ -2349,47 +2282,6 @@ h1 span {
     margin-top: 9px;
     gap: 8px;
   }
-  .resources-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    font-size: 10px;
-    letter-spacing: 1.2px;
-    text-transform: uppercase;
-    color: #8a7c60;
-    cursor: pointer;
-  }
-  .resources-toggle svg {
-    transition: transform 0.2s ease;
-  }
-  .resources-toggle svg.collapsed {
-    transform: rotate(-90deg);
-  }
-  .resources-list {
-    justify-content: space-between;
-    gap: 10px;
-  }
-  .resources.is-collapsed .resources-list {
-    display: none;
-  }
-  .game-shell.resources-open .topbar {
-    height: calc(125px + env(safe-area-inset-top));
-  }
-  .game-shell.resources-open .world {
-    top: calc(120px + env(safe-area-inset-top));
-  }
-  .game-shell.resources-open .left-stack {
-    top: calc(145px + env(safe-area-inset-top));
-  }
-  .game-shell.resources-open .top-right {
-    top: calc(142px + env(safe-area-inset-top));
-  }
   .resource {
     min-width: 0;
     gap: 4px;
@@ -2442,10 +2334,6 @@ h1 span {
     top: calc(119px + env(safe-area-inset-top));
     left: max(16px, env(safe-area-inset-left));
     width: 185px;
-  }
-  .village-label {
-    font-size: 6px;
-    letter-spacing: 1.3px;
   }
   .village-heading {
     margin: 8px 0 13px;
@@ -2568,10 +2456,6 @@ h1 span {
   .icon-button {
     width: 31px;
     height: 31px;
-  }
-  .zoom-controls button {
-    width: 23px;
-    height: 26px;
   }
   .build-tooltip {
     bottom: calc(130px + env(safe-area-inset-bottom));
@@ -2730,11 +2614,6 @@ h1 span {
   }
 }
 @media (max-width: 360px) {
-  /* Keep grouped five-digit storage values fully visible on the narrowest
-     phones; the HUD has five compact counters sharing one row. */
-  .resources-list {
-    gap: 4px;
-  }
   .resource strong {
     font-size: 10px;
     letter-spacing: -0.15px;
