@@ -393,6 +393,9 @@ function App() {
         active.matches("button, input, textarea, select, a, [tabindex]")
           ? active
           : null;
+      // The inspector panel sits over the same bottom-left corner as the
+      // carousel, so tuck it away while a building or worker is inspected.
+      setPaletteOpen(false);
     } else {
       inspectorFocusReturn.current = null;
     }
