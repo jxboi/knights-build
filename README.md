@@ -6,6 +6,14 @@ A playable, local-first medieval village builder made with **Blender + Three.js*
 
 The game runs entirely in the browser. The core simulation does not require an account or a backend; the optional Village Advisor uses a small server-side OpenRouter proxy.
 
+## Features
+
+- Build a living low-poly settlement with cottages, farms, bakeries, inns, storehouses, lumberyards, mines, windmills, watchtowers, schools, vineyards, wells, grain fields, and paths.
+- Watch villagers route around buildings and scenery, construct new sites, harvest renewable resources, process goods, eat, train at the School, and deliver finished stock through the village logistics network.
+- Shape the settlement with grid-snapped placement, connected path segments, a day/night cycle, animated water and foliage, dusk lanterns, and adjustable graphics and audio settings.
+- Work through settlement milestones, inspect buildings and villagers, review live activity in the village overview, and ask the optional advisor what to build next.
+- Continue locally with autosaves, manual save, named villages, conflict-safe multi-tab behavior, and validated export/import backups.
+
 ## Continuing with an AI agent
 
 Start with [HANDOFF.md](HANDOFF.md). It captures the current worktree state, the safe verification loop, and the most useful next places to inspect. [AGENTS.md](AGENTS.md) is the concise, tool-neutral operating guide; [CLAUDE.md](CLAUDE.md) is an entry point for Claude Code. Read [ARCHITECTURAL.md](ARCHITECTURAL.md) before changing the simulation or persistence and [DESIGN.md](DESIGN.md) before changing the interface.
@@ -44,7 +52,10 @@ The advisor is optional: the village remains playable without a key, but advisor
 
 ```sh
 npm test          # simulation and placement checks
+npm run build     # production bundle check
 ```
+
+The test suite runs in Node and covers placement validation, routing, production and delivery, persistence sanitization, progression, and advisor behavior. A browser is only needed for the interactive 3D experience and the optional `/health-check` performance page.
 
 ## Performance health check
 
@@ -57,24 +68,24 @@ available directly from the palette:
 
 | Key | Building | Cost | Effect |
 | --- | --- | --- | --- |
-| 1 | Cottage | 30 wood · 10 stone | +2 housing capacity; houses up to 2 workers when complete |
+| 1 | Cottage | 30 wood · 10 stone | +2 housing capacity; villagers are trained at the School |
 | 2 | Well | 15 wood · 25 stone | Village gathering place |
 | 3 | Farmhouse | 25 wood · 5 stone | Farmers harvest connected ripe fields |
 | 4 | Bakery | 40 wood · 25 stone | Turns 3 wheat into 5 bread per 12-second cycle; holds 5 |
-| 5 | Inn | 55 wood · 25 stone | Holds 8 bread and serves 3 hungry villagers |
+| 5 | Inn | 55 wood · 25 stone | Holds 8 bread for 3 hungry villagers; overflow goes to a Storehouse |
 | 6 | Storehouse | 40 wood · 60 stone | Adds 150 storage for every resource and posts 3 carriers |
 | 7 | Grain field | 1 food per tile | Grows in 30 seconds; a farmhouse harvests 8 wheat per plot |
 | 8 | Lumberyard | 20 wood · 10 stone | Workers chop nearby trees and saw +8 wooden planks per cycle |
 | 9 | Stone mine | 35 wood · 15 stone | +6 stone per cycle; holds 12 |
-| — | Windmill | 50 wood · 35 stone | Converts 2 food into 8 food per 20-second cycle |
+| — | Windmill | 50 wood · 35 stone | Converts 2 food into 8 food per 20-second cycle; holds 16 |
 | — | Watchtower | 45 wood · 20 stone | Expands the buildable boundary by 3 tiles |
-| — | School | 60 wood · 45 stone | Trains builders and tradesfolk |
-| — | Vineyard | 45 wood · 30 stone | Produces +6 wine per 20-second cycle |
-| — | Path | 1 stone per tile | Villagers move 50% faster on paths |
+| — | School | 60 wood · 45 stone | Trains builders and tradesfolk; needs housing room |
+| — | Vineyard | 45 wood · 30 stone | Produces +6 wine per 20-second cycle; holds 12 |
+| — | Path | 1 stone per tile | Villagers move 50% faster; open ground slows them to 0.7× |
 
-Workers are assigned automatically. Builders handle construction, while lumberyards employ up to 2 woodcutters, and farms, mines, and bakeries employ up to 1 farmer, miner, or baker respectively. Windmills use one baker slot for their existing food-processing loop. Any worker without a production job remains a builder. Each completed cottage houses 2 workers.
+Workers are assigned automatically. Builders handle construction, while lumberyards employ up to 2 woodcutters and farms, mines, bakeries, windmills, and vineyards employ up to 1 specialist each. Windmills use a baker slot for their food-processing loop. A School can train builders or tradesfolk over time, and each completed cottage houses 2 workers up to the 24-villager simulation cap. Completed farms and windmills can also be upgraded from their inspectors.
 
-The starter village includes a town hall and several completed structures. Player-built cottages, farms, and delivered timber count toward the three starter milestones. Completing all three produces a one-time flourishing acknowledgement.
+The starter village includes a town hall and several completed structures. The first settlement milestones track a player-built cottage, a player-built farmhouse, and 100 gathered timber. A later chapter tracks 12 new path tiles, 32 delivered food, and a second completed cottage with a well. Completing each set produces a one-time acknowledgement.
 
 ## Deploy to Vercel
 
@@ -90,12 +101,12 @@ vercel --prod
 
 Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment serves the Vite build from `dist/` and the advisor at `/api/advisor`. `OPENROUTER_API_KEY` is required only if the deployed advisor should be available.
 
-## The requested sequence
+## Implemented systems
 
-1. **World:** grassy terrain with subtle color variation → toggleable 1-unit grid → orthographic pan/zoom/orbit camera → warm sunlight and shadows → a readable morning-to-night light cycle with dusk lanterns → animated foliage, water highlights, ambient motes, distant birds, and paths with faster movement → curved river, ripples, rocks, reeds, and a wooden landing.
-2. **Assets:** pine trees → faceted rocks → timber fences → cottages → masonry well → wheat farm → lumberyard → rocky mine → rotating windmill → watchtower. Includes a central village hall and workers.
-3. **Simulation:** workers → balanced job assignment → obstacle-aware grid routing → automatic work and construction jobs → renewable tree harvesting → Lumberyard log delivery and plank sawing → capped worksite stock → carrier deliveries to Inns, Storehouses, and the town hall → bounded village storage → timed production with visible carried goods, delivery bursts, and activity feedback. Chopped trees regrow after 90 seconds. Farms return wheat to their farmhouse store. Bakeries turn 3 wheat into 5 bread per 12-second work cycle and wait when wheat is unavailable; carriers move bread to the Inn first. Windmills turn 2 food into 8 food per 20-second cycle and wait when food is unavailable. Cottages add housing and welcome two workers, up to 24 simulated villagers. Completing the three starter goals gets a one-time flourishing acknowledgement.
-4. **Building:** choose a building → translucent grid-snapped preview → validate land, obstacles, resources, and footprint → place and pay → a worker travels to the site → scaffolding and rising geometry show construction → the finished building joins the village simulation.
+- **World:** grassy terrain with subtle color variation, a toggleable 1-unit grid, orthographic pan/zoom/orbit camera, warm sunlight and shadows, a morning-to-night cycle with dusk lanterns, animated foliage, water highlights, ambient motes, distant birds, and a curved river with ripples, rocks, reeds, and a wooden landing.
+- **Assets:** pine trees, faceted rocks, timber fences, cottages, a masonry well, farm, bakery, inn, storehouse, lumberyard, rocky mine, rotating windmill, watchtower, school, vineyard, town hall, and villagers.
+- **Simulation:** automatic job assignment, obstacle-aware grid routing, renewable tree harvesting, grain growth and harvest, capped worksite stock, carrier deliveries, bounded storage, hunger, training, upgrades, visible carried goods, delivery bursts, activity feedback, and settlement progression.
+- **Building:** translucent grid-snapped previews validate land, obstacles, resources, and footprints before payment. Workers travel to sites, construct scaffolding and rising geometry, and add finished buildings to the village simulation.
 
 ## Controls
 
@@ -105,7 +116,7 @@ Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment ser
 - Choose a palette item, then click valid terrain to build. Grain fields must start beside a completed farmhouse and may then extend from another connected plot. Drag while Grain field or Path is selected to lay a connected segment; diagonal drags choose the clearer Manhattan turn around obstacles. Grain advances from tilled soil to shoots, green-gold stalks, and ripe wheat before a farmer harvests it. Green preview = valid; red = blocked.
 - **R:** rotate preview. **Esc:** cancel. **B:** cottage. **G:** grid.
 - **1–9:** choose the first nine tools from the palette; use the palette directly for the remaining building, path, and removal tools.
-- **Arrow keys:** pan the camera.
+- **Arrow keys:** pan the camera, or move the placement cursor while placing a building or path.
 - **?:** open the help dialog.
 - **Village advisor:** ask for context-aware advice about resources, workers, goals, and the next building to place.
 - **Space:** pause/resume. Use 1×, 2×, and 4× to control simulation speed.
@@ -114,6 +125,12 @@ Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment ser
 - Village overview summarizes population, structures, active jobs, deliveries, built paths, settlement milestones, and recent village activity.
 - Rename the settlement from the top-right village menu; the name is saved with the village.
 - Respects `prefers-reduced-motion` by keeping the simulation usable while pausing decorative world motion.
+
+## Progression and village management
+
+The top-left goals panel shows the starter milestones and the current chapter. The village overview adds a compact readout of population, completed structures, active jobs, deliveries, paths, worksite focus, worker roles, recent activity, graphics presets, atmosphere settings, and milestone progress. Select a listed worksite or villager to focus it in the world.
+
+Use the village menu to rename the settlement, save immediately, export a JSON backup, import a validated backup, open the overview or help dialog, and reset to the original settlement. Saves remain in this browser under `hearth-v1`; there is no account-backed or cloud save. If another tab changes the same village, the older tab pauses and asks to reload before it can write again.
 
 ## Blender source and exports
 
