@@ -789,7 +789,8 @@ h1 span {
 .build-palette {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(14, minmax(0, 1fr));
+  /* Fourteen catalog tools plus the path-removal utility share one rail. */
+  grid-template-columns: repeat(15, minmax(0, 1fr));
   padding: 7px;
   gap: 4px;
   background: linear-gradient(135deg, #fbf7ebef, #eee4cef7);
@@ -876,8 +877,17 @@ h1 span {
   transform: scale(1.045) translateY(-2px);
 }
 .building-name {
-  font-size: 10px;
-  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 9px;
+  line-height: 9px;
+  white-space: normal;
+  text-align: center;
 }
 .build-card i {
   position: absolute;
@@ -902,6 +912,9 @@ h1 span {
   display: flex;
   gap: 5px;
   align-items: center;
+}
+.bottom-caption .touch-hint {
+  display: none;
 }
 .bottom-caption i {
   font-style: normal;
@@ -1069,6 +1082,13 @@ h1 span {
   margin-top: 7px;
   font-size: 10px;
 }
+.recovery-note {
+  display: block;
+  margin-top: 12px;
+  color: #78855c;
+  font-size: 11px;
+  font-weight: 600;
+}
 .tooltip-cost > div > span {
   font-size: 8px;
   color: #9b8b71;
@@ -1088,13 +1108,6 @@ h1 span {
   color: #a1937c;
   margin-top: 9px;
   white-space: nowrap;
-}
-.relocation-note {
-  display: block;
-  margin-top: 12px;
-  color: #78855c;
-  font-size: 11px;
-  font-weight: 600;
 }
 .tooltip-cost .unaffordable,
 .tooltip-cost .unaffordable > span {
@@ -1306,6 +1319,16 @@ h1 span {
 .inspector-control.upgrade {
   background: #eadcb5;
   color: #806431;
+}
+.inspector-control.priority {
+  background: #edf0cf;
+  border-color: #c5ce9e;
+  color: #657345;
+}
+.inspector-control.priority.active {
+  background: #dfe7b6;
+  border-color: #9eae6e;
+  color: #4e6034;
 }
 .upgrade-note {
   display: flex;
@@ -1629,6 +1652,7 @@ h1 span {
 .workforce-type.miner i { background: #5f666e; }
 .workforce-type.farmer i { background: #6e8651; }
 .workforce-type.baker i { background: #b85f55; }
+.workforce-type.carrier i { background: #a67b45; }
 .workforce-type strong {
   color: #665b45;
   font-size: 8px;
@@ -2079,6 +2103,8 @@ h1 span {
   }
   .building-name {
     font-size: 11px;
+    min-height: 22px;
+    line-height: 11px;
   }
   .brand {
     min-width: 360px;
@@ -2347,24 +2373,30 @@ h1 span {
   }
   .resource {
     min-width: 0;
-    gap: 6px;
+    gap: 4px;
   }
   .resource small {
     font-size: 6px;
-    letter-spacing: 1px;
+    letter-spacing: 0.15px;
     margin-bottom: 0;
+    white-space: nowrap;
   }
   .resource strong {
-    font-size: 14px;
+    font-size: 12px;
+    white-space: nowrap;
   }
   .resource em {
-    font-size: 10px;
+    font-size: 9px;
   }
   .resource-icon svg {
-    width: 19px;
+    width: 18px;
   }
   .resource > div:last-child {
-    min-width: 40px;
+    /* Keep short-value cards just wide enough for their labels. The previous
+       40px floor made Wheat and Villagers' icon/value group wider than its
+       flex slot at 390px, clipping the right edge even though the page itself
+       did not overflow. */
+    min-width: 22px;
   }
   .resource-trend {
     display: none;
@@ -2721,11 +2753,27 @@ h1 span {
 }
 @media (max-width: 360px) {
   /* Keep grouped five-digit storage values fully visible on the narrowest
-     phones; the HUD has four counters sharing one compact row. */
+     phones; the HUD has five compact counters sharing one row. */
+  .resources {
+    gap: 4px;
+  }
   .resource strong {
-    font-size: 12px;
+    font-size: 10px;
     letter-spacing: -0.15px;
     white-space: nowrap;
+  }
+  .resource {
+    gap: 2px;
+  }
+  .resource small {
+    font-size: 5px;
+    letter-spacing: 0.1px;
+  }
+  .resource em {
+    font-size: 8px;
+  }
+  .resource-icon svg {
+    width: 16px;
   }
   .resource > div:last-child {
     min-width: 0;
@@ -2831,6 +2879,12 @@ h1 span {
   }
 }
 @media (max-width: 760px) {
+  .bottom-caption .mouse-hint {
+    display: none;
+  }
+  .bottom-caption .touch-hint {
+    display: inline-flex;
+  }
   /* Keep the placement guidance above the build detail card instead of
      allowing the two surfaces to share the same bottom edge. */
   .game-shell .build-tooltip:not(.is-open) {

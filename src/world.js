@@ -49,6 +49,16 @@ export const SCENERY_COUNT = 210;
 export const SCENERY_DRAWS = 8;
 export const GRASS_COUNT = 350;
 export const GRASS_DRAWS = 9;
+export const GRASS_UPDATE_INTERVAL = 1 / 30;
+export const BUILDING_EFFECT_UPDATE_INTERVAL = 1 / 30;
+// Day/night lighting changes slowly enough that 30 updates per second are
+// visually indistinguishable from per-frame writes, while avoiding repeated
+// colour and shadow-light property updates on high-refresh displays.
+export const ATMOSPHERE_UPDATE_INTERVAL = 1 / 30;
+// A paused village still needs occasional frames for camera damping and
+// ambient motion, but a full-refresh redraw wastes GPU time while simulation
+// state is frozen.
+export const PAUSED_RENDER_INTERVAL = 1 / 30;
 // Keep the starter settlement's common area open enough for the buildings and
 // paths to read as one place. This only affects trees; rocks can still add a
 // little visual texture without blocking the central space.
@@ -59,6 +69,13 @@ const drawBlock = (next, size) => {
   const block = new Array(size);
   for (let i = 0; i < size; i++) block[i] = next();
   return block;
+};
+const buildBoundaryFor = (buildings = []) => {
+  let boundary = 18;
+  for (const building of buildings)
+    if (building?.type === "watchtower" && building.progress === 1)
+      boundary += 3;
+  return boundary;
 };
 export const sceneryCandidates = (count = SCENERY_COUNT, seedValue = WORLD_SEED) => {
   const next = createRandom(seedValue);
@@ -77,6 +94,7 @@ export const sceneryCandidates = (count = SCENERY_COUNT, seedValue = WORLD_SEED)
     };
   });
 };
+const sceneryKey = (x, z) => `${Number(x).toFixed(3)},${Number(z).toFixed(3)}`;
 export const grassCandidates = (count = GRASS_COUNT, seedValue = WORLD_SEED + 1) => {
   const next = createRandom(seedValue);
   return Array.from({ length: count }, () => {
@@ -184,6 +202,11 @@ export const buildRoadSurfaceGeometry = (tiles = []) => {
 // Workers are small on screen, but giving them a little extra room keeps their
 // hitboxes and carried goods from visually merging at a shared waypoint.
 export const WORKER_CLEARANCE = 0.78;
+const WORKER_CLEARANCE_SQUARED = WORKER_CLEARANCE * WORKER_CLEARANCE;
+const WORKER_CONGESTION_RADIUS = 2.4;
+const WORKER_CONGESTION_RADIUS_SQUARED =
+  WORKER_CONGESTION_RADIUS * WORKER_CONGESTION_RADIUS;
+const WORKER_NEXT_TARGET_RADIUS_SQUARED = 0.8 * 0.8;
 // A stone path is the made road: villagers keep their full pace on it. Open
 // ground is rough going and slows them to 0.7x, so paving a route is worth it.
 export const ROAD_SPEED = 1.5;
@@ -193,11 +216,43 @@ export const travelSpeed = (onRoad) => (onRoad ? ROAD_SPEED : OFF_ROAD_SPEED);
 // inverse of the speed a villager crosses it at. Keeping both derived from the
 // same numbers stops A* from choosing a short route that is slower to walk.
 export const travelStepCost = (onRoad) => 1 / travelSpeed(onRoad);
+export const shouldRenderWorldFrame = (
+  speed,
+  time,
+  lastPausedRender,
+  interval = PAUSED_RENDER_INTERVAL,
+) => speed > 0 || time - lastPausedRender >= interval;
+const ROUTE_DIRECTIONS = Object.freeze([
+  [0, 1],
+  [1, 0],
+  [0, -1],
+  [-1, 0],
+]);
+// Most placement checks do not need temporary grain-field connectivity state.
+// Reuse one read-only-by-convention empty set on that pointer-move hot path;
+// drag planting still supplies its own mutable virtual-field set.
+const EMPTY_GRAIN_FIELDS = new Set();
+const ROUTE_KEY_WIDTH = 128;
+const ROUTE_KEY_OFFSET = 64;
+const routeKey = (x, z) =>
+  (x + ROUTE_KEY_OFFSET) * ROUTE_KEY_WIDTH + z + ROUTE_KEY_OFFSET;
 const WORKER_REPATH_SECONDS = 1.1;
 const WORKER_PASS_SECONDS = 1;
 const WORKER_DEADLOCK_SECONDS = 1.8;
 const WORKER_DEADLOCK_YIELD_SECONDS = 2.4;
 const WORKER_DEADLOCK_RADIUS = 1.65;
+const DEADLOCK_RADII = Object.freeze([1.15, 1.55, 2]);
+const DEADLOCK_TURNS = Object.freeze([
+  0,
+  Math.PI / 4,
+  -Math.PI / 4,
+  Math.PI / 2,
+  -Math.PI / 2,
+  Math.PI,
+]);
+const DEADLOCK_AXIS = new THREE.Vector3(0, 1, 0);
+const WORK_EFFECT_BUILDINGS = new Set(["farm", "bakery"]);
+const PASSING_SIDES = Object.freeze([1, -1]);
 function pushPriority(heap, item) {
   let index = heap.length;
   heap.push(item);
@@ -232,7 +287,9 @@ export const DEFAULT_VILLAGE_NAME = "Willowbrook";
 export const MAX_POPULATION = 24;
 export const SAVE_VERSION = 7;
 export const GRAIN_GROW_SECONDS = 30;
+export const GRAIN_VISUAL_UPDATE_INTERVAL = 1 / 30;
 export const TREE_REGROW_SECONDS = 90;
+export const TREE_VISUAL_UPDATE_INTERVAL = 1 / 30;
 export const TREE_LOG_AMOUNT = 8;
 export const LUMBERYARD_PROCESS_SECONDS = 5;
 export const HUNGER_SECONDS = 75;
@@ -259,6 +316,14 @@ export const MEAL_SATIETY = 0.12;
 export const LANTERN_LIGHT_BUDGET = Object.freeze({ low: 0, balanced: 6, high: 10 });
 export const lanternLightBudget = (preset) =>
   LANTERN_LIGHT_BUDGET[preset] ?? LANTERN_LIGHT_BUDGET.balanced;
+// Shadow maps dominate the renderer's largest depth allocation. Keep the
+// balanced preset light enough for phones while leaving the high preset as the
+// full-quality option.
+export const shadowMapSizeForPreset = (preset, viewportWidth = 1280) => {
+  if (preset === "low") return 512;
+  if (preset === "high") return viewportWidth <= 720 ? 1536 : 2048;
+  return viewportWidth <= 720 ? 1024 : 1536;
+};
 // Reassigning which lamps are lit is a sort over every lantern, and swapping a
 // light's position is free while the *count* stays fixed (a changed count
 // recompiles every material). Re-aim a few times a second, never per frame.
@@ -300,6 +365,18 @@ export const finiteNumber = (value, fallback) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 };
+const normalizedAmountRecord = (record) =>
+  Object.fromEntries(
+    Object.entries(record && typeof record === "object" ? record : {}).map(
+      ([key, value]) => [key, Math.max(0, finiteNumber(value, 0))],
+    ),
+  );
+const normalizedCountRecord = (record) =>
+  Object.fromEntries(
+    Object.entries(record && typeof record === "object" ? record : {}).map(
+      ([key, value]) => [key, Math.max(0, Math.floor(finiteNumber(value, 0)))],
+    ),
+  );
 export const sanitizeCameraView = (view) => {
   if (!view || typeof view !== "object") return null;
   const position = Array.isArray(view.position) ? view.position.map(Number) : null;
@@ -588,13 +665,7 @@ export const savedBuildingFits = (building, existing = []) => {
   const z = Number(building.z);
   if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
   const size = (CATALOG[building.type]?.size || 4) / 2;
-  const boundary =
-    18 +
-    existing.filter(
-      (candidate) =>
-        candidate.type === "watchtower" && candidate.progress === 1,
-    ).length *
-      3;
+  const boundary = buildBoundaryFor(existing);
   if (
     x - size < -boundary ||
     z - size < -boundary ||
@@ -620,18 +691,28 @@ export class Village {
     this.onPlacementComplete = onPlacementComplete;
     this.buildings = [];
     this.workers = [];
+    // Keep raycast roots stable. Pointer hover can fire many times per frame,
+    // so rebuilding these arrays from the simulation collections is needless
+    // allocation on an interaction hot path.
+    this.pickTargets = [];
+    this.workerPickTargets = [];
+    this.buildingPickTargets = [];
     this.nextWorkerId = 0;
     this.nextBuildingId = 0;
     this.decor = [];
+    this.clearedScenery = new Set();
     this.swayers = [];
     this.motes = null;
     this.moteSeeds = [];
     this.deliveryBursts = [];
     this.birds = [];
+    this.birdsVisible = null;
+    this.workerShadowField = null;
     this.lanternLights = [];
     this.lanternReaim = 0;
     this.roads = new Set();
     this.roadTiles = new Map();
+    this.roadRevision = 0;
     this.roadSurfaceMesh = null;
     this.roadsDirty = false;
     this.grassField = null;
@@ -645,10 +726,13 @@ export class Village {
     this.pathStart = null;
     this.ghostGeometryOwned = false;
     this.lastUI = 0;
+    this.lastGrainFieldUpdate = -Infinity;
+    this.lastBuildingEffectUpdate = -Infinity;
+    this.lastAtmosphereUpdate = -Infinity;
+    this.lastPausedRender = -Infinity;
     this.lastSave = -1;
     this.lastSavedAt = 0;
     this.saveFingerprint = null;
-    this.storageAvailable = true;
     this.storageConflict = false;
     this.gathered = 0;
     this.delivered = { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 };
@@ -666,9 +750,24 @@ export class Village {
     this.nextActivityId = 0;
     this.created = {};
     this.dead = false;
-    this.reduceMotion = Boolean(
-      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches,
+    this.healthCheck = Boolean(
+      typeof window !== "undefined" &&
+        window.parent !== window &&
+        new URLSearchParams(window.location.search).has("healthcheck"),
     );
+    // The embedded performance sample must never compete with the playable
+    // tab for the player's local save or mark it stale.
+    this.storageAvailable = !this.healthCheck;
+    this.motionQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)") || null;
+    this.reduceMotion = Boolean(this.motionQuery?.matches);
+    this.motionChange = (event) => {
+      this.reduceMotion = Boolean(event.matches);
+    };
+    if (this.motionQuery?.addEventListener) {
+      this.motionQuery.addEventListener("change", this.motionChange);
+    } else {
+      this.motionQuery?.addListener?.(this.motionChange);
+    }
     this.graphicsPreset = "balanced";
     this.audioSettings = { effects: true, ambience: false };
     try {
@@ -684,19 +783,26 @@ export class Village {
     this.ambientOscillator = null;
     this.models = {};
     this.thumbnails = {};
-    try {
-      const rawSave = localStorage.getItem("hearth-v1");
+    this.thumbnailRenderer = null;
+    this.thumbnailTask = null;
+    this.thumbnailTaskKind = null;
+    this.thumbnailWaitResolve = null;
+    this.saved = null;
+    if (!this.healthCheck) {
       try {
-        this.saved = rawSave ? JSON.parse(rawSave) : null;
-        if (this.saved && typeof this.saved === "object") {
-          this.lastSavedAt = Date.now();
-          this.saveFingerprint = rawSave;
+        const rawSave = localStorage.getItem("hearth-v1");
+        try {
+          this.saved = rawSave ? JSON.parse(rawSave) : null;
+          if (this.saved && typeof this.saved === "object") {
+            this.lastSavedAt = Date.now();
+            this.saveFingerprint = rawSave;
+          }
+        } catch {
+          this.saved = null;
         }
       } catch {
-        this.saved = null;
+        this.storageAvailable = false;
       }
-    } catch {
-      this.storageAvailable = false;
     }
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#a7b673");
@@ -711,7 +817,10 @@ export class Village {
       sunWarm: new THREE.Color("#ffc083"),
       sun: new THREE.Color(),
     };
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: this.graphicsPreset !== "low",
+      alpha: false,
+    });
     this.pixelRatio = () =>
       Math.min(
         devicePixelRatio,
@@ -727,7 +836,8 @@ export class Village {
       );
     this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.shadowMap.enabled = this.graphicsPreset !== "low";
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type =
+      this.graphicsPreset === "high" ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -755,22 +865,40 @@ export class Village {
     this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.point = new THREE.Vector3();
     this.makeWorld();
+    this.resizeFrame = null;
     this.resize = () => {
-      const w = container.clientWidth,
-        h = container.clientHeight;
-      const view = 30;
-      this.camera.left = (-view * w) / h / 2;
-      this.camera.right = (view * w) / h / 2;
-      this.camera.top = view / 2;
-      this.camera.bottom = -view / 2;
-      this.camera.updateProjectionMatrix();
-      this.renderer.setPixelRatio(this.pixelRatio());
-      this.renderer.setSize(w, h);
+      if (this.resizeFrame != null) return;
+      this.resizeFrame = requestAnimationFrame(() => {
+        this.resizeFrame = null;
+        if (this.dead) return;
+        const w = container.clientWidth,
+          h = container.clientHeight;
+        // A hidden or transitioning shell can briefly report no height. Wait
+        // for the next observer/window notification instead of poisoning the
+        // orthographic projection with Infinity or asking WebGL for a 0x0
+        // drawing buffer.
+        if (w <= 0 || h <= 0) return;
+        const view = 30;
+        this.camera.left = (-view * w) / h / 2;
+        this.camera.right = (view * w) / h / 2;
+        this.camera.top = view / 2;
+        this.camera.bottom = -view / 2;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setPixelRatio(this.pixelRatio());
+        this.renderer.setSize(w, h);
+      });
     };
     this.resize();
+    this.resizeObserver = null;
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(container);
+    }
     this.restoreView();
     window.addEventListener("resize", this.resize);
-    this.move = (e) => this.pointerMove(e);
+    this.pointerFrame = null;
+    this.pendingPointerEvent = null;
+    this.move = (e) => this.schedulePointerMove(e);
     this.down = (e) => {
       this.startPointer = [e.clientX, e.clientY];
       this.pathStart = null;
@@ -778,7 +906,7 @@ export class Village {
         e.button === 0 &&
         (this.selected === "road" || this.selected === "grainfield")
       ) {
-        this.pointerMove(e);
+        this.flushPointerMove(e);
         if (this.placement)
           this.pathStart = { x: this.placement.x, z: this.placement.z };
       }
@@ -794,14 +922,18 @@ export class Village {
         this.pathStart &&
         distance >= 6
       ) {
-        this.pointerMove(e);
+        this.flushPointerMove(e);
         if (this.selected === "road") this.paintRoad(this.pathStart, this.placement);
         else this.paintGrainField(this.pathStart, this.placement);
-      } else if (distance < 6) this.click(e);
+      } else if (distance < 6) {
+        this.cancelPointerMove();
+        this.click(e);
+      }
       this.pathStart = null;
       this.startPointer = null;
     };
     this.cancelPointer = (e) => {
+      this.cancelPointerMove();
       this.pathStart = null;
       this.startPointer = null;
     };
@@ -813,7 +945,21 @@ export class Village {
       "contextmenu",
       (this.context = (e) => e.preventDefault()),
     );
-    this.beforeUnload = () => this.save();
+    this.beforeUnload = () => {
+      if (!this.healthCheck) this.save();
+    };
+    this.visibilityChange = () => {
+      if (
+        document.visibilityState === "visible" &&
+        !this.dead &&
+        this.frame == null
+      ) {
+        // Discard the hidden interval so resuming never creates a simulation
+        // jump or an oversized first animation delta.
+        this.clock?.getDelta();
+        this.frame = requestAnimationFrame(this.animate);
+      }
+    };
     this.storageChange = (event) => {
       if (event.key !== "hearth-v1" && event.key !== null) return;
       if (this.storageConflict) return;
@@ -826,11 +972,33 @@ export class Village {
         this.emit();
       }
     };
-    window.addEventListener("pagehide", this.beforeUnload);
-    window.addEventListener("storage", this.storageChange);
+    if (!this.healthCheck) {
+      window.addEventListener("pagehide", this.beforeUnload);
+      window.addEventListener("storage", this.storageChange);
+    }
+    document.addEventListener("visibilitychange", this.visibilityChange);
     this.clock = new THREE.Clock();
     this.animate();
     this.load();
+  }
+  schedulePointerMove(event) {
+    this.pendingPointerEvent = event;
+    if (this.pointerFrame != null) return;
+    this.pointerFrame = requestAnimationFrame(() => {
+      this.pointerFrame = null;
+      const pending = this.pendingPointerEvent;
+      this.pendingPointerEvent = null;
+      if (!this.dead && pending) this.pointerMove(pending);
+    });
+  }
+  cancelPointerMove() {
+    if (this.pointerFrame != null) cancelAnimationFrame(this.pointerFrame);
+    this.pointerFrame = null;
+    this.pendingPointerEvent = null;
+  }
+  flushPointerMove(event) {
+    this.cancelPointerMove();
+    this.pointerMove(event);
   }
   mesh(geometry, color, x, y, z) {
     const mesh = new THREE.Mesh(
@@ -852,7 +1020,12 @@ export class Village {
     this.sun = new THREE.DirectionalLight("#fff0cd", 2.7);
     this.sun.position.set(-18, 35, 15);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    const shadowMapSize = shadowMapSizeForPreset(
+      this.graphicsPreset,
+      window.innerWidth,
+    );
+    this.shadowMapSize = shadowMapSize;
+    this.sun.shadow.mapSize.set(shadowMapSize, shadowMapSize);
     Object.assign(this.sun.shadow.camera, {
       left: -36,
       right: 36,
@@ -867,16 +1040,20 @@ export class Village {
     this.scene.add(this.sun);
     const geo = new THREE.PlaneGeometry(150, 150, 65, 65);
     geo.rotateX(-Math.PI / 2);
-    const cols = [];
+    const cols = new Float32Array(geo.attributes.position.count * 3);
     const p = geo.attributes.position;
+    const color = new THREE.Color();
     for (let i = 0; i < p.count; i++) {
-      const c = new THREE.Color().setHSL(
+      color.setHSL(
         0.215 + rand() * 0.017,
         0.39 + rand() * 0.035,
         0.45 + rand() * 0.016,
       );
-      c.convertSRGBToLinear();
-      cols.push(c.r, c.g, c.b);
+      color.convertSRGBToLinear();
+      const offset = i * 3;
+      cols[offset] = color.r;
+      cols[offset + 1] = color.g;
+      cols[offset + 2] = color.b;
     }
     geo.setAttribute("color", new THREE.Float32BufferAttribute(cols, 3));
     const land = new THREE.Mesh(
@@ -916,8 +1093,11 @@ export class Village {
     this.grid.material.opacity = 0.24;
     this.grid.visible = false;
     this.scene.add(this.grid);
-    const waterVerts = [],
-      waterColors = [];
+    const waterVertexCount = Math.ceil((75 - -75) / 2) * 6;
+    const waterVerts = new Float32Array(waterVertexCount * 3);
+    const waterColors = new Float32Array(waterVertexCount * 3);
+    let waterVertex = 0;
+    const waterColor = new THREE.Color();
     for (let z = -75; z < 75; z += 2) {
       const l = riverX(z),
         l2 = riverX(z + 2);
@@ -929,14 +1109,19 @@ export class Village {
         [l2, z + 2],
         [l2 + 8, z + 2],
       ]) {
-        waterVerts.push(v[0], 0.018, v[1]);
-        const c = new THREE.Color().setHSL(
+        const vertexOffset = waterVertex++ * 3;
+        waterVerts[vertexOffset] = v[0];
+        waterVerts[vertexOffset + 1] = 0.018;
+        waterVerts[vertexOffset + 2] = v[1];
+        waterColor.setHSL(
           0.535 + rand() * 0.016,
           0.47,
           0.46 + rand() * 0.07,
         );
-        c.convertSRGBToLinear();
-        waterColors.push(c.r, c.g, c.b);
+        waterColor.convertSRGBToLinear();
+        waterColors[vertexOffset] = waterColor.r;
+        waterColors[vertexOffset + 1] = waterColor.g;
+        waterColors[vertexOffset + 2] = waterColor.b;
       }
     }
     const wg = new THREE.BufferGeometry();
@@ -1064,6 +1249,7 @@ export class Village {
         );
         m.castShadow = true;
       }
+    this.syncGraphicsDetail();
   }
   roadSurfaceTexture() {
     if (this.roadSurface !== undefined) return this.roadSurface;
@@ -1165,11 +1351,13 @@ export class Village {
       z,
       tint: ROAD_TINTS[Math.floor(rand() * ROAD_TINTS.length)],
     });
+    this.roadRevision = (this.roadRevision || 0) + 1;
     // Painting a path calls this once per tile; the surface is rebuilt once on
     // the next frame instead of once per tile.
     this.roadsDirty = true;
     if (custom) {
-      this.created.road = (this.created.road || 0) + 1;
+      this.created.road =
+        Math.max(0, Math.floor(finiteNumber(this.created.road, 0))) + 1;
     }
   }
   // Grass was ~350 meshes with ~350 unique materials, none of which ever moved
@@ -1191,16 +1379,27 @@ export class Village {
     });
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.scene.add(mesh);
-    this.grassField = { mesh, blades, dummy: new THREE.Object3D(), settled: false };
+    this.grassField = {
+      mesh,
+      blades,
+      dummy: new THREE.Object3D(),
+      settled: false,
+      lastUpdate: -Infinity,
+    };
+    mesh.visible = this.graphicsPreset !== "low";
     this.updateGrassField(0, 0);
     return mesh;
   }
   updateGrassField(time = 0, motion = 1) {
     const field = this.grassField;
     if (!field) return false;
+    if (this.graphicsPreset === "low") return false;
     // With reduced motion the blades never move, so they are posed once and the
     // per-frame matrix upload is skipped entirely.
     if (!motion && field.settled) return false;
+    // Grass is atmospheric detail; updating its instance buffer at 30 Hz keeps
+    // the sway alive while avoiding 350 matrix writes on every 60 Hz frame.
+    if (motion && time - field.lastUpdate < GRASS_UPDATE_INTERVAL) return false;
     const { mesh, blades, dummy } = field;
     for (let i = 0; i < blades.length; i++) {
       const blade = blades[i];
@@ -1216,8 +1415,23 @@ export class Village {
       mesh.setMatrixAt(i, dummy.matrix);
     }
     mesh.instanceMatrix.needsUpdate = true;
+    field.lastUpdate = time;
     field.settled = !motion;
     return true;
+  }
+  syncGraphicsDetail() {
+    const low = this.graphicsPreset === "low";
+    if (this.grassField?.mesh) this.grassField.mesh.visible = !low;
+    if (this.motes) this.motes.visible = !low;
+    for (const ripple of this.ripples || []) ripple.visible = !low;
+    const birdsVisible =
+      !low &&
+      !this.reduceMotion &&
+      (this.atmosphere?.sunHeight ?? 1) > 0.16;
+    if (this.birdsVisible !== birdsVisible) {
+      this.birdsVisible = birdsVisible;
+      for (const bird of this.birds || []) bird.group.visible = birdsVisible;
+    }
   }
   ensureRoadSurface() {
     if (typeof this.scene?.add !== "function") return null;
@@ -1254,14 +1468,12 @@ export class Village {
       const modelKeys = [
         "tree",
         "rock",
-        "fence",
         "house",
         "well",
         "farm",
         "bakery",
         "inn",
         "storehouse",
-        "grainfield",
         "grainfield_sown",
         "grainfield_sprout",
         "grainfield_growing",
@@ -1276,9 +1488,20 @@ export class Village {
         "worker",
       ];
       const loadedModels = await Promise.all(
-        modelKeys.map(async (key) => [key, await loader.loadAsync(`/models/${key}.glb`)]),
+        modelKeys.map(async (key) => {
+          try {
+            return [key, await loader.loadAsync(`/models/${key}.glb`)];
+          } catch (error) {
+            // Keep one missing optional asset from blanking the entire village.
+            // modelTemplate() supplies a lightweight placeholder when this key
+            // is requested by the scene or palette.
+            console.warn(`Could not load ${key} model; using a fallback.`, error);
+            return [key, null];
+          }
+        }),
       );
       for (const [key, gltf] of loadedModels) {
+        if (!gltf) continue;
         this.models[key] = gltf.scene;
         gltf.scene.traverse((o) => {
           if (o.isMesh) {
@@ -1287,7 +1510,13 @@ export class Village {
           }
         });
       }
-      if (this.dead) return;
+      if (this.dead) {
+        // A component can unmount while the parallel GLB requests are still
+        // in flight. These roots never reached the scene, so the normal scene
+        // disposal pass cannot see their shared GPU resources.
+        this.disposeLoadedModelResources();
+        return;
+      }
       this.name = sanitizeVillageName(this.saved?.name);
       const savedActivity = Array.isArray(this.saved?.activityLog)
         ? this.saved.activityLog
@@ -1332,10 +1561,7 @@ export class Village {
           this.saved.feast && finiteNumber(this.saved.feast.remaining, 0) > 0
             ? { remaining: finiteNumber(this.saved.feast.remaining, 0) }
             : null;
-        this.created =
-          this.saved.created && typeof this.saved.created === "object"
-            ? { ...this.saved.created }
-            : {};
+        this.created = normalizedCountRecord(this.saved.created);
         const savedTownhall = savedBuildingRecords.find(
               (building) =>
                 building.type === "townhall" && savedBuildingFits(building),
@@ -1379,19 +1605,12 @@ export class Village {
             b.stock,
           );
         }
+        this.ensureStarterVillage();
         this.clampResourcesToStorage();
-        if (!this.buildings.some((building) => building.type === "townhall"))
-          STARTER_BUILDINGS.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
         const savedRoads = Array.isArray(this.saved.roads)
           ? this.saved.roads
           : [];
-        const roadBoundary =
-          18 +
-          this.buildings.filter(
-            (building) =>
-              building.type === "watchtower" && building.progress === 1,
-          ).length *
-            3;
+        const roadBoundary = buildBoundaryFor(this.buildings);
         const restoredRoads = new Set();
         for (const key of savedRoads) {
           if (typeof key !== "string") continue;
@@ -1411,15 +1630,26 @@ export class Village {
         }
         this.created = reconcileRoadCount(this.created, restoredRoads, this.baseRoads);
       } else {
-        STARTER_BUILDINGS.forEach(([t, x, z]) => this.addBuilding(t, x, z, 0, 1));
+        this.ensureStarterVillage();
       }
       const savedTrees = new Map(
         (Array.isArray(this.saved?.trees) ? this.saved.trees : [])
           .filter((tree) => tree && Number.isFinite(Number(tree.x)) && Number.isFinite(Number(tree.z)))
-          .map((tree) => [`${Number(tree.x).toFixed(3)},${Number(tree.z).toFixed(3)}`, tree]),
+          .map((tree) => [sceneryKey(tree.x, tree.z), tree]),
+      );
+      this.clearedScenery = new Set(
+        (Array.isArray(this.saved?.clearedScenery) ? this.saved.clearedScenery : [])
+          .filter((key) => typeof key === "string")
+          .map((key) => {
+            const [x, z] = key.split(",").map(Number);
+            return Number.isFinite(x) && Number.isFinite(z) ? sceneryKey(x, z) : null;
+          })
+          .filter(Boolean),
       );
       for (const candidate of sceneryCandidates()) {
         const { x, z, type } = candidate;
+        const candidateKey = sceneryKey(x, z);
+        if (this.clearedScenery.has(candidateKey)) continue;
         if (
           (x > riverX(z) - 1 && x < riverX(z) + 9) ||
           (x > 14 && x < 19 && z > 6 && z < 10)
@@ -1452,7 +1682,7 @@ export class Village {
           this.swayers.push(m);
         }
         const savedTree = tree
-          ? savedTrees.get(`${x.toFixed(3)},${z.toFixed(3)}`)
+          ? savedTrees.get(candidateKey)
           : null;
         this.decor.push({
           m,
@@ -1460,6 +1690,7 @@ export class Village {
           z,
           r: tree ? 0.5 * s : 0.6 * s,
           type,
+          sceneryKey: candidateKey,
           state: tree ? savedTree?.state || "available" : null,
           claimedBy: null,
           regrowAt: tree ? finiteNumber(savedTree?.regrowAt, null) : null,
@@ -1523,28 +1754,66 @@ export class Village {
       this.ready = true;
       this.onLoaded(this.thumbnails, undefined, "interactive");
       this.emit();
-      const makeThumbnails = () => {
-        if (this.dead) return;
-        this.makeThumbnails();
-        this.onLoaded(this.thumbnails, undefined, "thumbnails");
-        this.emit();
+      const startThumbnails = () => {
+        this.thumbnailTask = null;
+        this.thumbnailTaskKind = null;
+        this.makeThumbnails()
+          .then((completed) => {
+            if (!completed || this.dead) return;
+            this.onLoaded(this.thumbnails, undefined, "thumbnails");
+            this.emit();
+          })
+          .catch((error) => {
+            this.thumbnailRenderer?.dispose();
+            this.thumbnailRenderer = null;
+            if (!this.dead) console.error("Could not finish village thumbnails.", error);
+          });
       };
       if (window.requestIdleCallback) {
         this.thumbnailTaskKind = "idle";
-        this.thumbnailTask = window.requestIdleCallback(makeThumbnails, { timeout: 1800 });
+        this.thumbnailTask = window.requestIdleCallback(startThumbnails, { timeout: 1800 });
       } else {
         this.thumbnailTaskKind = "timeout";
-        this.thumbnailTask = window.setTimeout(makeThumbnails, 100);
+        this.thumbnailTask = window.setTimeout(startThumbnails, 100);
       }
     } catch (e) {
+      if (this.dead) return;
       console.error(e);
       this.notify("Could not load the village. Please refresh to try again.");
       this.onLoaded({}, String(e));
     }
   }
-  model(type, x = 0, z = 0) {
+  disposeLoadedModelResources() {
+    const geometries = new Set();
+    const materials = new Set();
+    const textures = new Set();
+    for (const model of Object.values(this.models || {})) {
+      model?.traverse?.((object) => {
+        if (!(object.isMesh || object.isLine || object.isPoints)) return;
+        if (object.geometry) geometries.add(object.geometry);
+        const list = Array.isArray(object.material)
+          ? object.material
+          : [object.material];
+        list.filter(Boolean).forEach((material) => {
+          materials.add(material);
+          Object.values(material).forEach((value) => {
+            if (value?.isTexture) textures.add(value);
+          });
+        });
+      });
+    }
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
+    textures.forEach((texture) => texture.dispose());
+    this.models = {};
+  }
+  modelTemplate(type) {
     if (!this.models[type]) this.models[type] = this.makeDecorationModel(type);
-    const m = this.models[type].clone(true);
+    return this.models[type];
+  }
+  model(type, x = 0, z = 0) {
+    const templateType = type === "grainfield" ? "grainfield_sown" : type;
+    const m = this.modelTemplate(templateType).clone(true);
     m.position.set(x, 0, z);
     this.scene.add(m);
     return m;
@@ -1583,8 +1852,34 @@ export class Village {
       zoom: this.camera.zoom,
     });
   }
-  makeThumbnails() {
-    const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  waitForThumbnailSlice() {
+    return new Promise((resolve) => {
+      if (this.dead) {
+        resolve(false);
+        return;
+      }
+      this.thumbnailWaitResolve = resolve;
+      const resume = () => {
+        this.thumbnailWaitResolve = null;
+        this.thumbnailTask = null;
+        this.thumbnailTaskKind = null;
+        resolve(!this.dead);
+      };
+      if (window.requestIdleCallback) {
+        this.thumbnailTaskKind = "idle";
+        this.thumbnailTask = window.requestIdleCallback(resume, { timeout: 1800 });
+      } else {
+        this.thumbnailTaskKind = "timeout";
+        this.thumbnailTask = window.setTimeout(resume, 16);
+      }
+    });
+  }
+  async makeThumbnails() {
+    const r = new THREE.WebGLRenderer({
+      antialias: this.graphicsPreset !== "low",
+      alpha: true,
+    });
+    this.thumbnailRenderer = r;
     r.setSize(160, 130);
     r.setPixelRatio(1);
     r.outputColorSpace = THREE.SRGBColorSpace;
@@ -1596,28 +1891,35 @@ export class Village {
     l.position.set(-4, 7, 5);
     s.add(l);
     const c = new THREE.OrthographicCamera(-3, 3, 2.45, -2.45, 0.1, 50);
+    // The probe only decides whether a model touches the frame edge. Keep the
+    // displayed thumbnail at 160×130, but inspect a half-resolution buffer so
+    // framing never monopolizes the main thread during the idle thumbnail pass.
+    const probeWidth = 80;
+    const probeHeight = 65;
     const thumbnailProbe = document.createElement("canvas");
-    thumbnailProbe.width = 160;
-    thumbnailProbe.height = 130;
-    const probeContext = thumbnailProbe.getContext("2d");
+    thumbnailProbe.width = probeWidth;
+    thumbnailProbe.height = probeHeight;
+    // Thumbnail framing samples rendered pixels several times per model while
+    // it finds a scale that fits. Tell the browser this canvas is readback
+    // heavy so repeated getImageData calls stay on the fast path.
+    const probeContext = thumbnailProbe.getContext("2d", {
+      willReadFrequently: true,
+    });
     const thumbnailTouchesEdge = (source) => {
       if (!probeContext) return false;
-      probeContext.clearRect(0, 0, 160, 130);
-      probeContext.drawImage(source, 0, 0);
-      const pixels = probeContext.getImageData(0, 0, 160, 130).data;
-      let minX = 160;
-      let minY = 130;
-      let maxX = -1;
-      let maxY = -1;
-      for (let y = 0; y < 130; y++)
-        for (let x = 0; x < 160; x++)
-          if (pixels[(y * 160 + x) * 4 + 3] > 8) {
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-          }
-      return minX <= 1 || minY <= 1 || maxX >= 158 || maxY >= 128;
+      probeContext.clearRect(0, 0, probeWidth, probeHeight);
+      probeContext.drawImage(source, 0, 0, probeWidth, probeHeight);
+      const pixels = probeContext.getImageData(0, 0, probeWidth, probeHeight).data;
+      const opaque = (x, y) => pixels[(y * probeWidth + x) * 4 + 3] > 8;
+      for (let x = 0; x < probeWidth; x++) {
+        if (opaque(x, 0) || opaque(x, 1)) return true;
+        if (opaque(x, probeHeight - 2) || opaque(x, probeHeight - 1)) return true;
+      }
+      for (let y = 2; y < probeHeight - 2; y++) {
+        if (opaque(0, y) || opaque(1, y)) return true;
+        if (opaque(probeWidth - 2, y) || opaque(probeWidth - 1, y)) return true;
+      }
+      return false;
     };
     const renderThumbnail = (model) => {
       model.updateMatrixWorld(true);
@@ -1636,7 +1938,13 @@ export class Village {
         scale *= 1.14;
       }
     };
-    for (const key of Object.keys(CATALOG)) {
+    const keys = Object.keys(CATALOG);
+    for (const [index, key] of keys.entries()) {
+      if (this.dead) {
+        r.dispose();
+        this.thumbnailRenderer = null;
+        return false;
+      }
       const m =
         key === "road"
           ? new THREE.Mesh(
@@ -1647,13 +1955,32 @@ export class Village {
                 map: this.roadSurfaceTexture() || null,
               }),
             )
-          : (this.models[key] || this.makeDecorationModel(key)).clone(true);
+          : this.modelTemplate(
+              key === "grainfield" ? "grainfield_ripe" : key,
+            ).clone(true);
       s.add(m);
-      renderThumbnail(m);
-      this.thumbnails[key] = r.domElement.toDataURL();
-      s.remove(m);
+      try {
+        renderThumbnail(m);
+        this.thumbnails[key] = r.domElement.toDataURL();
+      } finally {
+        s.remove(m);
+        // The road preview is the only thumbnail mesh created from fresh GPU
+        // resources. GLB previews share their model resources with the village,
+        // so only release this temporary geometry and material here.
+        if (key === "road") {
+          m.geometry.dispose();
+          m.material.dispose();
+        }
+      }
+      if (index < keys.length - 1 && !(await this.waitForThumbnailSlice())) {
+        r.dispose();
+        this.thumbnailRenderer = null;
+        return false;
+      }
     }
     r.dispose();
+    this.thumbnailRenderer = null;
+    return true;
   }
   addBuilding(
     type,
@@ -1683,6 +2010,7 @@ export class Village {
       rotation,
       progress,
       m,
+      sails: type === "windmill" ? m.getObjectByName?.("Sails") || null : null,
       cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
       priority: priority === "priority" ? "priority" : "normal",
       paused: Boolean(paused),
@@ -1713,6 +2041,10 @@ export class Village {
       this.updateGrainFieldVisual(b, true);
       return b;
     }
+    this.buildingPickTargets ||= [];
+    this.pickTargets ||= [];
+    this.buildingPickTargets.push(m);
+    this.pickTargets.push(m);
     if (progress < 1) {
       const ready = constructionMaterialsReady(b);
       m.visible = ready;
@@ -1733,7 +2065,7 @@ export class Village {
     const dz = Math.abs(Math.round(z) - Math.round(farm.z));
     return (dx === edge && dz <= half) || (dz === edge && dx <= half);
   }
-  grainFieldConnected(x, z, extraFields = new Set()) {
+  grainFieldConnected(x, z, extraFields = EMPTY_GRAIN_FIELDS) {
     if (
       this.buildings.some((building) =>
         this.farmTouchesGrainField(building, x, z),
@@ -1758,26 +2090,27 @@ export class Village {
   }
   grainFieldsForFarm(farm) {
     if (!farm || farm.type !== "farm" || farm.progress < 1) return [];
-    const fields = this.buildings.filter(
-      (building) => building.type === "grainfield",
-    );
+    const fields = [];
+    const fieldByKey = new Map();
+    for (const building of this.buildings) {
+      if (building.type !== "grainfield") continue;
+      fields.push(building);
+      fieldByKey.set(`${building.x},${building.z}`, building);
+    }
     const connected = [];
     const visited = new Set();
     const queue = fields.filter((field) =>
       this.farmTouchesGrainField(farm, field.x, field.z),
     );
-    while (queue.length) {
-      const field = queue.shift();
+    for (let index = 0; index < queue.length; index++) {
+      const field = queue[index];
       const key = `${field.x},${field.z}`;
       if (visited.has(key)) continue;
       visited.add(key);
       connected.push(field);
-      for (const candidate of fields) {
-        const candidateKey = `${candidate.x},${candidate.z}`;
-        if (
-          !visited.has(candidateKey) &&
-          Math.abs(candidate.x - field.x) + Math.abs(candidate.z - field.z) === 1
-        )
+      for (const [dx, dz] of ROUTE_DIRECTIONS) {
+        const candidate = fieldByKey.get(`${field.x + dx},${field.z + dz}`);
+        if (candidate && !visited.has(`${candidate.x},${candidate.z}`))
           queue.push(candidate);
       }
     }
@@ -1801,10 +2134,30 @@ export class Village {
     field.m = next;
     field.fieldStage = stage;
     if (previous) this.scene.remove(previous);
+    this.removePickTarget(previous);
+    this.buildingPickTargets ||= [];
+    this.pickTargets ||= [];
+    this.buildingPickTargets.push(next);
+    this.pickTargets.push(next);
   }
   updateGrainFields() {
-    for (const field of this.buildings)
-      if (field.type === "grainfield") this.updateGrainFieldVisual(field);
+    const elapsed = finiteNumber(this.elapsed, 0);
+    const lastUpdate = this.lastGrainFieldUpdate;
+    if (
+      Number.isFinite(lastUpdate) &&
+      elapsed >= lastUpdate &&
+      elapsed - lastUpdate < GRAIN_VISUAL_UPDATE_INTERVAL
+    )
+      return false;
+    this.lastGrainFieldUpdate = elapsed;
+    let updated = false;
+    for (const field of this.buildings) {
+      if (field.type !== "grainfield") continue;
+      const previousStage = field.fieldStage;
+      this.updateGrainFieldVisual(field);
+      updated ||= previousStage !== field.fieldStage;
+    }
+    return updated;
   }
   treeGrowthProgress(tree) {
     if (!tree || tree.type !== "tree") return 1;
@@ -1815,6 +2168,15 @@ export class Village {
   }
   updateTreeVisual(tree) {
     if (!tree?.m || tree.type !== "tree") return;
+    const elapsed = finiteNumber(this.elapsed, 0);
+    const stateChanged = tree.visualState !== tree.state;
+    if (!stateChanged && tree.state === "available") return false;
+    if (
+      !stateChanged &&
+      tree.visualElapsed != null &&
+      elapsed - tree.visualElapsed < TREE_VISUAL_UPDATE_INTERVAL
+    )
+      return false;
     const progress = this.treeGrowthProgress(tree);
     const isIntact = tree.state === "available" || tree.state === "chopping";
     const stage = isIntact ? "full" : treeGrowthStage(progress);
@@ -1829,10 +2191,16 @@ export class Village {
     );
     tree.m.position.y = 0;
     tree.m.userData.growthStage = stage;
+    tree.visualState = tree.state;
+    tree.visualElapsed = elapsed;
+    return true;
   }
   updateTrees() {
     for (const tree of this.decor || []) {
       if (tree.type !== "tree") continue;
+      // An available tree is visually stable. Only revisit it once if a
+      // headless/legacy record has not yet received its initial visual state.
+      if (tree.state === "available" && tree.visualState === tree.state) continue;
       if (tree.state === "regrowing" && this.elapsed >= tree.regrowAt) {
         tree.state = "available";
         tree.regrowAt = null;
@@ -1844,20 +2212,32 @@ export class Village {
     }
   }
   availableTreeFor(lumberyard, worker) {
-    return (this.decor || [])
-      .filter(
-        (tree) =>
-          tree.type === "tree" &&
-          tree.state === "available" &&
-          !tree.claimedBy,
-      )
-      .sort(
-        (a, b) =>
-          Math.hypot(worker.m.position.x - a.x, worker.m.position.z - a.z) -
-            Math.hypot(worker.m.position.x - b.x, worker.m.position.z - b.z) ||
-          Math.hypot(lumberyard.x - a.x, lumberyard.z - a.z) -
-            Math.hypot(lumberyard.x - b.x, lumberyard.z - b.z),
-      )[0] || null;
+    if (!lumberyard || !worker?.m?.position) return null;
+    let best = null;
+    let bestWorkerDistance = Infinity;
+    let bestLumberyardDistance = Infinity;
+    for (const tree of this.decor || []) {
+      if (tree.type !== "tree" || tree.state !== "available" || tree.claimedBy)
+        continue;
+      const workerDistance = Math.hypot(
+        worker.m.position.x - tree.x,
+        worker.m.position.z - tree.z,
+      );
+      const lumberyardDistance = Math.hypot(
+        lumberyard.x - tree.x,
+        lumberyard.z - tree.z,
+      );
+      if (
+        workerDistance < bestWorkerDistance ||
+        (workerDistance === bestWorkerDistance &&
+          lumberyardDistance < bestLumberyardDistance)
+      ) {
+        best = tree;
+        bestWorkerDistance = workerDistance;
+        bestLumberyardDistance = lumberyardDistance;
+      }
+    }
+    return best;
   }
   finishChopping(tree) {
     if (!tree || tree.type !== "tree") return;
@@ -1985,7 +2365,10 @@ export class Village {
     const lights = this.lanternLights || [];
     if (!lights.length) return [];
     const focus = this.controls?.target || this.camera?.position;
-    const anchor = new THREE.Vector3();
+    // Re-aiming is deliberately infrequent, but it still runs throughout a
+    // long session. Reuse the scratch point so each pass does not add another
+    // short-lived allocation to the renderer's garbage-collection workload.
+    const anchor = (this.lanternAnchor ||= new THREE.Vector3());
     const ranked = lamps
       .map((lamp) => {
         lamp.glow.getWorldPosition(anchor);
@@ -2159,10 +2542,9 @@ export class Village {
         Math.ceil((slots[resource] || 0) * totals[resource]);
     });
   }
-  blocked(x, z, padding = 0.2, ignore = null) {
+  blocked(x, z, padding = 0.2) {
     return this.buildings.some(
       (b) =>
-        b !== ignore &&
         Math.abs(x - b.x) < (CATALOG[b.type]?.size || 4) / 2 + padding &&
         Math.abs(z - b.z) < (CATALOG[b.type]?.size || 4) / 2 + padding,
     );
@@ -2193,6 +2575,9 @@ export class Village {
   decorBlocksMovement(decor) {
     return !this.clearedResourceNode(decor);
   }
+  buildBoundary() {
+    return buildBoundaryFor(this.buildings);
+  }
   clearedResourceNode(decor) {
     if (!decor || !decor.type) return false;
     if (decor.type === "tree") return decor.state === "regrowing";
@@ -2210,7 +2595,14 @@ export class Village {
         Math.abs(z - decor.z) < halfSize + decor.r,
     ) || [];
     for (const decor of cleared) {
-      this.disposeOwnedObject(decor.m);
+      if (decor.sceneryKey) {
+        this.clearedScenery ||= new Set();
+        this.clearedScenery.add(decor.sceneryKey);
+      }
+      // Scenery instances clone cached GLB templates and therefore share their
+      // geometry/material resources. Remove the instance now; the shared
+      // template resources are released once by disposeSceneResources().
+      this.scene?.remove(decor.m);
       const index = this.decor.indexOf(decor);
       if (index >= 0) this.decor.splice(index, 1);
     }
@@ -2232,8 +2624,9 @@ export class Village {
       (worker) =>
         worker !== ignore &&
         worker.m?.position &&
-        Math.hypot(x - worker.m.position.x, z - worker.m.position.z) <
-          WORKER_CLEARANCE,
+        (x - worker.m.position.x) ** 2 +
+          (z - worker.m.position.z) ** 2 <
+          WORKER_CLEARANCE_SQUARED,
     );
   }
   workerTargetBlocked(x, z, ignore = null) {
@@ -2242,21 +2635,26 @@ export class Village {
         worker !== ignore &&
         worker.path?.length &&
         worker.routeTarget &&
-        Math.hypot(x - worker.routeTarget.x, z - worker.routeTarget.z) <
-          WORKER_CLEARANCE,
+        (x - worker.routeTarget.x) ** 2 +
+          (z - worker.routeTarget.z) ** 2 <
+          WORKER_CLEARANCE_SQUARED,
     );
   }
   workerCongestion(x, z, ignore = null) {
     let congestion = 0;
     for (const worker of this.workers) {
       if (worker === ignore || !worker.m?.position) continue;
-      const distance = Math.hypot(
-        x - worker.m.position.x,
-        z - worker.m.position.z,
-      );
-      if (distance < 2.4) congestion += (2.4 - distance) * 0.45;
+      const dx = x - worker.m.position.x;
+      const dz = z - worker.m.position.z;
+      const distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared < WORKER_CONGESTION_RADIUS_SQUARED)
+        congestion +=
+          (WORKER_CONGESTION_RADIUS - Math.sqrt(distanceSquared)) * 0.45;
       const next = worker.path?.[0];
-      if (next && Math.hypot(x - next.x, z - next.z) < 0.8)
+      if (
+        next &&
+        (x - next.x) ** 2 + (z - next.z) ** 2 < WORKER_NEXT_TARGET_RADIUS_SQUARED
+      )
         congestion += 0.55;
     }
     return congestion;
@@ -2283,50 +2681,49 @@ export class Village {
     );
   }
   overlapsRoad(x, z, halfSize) {
-    return [...(this.roads || [])].some((key) => {
-      const [roadX, roadZ] = key.split(",").map(Number);
-      return (
+    const tiles = this.roadTiles;
+    if (tiles?.size) {
+      for (const tile of tiles.values()) {
+        if (
+          Math.abs(x - tile.x) < halfSize + 0.5 &&
+          Math.abs(z - tile.z) < halfSize + 0.5
+        )
+          return true;
+      }
+      return false;
+    }
+    // Keep the fallback for older/headless fixtures that only provide the
+    // persisted string set and have not built the runtime tile index yet.
+    for (const key of this.roads || []) {
+      const separator = key.indexOf(",");
+      const roadX = Number(key.slice(0, separator));
+      const roadZ = Number(key.slice(separator + 1));
+      if (
         Number.isFinite(roadX) &&
         Number.isFinite(roadZ) &&
         Math.abs(x - roadX) < halfSize + 0.5 &&
         Math.abs(z - roadZ) < halfSize + 0.5
-      );
-    });
-  }
-  placementType(type = this.selected) {
-    if (typeof type === "string" && type.startsWith("move:")) {
-      const building = this.buildings.find(
-        (candidate) => candidate.id === type.slice(5),
-      );
-      return building?.type || "";
+      )
+        return true;
     }
-    return type;
-  }
-  movingBuilding(type = this.selected) {
-    if (typeof type !== "string" || !type.startsWith("move:")) return null;
-    return this.buildings.find((building) => building.id === type.slice(5)) || null;
+    return false;
   }
   valid(
     x,
     z,
     type,
-    ignore = this.movingBuilding(type),
-    extraGrainFields = new Set(),
+    extraGrainFields = EMPTY_GRAIN_FIELDS,
   ) {
     if (type === "road-remove") {
       return this.roads.has(`${x},${z}`) && !this.baseRoads.has(`${x},${z}`)
         ? { ok: true, reason: "Remove this path · 1 stone returned" }
         : { ok: false, reason: "Choose one of your path tiles to remove." };
     }
-    const buildingType = this.placementType(type);
+    const buildingType = type;
     const catalog = CATALOG[buildingType];
     if (!catalog) return { ok: false, reason: "Choose a building tool." };
     const n = catalog.size / 2;
-    const boundary =
-      18 +
-      this.buildings.filter((b) => b.type === "watchtower" && b.progress === 1)
-        .length *
-        3;
+    const boundary = this.buildBoundary();
     if (
       x - n < -boundary ||
       z - n < -boundary ||
@@ -2337,7 +2734,7 @@ export class Village {
         ok: false,
         reason: "Choose dry land inside your village boundary.",
       };
-    if (this.blocked(x, z, n - 0.1, ignore))
+    if (this.blocked(x, z, n - 0.1))
       return {
         ok: false,
         reason: "This space is occupied. Find a clear patch of land.",
@@ -2352,7 +2749,6 @@ export class Village {
       this.workers?.some(
         (worker) =>
           worker.m?.position &&
-          worker.building !== ignore &&
           Math.abs(x - worker.m.position.x) < n + 0.45 &&
           Math.abs(z - worker.m.position.z) < n + 0.45,
       )
@@ -2380,17 +2776,14 @@ export class Village {
         ok: false,
         reason: "Plant beside a completed farmhouse or connected grain field.",
       };
-    if (
-      !ignore &&
-      Object.entries(catalog.cost).some(([r, v]) => this.resources[r] < v)
-    )
+    if (Object.entries(catalog.cost).some(([r, v]) => this.resourceAmount(r) < v))
       return {
         ok: false,
         reason: `Not enough resources. Need ${Object.entries(catalog.cost)
-          .filter(([resource, amount]) => (this.resources[resource] || 0) < amount)
+          .filter(([resource, amount]) => this.resourceAmount(resource) < amount)
           .map(
             ([resource, amount]) =>
-              `${Math.max(1, Math.ceil(amount - (this.resources[resource] || 0)))} ${resource}`,
+              `${Math.max(1, Math.ceil(amount - this.resourceAmount(resource)))} ${resource}`,
           )
           .join(" + ")} before building.`,
       };
@@ -2401,8 +2794,6 @@ export class Village {
           ? "Click or drag to lay a path · Esc to cancel"
           : buildingType === "grainfield"
             ? "Click or drag to plant grain · Esc to cancel"
-          : ignore
-            ? "Choose a new spot · click to move · Esc to cancel"
           : "Click to place · R to rotate · Esc to cancel",
     };
   }
@@ -2415,16 +2806,15 @@ export class Village {
     this.controls.mouseButtons.LEFT = type ? null : THREE.MOUSE.PAN;
     this.controls.touches.ONE = type ? null : THREE.TOUCH.PAN;
     if (type) {
-      const buildingType = this.placementType(type);
+      const buildingType = type;
+      const ghostType = buildingType === "grainfield" ? "grainfield_sown" : buildingType;
       this.ghost =
         buildingType === "road" || type === "road-remove"
           ? new THREE.Mesh(
               new THREE.BoxGeometry(1, 0.1, 1),
               new THREE.MeshStandardMaterial({ color: "#a8d580" }),
             )
-          : (
-              this.models[buildingType] || this.makeDecorationModel(buildingType)
-            ).clone(true);
+          : this.modelTemplate(ghostType).clone(true);
       this.ghostGeometryOwned = buildingType === "road" || type === "road-remove";
       this.ghost.traverse((o) => {
         if (o.isMesh) {
@@ -2478,12 +2868,7 @@ export class Village {
       this.scene.add(this.previewOutline);
       this.previewOutline.visible = false;
       if (buildingType === "watchtower") {
-        const currentBoundary =
-          18 +
-          this.buildings.filter(
-            (building) => building.type === "watchtower" && building.progress === 1,
-          ).length *
-            3;
+        const currentBoundary = this.buildBoundary();
         this.boundaryPreview = new THREE.Mesh(
           new THREE.RingGeometry(currentBoundary + 2.94, currentBoundary + 3, 64),
           new THREE.MeshBasicMaterial({
@@ -2555,26 +2940,32 @@ export class Village {
     this.previewOutline.visible = true;
     this.previewOutline.position.set(x, 0.06, z);
     this.previewOutline.rotation.y = this.rotation;
-    this.footprint.material.color.set(
-      this.placement.ok
-        ? this.selected === "road-remove"
-          ? "#e8c681"
-          : "#8fbf68"
-        : "#d9644d",
-    );
-    this.previewOutline.material.color.set(
-      this.placement.ok ? "#d7eca5" : "#f0a08a",
-    );
-    this.ghost.traverse((o) => {
-      if (o.isMesh)
-        o.material.color.set(
-          this.placement.ok
-            ? this.selected === "road-remove"
-              ? "#d6a060"
-              : "#99cc88"
-            : "#d97568",
-        );
-    });
+    // Pointer updates can arrive every frame while the player searches for a
+    // site. Moving the preview is cheap; walking every mesh to recolor it is
+    // not. Keep the last validity state and only repaint when the status flips.
+    const validityChanged = !previous || previous.ok !== this.placement.ok;
+    if (validityChanged) {
+      this.footprint.material.color.set(
+        this.placement.ok
+          ? this.selected === "road-remove"
+            ? "#e8c681"
+            : "#8fbf68"
+          : "#d9644d",
+      );
+      this.previewOutline.material.color.set(
+        this.placement.ok ? "#d7eca5" : "#f0a08a",
+      );
+      this.ghost.traverse((o) => {
+        if (o.isMesh)
+          o.material.color.set(
+            this.placement.ok
+              ? this.selected === "road-remove"
+                ? "#d6a060"
+                : "#99cc88"
+              : "#d97568",
+          );
+      });
+    }
     if (
       !previous ||
       previous.x !== this.placement.x ||
@@ -2588,6 +2979,16 @@ export class Village {
   movePlacement(dx, dz) {
     const current = this.placement || { x: 0, z: 0 };
     this.updatePlacement(current.x + dx, current.z + dz);
+  }
+  removePickTarget(mesh) {
+    for (const list of [
+      this.pickTargets,
+      this.workerPickTargets,
+      this.buildingPickTargets,
+    ]) {
+      const index = list?.indexOf(mesh) ?? -1;
+      if (index >= 0) list.splice(index, 1);
+    }
   }
   findOpenPlacement(type, origin = { x: 0, z: 3 }) {
     const startX = Math.round(Number(origin.x) || 0);
@@ -2632,7 +3033,7 @@ export class Village {
       this.updatePlacement(x, z);
     } else {
       const hits = this.raycaster.intersectObjects(
-        [
+        this.pickTargets || [
           ...this.workers.map((w) => w.m),
           ...this.buildings.map((b) => b.m),
         ],
@@ -2657,34 +3058,10 @@ export class Village {
     if (selected === "road-remove") {
       return this.removeRoad(p.x, p.z);
     }
-    const type = this.placementType(selected);
-    const moving = this.movingBuilding(selected);
-    if (moving) {
-      moving.x = p.x;
-      moving.z = p.z;
-      moving.rotation = this.rotation;
-      moving.m.position.set(p.x, 0, p.z);
-      this.clearClearedDecorInFootprint(p.x, p.z, CATALOG[type].size / 2);
-      for (const worker of this.workers) {
-        if (worker.building !== moving) continue;
-        worker.building = null;
-        worker.workInside = false;
-        worker.mealSeat = null;
-        this.setWorkerInside(worker, false);
-        worker.phase = "idle";
-        worker.timer = 0;
-        worker.path = [];
-      }
-      this.announce(`${CATALOG[type].name} moved. Workers are finding their way again.`);
-      this.notify(`${CATALOG[type].name} moved.`);
-      this.select(null);
-      this.onPlacementComplete?.();
-      this.save();
-      this.emit();
-      return true;
+    const type = selected;
+    for (const [r, v] of Object.entries(CATALOG[type].cost)) {
+      this.spendResource(r, v);
     }
-    for (const [r, v] of Object.entries(CATALOG[type].cost))
-      this.resources[r] -= v;
     if (type === "road") {
       this.addRoad(p.x, p.z);
       this.clearClearedDecorInFootprint(p.x, p.z, CATALOG[type].size / 2);
@@ -2702,7 +3079,8 @@ export class Village {
         CATALOG[type].decoration ? 1 : 0,
       );
       this.clearClearedDecorInFootprint(p.x, p.z, CATALOG[type].size / 2);
-      this.created[type] = (this.created[type] || 0) + 1;
+      this.created[type] =
+        Math.max(0, Math.floor(finiteNumber(this.created[type], 0))) + 1;
       const plannedMessage = type === "grainfield"
         ? "Grain planted. The first shoots will appear soon."
         : CATALOG[type].decoration
@@ -2732,7 +3110,7 @@ export class Village {
       return;
     }
     const workerHits = this.raycaster.intersectObjects(
-      this.workers.map((w) => w.m),
+      this.workerPickTargets || this.workers.map((w) => w.m),
       true,
     );
     if (workerHits.length) {
@@ -2759,7 +3137,7 @@ export class Village {
       }
     }
     const hits = this.raycaster.intersectObjects(
-      this.buildings.map((b) => b.m),
+      this.buildingPickTargets || this.buildings.map((b) => b.m),
       true,
     );
     if (hits.length) {
@@ -2847,7 +3225,7 @@ export class Village {
         break;
       }
       for (const [resource, amount] of Object.entries(CATALOG.road.cost))
-        this.resources[resource] -= amount;
+        this.spendResource(resource, amount);
       this.addRoad(px, pz);
       placed++;
     }
@@ -2903,7 +3281,7 @@ export class Village {
           )
         )
           continue;
-        const spot = this.valid(x, z, "grainfield", null, virtualFields);
+        const spot = this.valid(x, z, "grainfield", virtualFields);
         if (!spot.ok) {
           blockedReason = spot.reason;
           break;
@@ -2926,9 +3304,10 @@ export class Village {
         break;
       }
       for (const [resource, amount] of Object.entries(CATALOG.grainfield.cost))
-        this.resources[resource] -= amount;
+        this.spendResource(resource, amount);
       this.addBuilding("grainfield", x, z, 0, 1);
-      this.created.grainfield = (this.created.grainfield || 0) + 1;
+      this.created.grainfield =
+        Math.max(0, Math.floor(finiteNumber(this.created.grainfield, 0))) + 1;
       planted++;
     }
     if (!planted) return;
@@ -2946,10 +3325,16 @@ export class Village {
     }
     this.roads.delete(key);
     this.roadTiles?.delete(key);
+    this.roadRevision = (this.roadRevision || 0) + 1;
     this.roadsDirty = true;
     this.created = reconcileRoadCount(this.created, this.roads, this.baseRoads);
-    this.resources.stone += CATALOG.road.cost.stone;
-    const message = "Path removed. 1 stone returned.";
+    const returnedStone = this.refundResource(
+      "stone",
+      CATALOG.road.cost.stone,
+    );
+    const message = returnedStone
+      ? `Path removed. ${returnedStone} stone returned.`
+      : "Path removed. Stone storage is full, so no stone was returned.";
     this.announce(message);
     this.notify(message);
     this.save();
@@ -2968,28 +3353,55 @@ export class Village {
         this.setWorkerInside(worker, false);
         worker.phase = "idle";
         worker.timer = 0;
+        worker.workDuration = 0;
         worker.path = [];
+        worker.routeTarget = null;
+        worker.waitingForInput = false;
+        worker.waitingForStock = false;
+        worker.waitingForInn = false;
+        worker.mealSeat = null;
+        worker.deliveryRetry = 0;
+        worker.waitingForSpace = false;
+        worker.waitingFor = null;
+        worker.spaceWait = 0;
+        worker.forcedYield = null;
+        worker.avoidanceTarget = null;
+        worker.avoidanceTime = 0;
+        worker.deadlockLeaderTime = 0;
+        worker.deadlockYieldTime = 0;
+        worker.deadlockYieldTo = null;
+        worker.materialResource = null;
       }
       this.scene.remove(building.m);
+      this.removePickTarget(building.m);
       this.buildings = this.buildings.filter(
         (candidate) => candidate !== building,
       );
       this.created.grainfield = Math.max(
         0,
-        (this.created.grainfield || 1) - 1,
+        Math.max(0, Math.floor(finiteNumber(this.created.grainfield, 0))) - 1,
       );
-      this.resources.food += CATALOG.grainfield.cost.food;
-      this.announce("Grain field cleared. 1 food returned.");
-      this.notify("Grain field cleared. 1 food returned.");
+      const returnedFood = this.refundResource(
+        "food",
+        CATALOG.grainfield.cost.food,
+      );
+      const message = returnedFood
+        ? `Grain field cleared. ${returnedFood} food returned.`
+        : "Grain field cleared. Food storage is full, so no food was returned.";
+      this.announce(message);
+      this.notify(message);
       this.save();
       this.emit();
       return true;
     }
     if (!building || building.progress >= 1 || building.type === "townhall") return false;
     const refundRate = Math.max(0, Math.min(1, 1 - building.progress));
-    Object.entries(CATALOG[building.type]?.cost || {}).forEach(([resource, amount]) => {
-      this.resources[resource] += Math.floor(amount * refundRate);
-    });
+    const refunded = Object.entries(CATALOG[building.type]?.cost || {})
+      .map(([resource, amount]) => [
+        resource,
+        this.refundResource(resource, Math.floor(amount * refundRate)),
+      ])
+      .filter(([, amount]) => amount > 0);
     for (const worker of this.workers) {
       if (worker.haulSource === building || worker.haulTarget === building)
         this.releaseHaul(worker);
@@ -3000,52 +3412,43 @@ export class Village {
       worker.workInside = false;
       this.setWorkerInside(worker, false);
       worker.phase = "idle";
-      worker.timer = 0;
-      worker.path = [];
-      worker.materialResource = null;
+      worker.waitingForInput = false;
+      worker.waitingForStock = false;
+      worker.waitingForInn = false;
+      worker.mealSeat = null;
       worker.deliveryRetry = 0;
+      worker.timer = 0;
+      worker.workDuration = 0;
+      worker.path = [];
+      worker.routeTarget = null;
+      worker.waitingForSpace = false;
+      worker.waitingFor = null;
+      worker.spaceWait = 0;
+      worker.forcedYield = null;
+      worker.avoidanceTarget = null;
+      worker.avoidanceTime = 0;
+      worker.deadlockLeaderTime = 0;
+      worker.deadlockYieldTime = 0;
+      worker.deadlockYieldTo = null;
+      worker.materialResource = null;
     }
     this.disposeOwnedObject(building.scaffolding);
     this.disposeOwnedObject(building.siteRing);
     this.scene.remove(building.m);
+    this.removePickTarget(building.m);
     this.buildings = this.buildings.filter((candidate) => candidate !== building);
-    this.created[building.type] = Math.max(0, (this.created[building.type] || 1) - 1);
-    const message = `${CATALOG[building.type].name} cancelled. Eligible costs refunded.`;
+    this.created[building.type] = Math.max(
+      0,
+      Math.max(0, Math.floor(finiteNumber(this.created[building.type], 0))) - 1,
+    );
+    const refundMessage = refunded.length
+      ? `${refunded.map(([resource, amount]) => `${amount} ${resource}`).join(", ")} returned.`
+      : "Storage is full, so no materials were returned.";
+    const message = `${CATALOG[building.type].name} cancelled. ${refundMessage}`;
     this.announce(message);
     this.notify(message);
     this.save();
     this.emit();
-    return true;
-  }
-  beginMove(id) {
-    if (this.blockedByStorageConflict()) return false;
-    const building = this.buildings.find((candidate) => candidate.id === id);
-    if (
-      !building ||
-      building.progress < 1 ||
-      building.type === "townhall" ||
-      building.type === "grainfield"
-    )
-      return false;
-    if (building.type === "farm" && this.grainFieldsForFarm(building).length) {
-      this.notify("Clear its connected grain fields before moving this farmhouse.");
-      return false;
-    }
-    if (this.workers.some((worker) => worker.building === building && worker.carry)) {
-      this.notify("Let this building finish its delivery before moving it.");
-      return false;
-    }
-    if (
-      this.workers.some(
-        (worker) => worker.carry?.destinationId === building.id,
-      )
-    ) {
-      this.notify("Let the bread delivery reach this Inn before moving it.");
-      return false;
-    }
-    this.clearHighlight();
-    this.select(`move:${id}`);
-    this.updatePlacement(Math.round(building.x), Math.round(building.z));
     return true;
   }
   setPriority(id, priority) {
@@ -3077,8 +3480,25 @@ export class Village {
       worker.workInside = false;
       this.setWorkerInside(worker, false);
       worker.phase = "idle";
+      worker.waitingForInput = false;
+      worker.waitingForStock = false;
+      worker.waitingForInn = false;
+      worker.mealSeat = null;
+      worker.deliveryRetry = 0;
       worker.timer = 0;
+      worker.workDuration = 0;
       worker.path = [];
+      worker.routeTarget = null;
+      worker.waitingForSpace = false;
+      worker.waitingFor = null;
+      worker.spaceWait = 0;
+      worker.forcedYield = null;
+      worker.avoidanceTarget = null;
+      worker.avoidanceTime = 0;
+      worker.deadlockLeaderTime = 0;
+      worker.deadlockYieldTime = 0;
+      worker.deadlockYieldTo = null;
+      worker.materialResource = null;
     }
     this.announce(`${CATALOG[building.type].name} ${building.paused ? "paused" : "resuming"}.`);
     this.save();
@@ -3090,12 +3510,12 @@ export class Village {
     const building = this.buildings.find((candidate) => candidate.id === id);
     const upgrade = CATALOG[building?.type]?.upgrade;
     if (!building || building.progress < 1 || building.upgrade || !upgrade) return false;
-    if (Object.entries(upgrade.cost).some(([resource, amount]) => (this.resources[resource] || 0) < amount)) {
+    if (Object.entries(upgrade.cost).some(([resource, amount]) => this.resourceAmount(resource) < amount)) {
       this.notify("Not enough resources for this upgrade.");
       return false;
     }
     Object.entries(upgrade.cost).forEach(([resource, amount]) => {
-      this.resources[resource] -= amount;
+      this.spendResource(resource, amount);
     });
     building.upgrade = upgrade.name;
     this.announce(`${CATALOG[building.type].name} upgraded: ${upgrade.name}.`);
@@ -3172,11 +3592,11 @@ export class Village {
       this.notify("The village is already enjoying a feast.");
       return false;
     }
-    if (this.resources.food < 30) {
+    if (this.resourceAmount("food") < 30) {
       this.notify("A feast needs 30 food. Keep the farms working.");
       return false;
     }
-    this.resources.food -= 30;
+    this.consumeFood(30);
     this.ensureAudio();
     this.feast = { remaining: 45 };
     this.announce("The village feast begins. Builders feel the extra warmth.");
@@ -3319,6 +3739,10 @@ export class Village {
         flatShading: true,
       }),
     };
+    // The loaded worker GLB is only a material palette for the animated rig.
+    // Remove its hidden source subtree after extracting those materials so
+    // every worker does not carry an extra set of scene and raycast nodes.
+    m.clear();
     const part = (geometry, material) => {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.castShadow = true;
@@ -3760,23 +4184,18 @@ export class Village {
     const [spawnX, spawnZ] = this.workerSpawnPosition(preferredX, preferredZ);
     const m = this.model("worker", spawnX, spawnZ);
     const rig = this.createWorkerRig(m);
-    const contactShadow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.3, 20),
-      new THREE.MeshBasicMaterial({
-        color: "#43552e",
-        transparent: true,
-        opacity: 0.2,
-        depthWrite: false,
-      }),
-    );
-    contactShadow.rotation.x = -Math.PI / 2;
-    contactShadow.position.set(m.position.x, 0.006, m.position.z);
-    contactShadow.scale.set(1, 0.58, 1);
-    contactShadow.renderOrder = 1;
-    this.scene.add(contactShadow);
+    this.workerShadowField ||= this.createWorkerShadowField();
+    const shadowIndex = this.workers.length;
+    if (this.workerShadowField?.mesh) {
+      this.workerShadowField.mesh.count = Math.max(
+        this.workerShadowField.mesh.count,
+        shadowIndex + 1,
+      );
+    }
     const w = {
       m,
-      contactShadow,
+      shadowIndex,
+      shadowVisible: true,
       phase: "idle",
       path: [],
       id: `worker-${this.nextWorkerId++}`,
@@ -3823,6 +4242,10 @@ export class Village {
     hitbox.userData.worker = w;
     m.add(hitbox);
     this.workers.push(w);
+    this.workerPickTargets ||= [];
+    this.pickTargets ||= [];
+    this.workerPickTargets.push(m);
+    this.pickTargets.push(m);
     return w;
   }
   carryColor(resource) {
@@ -3940,6 +4363,13 @@ export class Village {
     gain.gain.exponentialRampToValueAtTime(0.035, context.currentTime + 0.015);
     gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.16);
     oscillator.connect(gain).connect(context.destination);
+    let cleaned = false;
+    oscillator.onended = () => {
+      if (cleaned) return;
+      cleaned = true;
+      oscillator.disconnect?.();
+      gain.disconnect?.();
+    };
     oscillator.start();
     oscillator.stop(context.currentTime + 0.18);
   }
@@ -3958,8 +4388,7 @@ export class Village {
         oscillator.start();
         this.ambientOscillator = { oscillator, gain };
       } else if (!this.audioSettings.ambience && this.ambientOscillator) {
-        this.ambientOscillator.oscillator.stop();
-        this.ambientOscillator = null;
+        this.stopAmbientAudio();
       }
     }
     try {
@@ -3968,8 +4397,46 @@ export class Village {
     this.emit?.();
     return true;
   }
+  stopAmbientAudio() {
+    const ambient = this.ambientOscillator;
+    this.ambientOscillator = null;
+    if (ambient) {
+      try {
+        ambient.oscillator?.stop();
+      } catch {
+        // An oscillator may already have stopped while the page was hidden.
+      }
+      try {
+        ambient.oscillator?.disconnect?.();
+        ambient.gain?.disconnect?.();
+      } catch {
+        // Some browser audio implementations reject a repeated disconnect.
+      }
+    }
+  }
+  disposeAudio() {
+    this.stopAmbientAudio();
+    const context = this.audioContext;
+    this.audioContext = null;
+    try {
+      const closing = context?.close?.();
+      closing?.catch?.(() => {});
+    } catch {
+      // Audio teardown is best-effort; it must never block world disposal.
+    }
+  }
   updateAtmosphere() {
     if (!this.sun || !this.hemi) return;
+    // The projection is driven only by simulation time. While paused, the
+    // camera and renderer remain live but repeating these colour/light writes
+    // every frame has no visual effect.
+    if (
+      this.atmosphere.lastElapsed === this.elapsed ||
+      this.elapsed - this.lastAtmosphereUpdate < ATMOSPHERE_UPDATE_INTERVAL
+    )
+      return;
+    this.lastAtmosphereUpdate = this.elapsed;
+    this.atmosphere.lastElapsed = this.elapsed;
     const cycle = ((this.elapsed % 120) / 120 + 0.22) % 1;
     const sunHeight = Math.max(0, Math.sin(cycle * Math.PI));
     const dusk = Math.pow(1 - sunHeight, 2.4);
@@ -4007,8 +4474,32 @@ export class Village {
       tx = Math.round(x),
       tz = Math.round(z);
     w.routeTarget = { x: tx, z: tz };
-    const start = `${sx},${sz}`,
-      goal = `${tx},${tz}`;
+    const start = routeKey(sx, sz),
+      goal = routeKey(tx, tz);
+    const blockedCache = new Map();
+    const congestionCache = new Map();
+    const travelCostCache = new Map();
+    const routeBlockedAt = (x, z) => {
+      const key = routeKey(x, z);
+      if (!blockedCache.has(key))
+        blockedCache.set(key, this.routeBlocked(x, z, ignore, ignoreDecor));
+      return blockedCache.get(key);
+    };
+    const congestionAt = (x, z) => {
+      const key = routeKey(x, z);
+      if (!congestionCache.has(key))
+        congestionCache.set(key, this.workerCongestion(x, z, w));
+      return congestionCache.get(key);
+    };
+    const travelCostAt = (x, z) => {
+      const key = routeKey(x, z);
+      if (!travelCostCache.has(key))
+        travelCostCache.set(
+          key,
+          travelStepCost(this.roads.has(`${x},${z}`)),
+        );
+      return travelCostCache.get(key);
+    };
     const queue = [],
       costs = new Map([[start, 0]]),
       parents = new Map([[start, null]]);
@@ -4016,33 +4507,27 @@ export class Village {
     let found = false;
     for (let q = 0; queue.length && q < 4200; q++) {
       const [cost, cx, cz] = popPriority(queue);
-      const current = `${cx},${cz}`;
+      const current = routeKey(cx, cz);
       if (cost > (costs.get(current) ?? Infinity)) continue;
       if (cx === tx && cz === tz) {
         found = true;
         break;
       }
-      for (const [dx, dz] of [
-        [0, 1],
-        [1, 0],
-        [0, -1],
-        [-1, 0],
-      ]) {
+      for (const [dx, dz] of ROUTE_DIRECTIONS) {
         const nx = cx + dx,
           nz = cz + dz,
-          k = `${nx},${nz}`;
+          k = routeKey(nx, nz);
         if (
           nx < -30 ||
           nz < -30 ||
           nz > 30 ||
           nx > riverX(nz) - 0.6 ||
-          this.routeBlocked(nx, nz, ignore, ignoreDecor)
+          routeBlockedAt(nx, nz)
         )
           continue;
         // Other workers are temporary congestion, not walls. The route remains
         // valid through a crowd, but A* prefers an open lane when one exists.
-        const stepCost =
-          travelStepCost(this.roads.has(k)) + this.workerCongestion(nx, nz, w);
+        const stepCost = travelCostAt(nx, nz) + congestionAt(nx, nz);
         const nextCost = cost + stepCost;
         if (nextCost >= (costs.get(k) ?? Infinity)) continue;
         costs.set(k, nextCost);
@@ -4052,39 +4537,51 @@ export class Village {
     }
     w.path = [];
     if (found) {
+      const path = [];
       let k = goal;
       while (k !== start) {
-        const [px, pz] = k.split(",").map(Number);
-        w.path.unshift(new THREE.Vector3(px, 0, pz));
+        const px = Math.floor(k / ROUTE_KEY_WIDTH) - ROUTE_KEY_OFFSET;
+        const pz = (k % ROUTE_KEY_WIDTH) - ROUTE_KEY_OFFSET;
+        path.push(new THREE.Vector3(px, 0, pz));
         k = parents.get(k);
       }
+      w.path = path.reverse();
     }
     return found;
   }
   jobPoint(b, worker = null) {
     const n = Math.ceil((CATALOG[b.type]?.size || 4) / 2 + 0.5);
-    const offsets = [0];
-    for (let offset = 1; offset < n; offset++) offsets.push(-offset, offset);
-    const pts = offsets.flatMap((offset) => [
-      [b.x + offset, b.z + n],
-      [b.x - n, b.z + offset],
-      [b.x + n, b.z - offset],
-      [b.x - offset, b.z - n],
-    ]);
-    const valid = pts.filter(
-      ([x, z]) => !this.routeBlocked(x, z) && x < riverX(z) - 0.5,
-    );
-    if (!valid.length) return pts[0];
-    return valid.sort((a, candidate) => {
-      const score = ([x, z]) =>
-        (this.workerPositionBlocked(x, z, worker) ? 100 : 0) +
-        (this.workerTargetBlocked(x, z, worker) ? 25 : 0) +
-        this.workerCongestion(x, z, worker) * 4 +
-        (worker?.m?.position
-          ? Math.hypot(x - worker.m.position.x, z - worker.m.position.z) * 0.02
-          : 0);
-      return score(a) - score(candidate);
-    })[0];
+    let fallback = null;
+    let best = null;
+    let bestScore = Infinity;
+    const score = (x, z) =>
+      (this.workerPositionBlocked(x, z, worker) ? 100 : 0) +
+      (this.workerTargetBlocked(x, z, worker) ? 25 : 0) +
+      this.workerCongestion(x, z, worker) * 4 +
+      (worker?.m?.position
+        ? Math.hypot(x - worker.m.position.x, z - worker.m.position.z) * 0.02
+        : 0);
+    const consider = (x, z) => {
+      if (!fallback) fallback = [x, z];
+      if (this.routeBlocked(x, z) || x >= riverX(z) - 0.5) return;
+      const candidateScore = score(x, z);
+      // Strictly less preserves the old stable-sort tie order.
+      if (candidateScore < bestScore) {
+        best = [x, z];
+        bestScore = candidateScore;
+      }
+    };
+    consider(b.x, b.z + n);
+    consider(b.x - n, b.z);
+    consider(b.x + n, b.z);
+    consider(b.x, b.z - n);
+    for (let offset = 1; offset < n; offset++) {
+      consider(b.x - offset, b.z + n);
+      consider(b.x - n, b.z + offset);
+      consider(b.x + n, b.z - offset);
+      consider(b.x + offset, b.z - n);
+    }
+    return best || fallback;
   }
   workerRouteIgnore(worker) {
     return worker?.workInside ? worker.building || null : worker?.field || null;
@@ -4092,6 +4589,7 @@ export class Village {
   setWorkerInside(worker, inside) {
     if (!worker) return;
     worker.insideBuilding = Boolean(inside);
+    if (!inside && worker.workEffect?.visible) worker.workEffect.visible = false;
     const openBuilding =
       inside && ["bakery", "inn", "vineyard"].includes(worker.building?.type);
     if (worker.m) {
@@ -4110,7 +4608,64 @@ export class Village {
           (worker.building.rotation || 0) + Math.atan2(0.62, -0.4);
       }
     }
-    if (worker.contactShadow) worker.contactShadow.visible = !inside || openBuilding;
+    worker.shadowVisible = !inside || openBuilding;
+    this.updateWorkerShadow(worker);
+  }
+  createWorkerShadowField() {
+    if (!this.scene?.add) return null;
+    const mesh = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(0.3, 16),
+      new THREE.MeshBasicMaterial({
+        color: "#43552e",
+        transparent: true,
+        opacity: 0.2,
+        depthWrite: false,
+      }),
+      MAX_POPULATION,
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.renderOrder = 1;
+    // Instances move with villagers, so a static bounding sphere can cull the
+    // field after the first frame. There are only 24 possible instances; the
+    // explicit no-cull path is cheaper and safer than recomputing that sphere.
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    mesh.instanceMatrix.setUsage?.(THREE.DynamicDrawUsage);
+    const dummy = new THREE.Object3D();
+    dummy.scale.set(0, 0, 0);
+    this.scene.add(mesh);
+    return { mesh, dummy, dirty: false };
+  }
+  updateWorkerShadow(worker, squash = 1) {
+    const field = this.workerShadowField;
+    if (
+      field?.mesh &&
+      worker?.m?.position &&
+      Number.isInteger(worker.shadowIndex)
+    ) {
+      const visible = worker.shadowVisible !== false;
+      field.dummy.position.set(
+        worker.m.position.x,
+        visible ? 0.006 : -0.01,
+        worker.m.position.z,
+      );
+      field.dummy.scale.set(
+        visible ? squash : 0,
+        visible ? 0.58 * squash : 0,
+        visible ? 1 : 0,
+      );
+      field.dummy.updateMatrix();
+      field.mesh.setMatrixAt(worker.shadowIndex, field.dummy.matrix);
+      field.dirty = true;
+      return true;
+    }
+    if (worker?.contactShadow) {
+      worker.contactShadow.visible = worker.shadowVisible !== false;
+      worker.contactShadow.position.set(worker.m.position.x, 0.006, worker.m.position.z);
+      worker.contactShadow.scale.set(squash, 0.58 * squash, 1);
+      return true;
+    }
+    return false;
   }
   createWorkEffect(type) {
     const group = new THREE.Group();
@@ -4183,9 +4738,9 @@ export class Village {
       worker?.insideBuilding &&
       worker.building &&
       (worker.phase === "harvest" || worker.phase === "work") &&
-      ["farm", "bakery", "windmill"].includes(worker.building.type);
+      WORK_EFFECT_BUILDINGS.has(worker.building.type);
     if (!active) {
-      if (worker?.workEffect) worker.workEffect.visible = false;
+      if (worker?.workEffect?.visible) worker.workEffect.visible = false;
       return;
     }
     const effectType = worker.building.type === "farm" ? "farm" : "bakery";
@@ -4204,15 +4759,26 @@ export class Village {
       worker.building.z + (effect.userData.type === "bakery" ? -0.52 : 0),
     );
     effect.visible = true;
+    if (!motion) {
+      if (effect.userData.type === "farm") {
+        effect.userData.action.rotation.z = -0.42;
+        effect.userData.grain.rotation.z = 0;
+      } else {
+        effect.userData.action.rotation.z = 0;
+        effect.userData.flour.position.y = 0;
+        effect.userData.flour.rotation.y = 0;
+      }
+      return;
+    }
     if (effect.userData.type === "farm") {
-      const swing = motion * Math.sin(time * 6.5 + (worker.walkPhase || 0));
+      const swing = Math.sin(time * 6.5 + (worker.walkPhase || 0));
       effect.userData.action.rotation.z = -0.42 + swing * 0.62;
       effect.userData.grain.rotation.z = swing * 0.08;
     } else {
-      const roll = motion * Math.sin(time * 5.5 + (worker.walkPhase || 0));
+      const roll = Math.sin(time * 5.5 + (worker.walkPhase || 0));
       effect.userData.action.rotation.z = roll * 0.28;
       effect.userData.flour.position.y = Math.max(0, roll) * 0.08;
-      effect.userData.flour.rotation.y = time * 0.7;
+      if (motion) effect.userData.flour.rotation.y = time * 0.7;
     }
   }
   nextConstructionMaterial(building) {
@@ -4243,6 +4809,13 @@ export class Village {
         building.type === "inn" && building.progress === 1 && !building.paused,
     );
   }
+  completedInnCount() {
+    let count = 0;
+    for (const building of this.buildings)
+      if (building.type === "inn" && building.progress === 1 && !building.paused)
+        count++;
+    return count;
+  }
   innSeatPoint(inn, seat = 0) {
     // Blender's negative-Y frontage becomes positive Z in the exported GLB.
     const local = new THREE.Vector3([-1.05, 0, 1.05][seat] || 0, 0, 1.98);
@@ -4257,36 +4830,49 @@ export class Village {
     return [(vineyard?.x || 0) + local.x, (vineyard?.z || 0) + local.z];
   }
   availableInnFor(worker) {
-    return this.completedInns()
-      .map((inn) => {
-        const diners = this.workers.filter(
-          (candidate) =>
-            candidate !== worker &&
-            candidate.building === inn &&
-            ["eat_travel", "eat"].includes(candidate.phase),
-        );
-        const reserved = new Set(diners.map((candidate) => candidate.mealSeat));
-        const seat = Array.from({ length: INN_SEATS }, (_, index) => index).find(
-          (index) => !reserved.has(index),
-        );
-        const incomingDiners = diners.filter(
-          (candidate) => candidate.phase === "eat_travel",
-        ).length;
-        const incomingMeals = this.workers.filter(
-          (candidate) => candidate.phase === "eat_travel",
-        ).length;
-        const availableBread = Math.min(
-          Math.max(0, finiteNumber(inn.breadStock, 0)) - incomingDiners,
-          Math.max(0, finiteNumber(this.resources.food, 0) - incomingMeals),
-        );
-        return { inn, seat, availableBread };
-      })
-      .filter(({ seat, availableBread }) => seat != null && availableBread > 0)
-      .sort(
-        (a, b) =>
-          Math.hypot(worker.m.position.x - a.inn.x, worker.m.position.z - a.inn.z) -
-          Math.hypot(worker.m.position.x - b.inn.x, worker.m.position.z - b.inn.z),
-      )[0];
+    const origin = worker?.m?.position;
+    if (!origin) return undefined;
+    let best = null;
+    let bestDistance = Infinity;
+    for (const inn of this.buildings) {
+      if (inn.type !== "inn" || inn.progress !== 1 || inn.paused) continue;
+      let reservedSeats = 0;
+      let incomingDiners = 0;
+      for (const candidate of this.workers) {
+        if (
+          candidate === worker ||
+          candidate.building !== inn ||
+          (candidate.phase !== "eat_travel" && candidate.phase !== "eat")
+        )
+          continue;
+        const seat = candidate.mealSeat;
+        if (Number.isInteger(seat) && seat >= 0 && seat < INN_SEATS)
+          reservedSeats |= 1 << seat;
+        if (candidate.phase === "eat_travel") incomingDiners += 1;
+      }
+      let seat = null;
+      for (let index = 0; index < INN_SEATS; index++) {
+        if (!(reservedSeats & (1 << index))) {
+          seat = index;
+          break;
+        }
+      }
+      if (seat == null) continue;
+      // Only reservations headed to this Inn consume its available bread.
+      // Counting every incoming diner globally made a well-stocked Inn look
+      // empty whenever another Inn had a meal on the way.
+      const availableBread = Math.min(
+        Math.max(0, finiteNumber(inn.breadStock, 0)) - incomingDiners,
+        Math.max(0, finiteNumber(this.resources.food, 0)) - incomingDiners,
+      );
+      if (availableBread <= 0) continue;
+      const distance = Math.hypot(origin.x - inn.x, origin.z - inn.z);
+      if (distance < bestDistance) {
+        best = { inn, seat, availableBread };
+        bestDistance = distance;
+      }
+    }
+    return best || undefined;
   }
   // ---- building stores -------------------------------------------------
   storedAt(building) {
@@ -4311,10 +4897,11 @@ export class Village {
     );
   }
   storageCapacity() {
-    return this.stores().reduce(
-      (total, building) => total + storageForBuilding(building.type),
-      0,
-    );
+    let capacity = 0;
+    for (const building of this.buildings)
+      if (building.progress === 1 && isStoreBuilding(building.type))
+        capacity += storageForBuilding(building.type);
+    return capacity;
   }
   // An Inn's pantry is real food storage, so it counts toward the food
   // ceiling on top of the stores. Everything else is stores only.
@@ -4322,21 +4909,49 @@ export class Village {
     const base = this.storageCapacity();
     if (resource !== "food") return base;
     const pantry = Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0));
-    return base + this.completedInns().length * pantry;
+    return base + this.completedInnCount() * pantry;
   }
   storageCapacities() {
+    const base = this.storageCapacity();
+    const pantry = Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0));
+    const food = base + this.completedInnCount() * pantry;
     return Object.keys(this.resources).reduce((map, resource) => {
-      map[resource] = this.capacityFor(resource);
+      map[resource] = resource === "food" ? food : base;
       return map;
     }, {});
+  }
+  resourceAmount(resource) {
+    return Math.max(0, finiteNumber(this.resources?.[resource], 0));
+  }
+  spendResource(resource, amount) {
+    const wanted = Math.max(0, Math.floor(finiteNumber(amount, 0)));
+    if (!wanted) return 0;
+    this.resources ||= {};
+    const available = this.resourceAmount(resource);
+    const spent = Math.min(wanted, available);
+    this.resources[resource] = available - spent;
+    return spent;
   }
   storageSpace(resource) {
     if (!resource) return 0;
     return Math.max(
       0,
       this.capacityFor(resource) -
-        Math.max(0, finiteNumber(this.resources[resource], 0)),
+        this.resourceAmount(resource),
     );
+  }
+  ensureStarterVillage() {
+    if (this.buildings.some((building) => building.type === "townhall")) return false;
+    STARTER_BUILDINGS.forEach(([type, x, z]) => this.addBuilding(type, x, z, 0, 1));
+    return true;
+  }
+  refundResource(resource, amount) {
+    const wanted = Math.max(0, Math.floor(finiteNumber(amount, 0)));
+    if (!wanted) return 0;
+    const current = Math.max(0, finiteNumber(this.resources[resource], 0));
+    const accepted = Math.min(wanted, this.storageSpace(resource));
+    this.resources[resource] = current + accepted;
+    return accepted;
   }
   // Storage can shrink when a store is demolished or a save is restored with
   // fewer stores than it was written with, so the pool is trimmed to fit.
@@ -4352,13 +4967,27 @@ export class Village {
       spilled += held - capacity;
       this.resources[key] = capacity;
     }
-    for (const inn of this.buildings.filter((b) => b.type === "inn"))
+    this.clampFoodPantries();
+    return spilled;
+  }
+  clampFoodPantries() {
+    let remainingFood = Math.max(0, finiteNumber(this.resources.food, 0));
+    const breadCap = Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0));
+    for (const inn of this.buildings) {
+      if (inn.type !== "inn") continue;
       inn.breadStock = Math.min(
         Math.max(0, finiteNumber(inn.breadStock, 0)),
-        Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0)),
-        Math.max(0, finiteNumber(this.resources.food, 0)),
+        breadCap,
+        remainingFood,
       );
-    return spilled;
+      remainingFood -= inn.breadStock;
+    }
+  }
+  consumeFood(amount) {
+    const wanted = Math.max(0, Math.floor(finiteNumber(amount, 0)));
+    const spent = this.spendResource("food", wanted);
+    if (spent > 0) this.clampFoodPantries();
+    return spent;
   }
   innBreadSpace(inn) {
     const cap = Math.max(0, finiteNumber(CATALOG.inn?.breadCap, 0));
@@ -4376,16 +5005,42 @@ export class Village {
   haulDestination(worker, resource) {
     if (!resource || this.storageSpace(resource) <= 0) return null;
     const origin = worker?.m?.position || { x: 0, z: 0 };
-    const nearest = (a, b) =>
-      Math.hypot(origin.x - a.x, origin.z - a.z) -
-      Math.hypot(origin.x - b.x, origin.z - b.z);
     if (resource === "food") {
-      const inn = this.completedInns()
-        .filter((candidate) => this.innBreadSpace(candidate) > 0)
-        .sort(nearest)[0];
+      let inn = null;
+      let innDistance = Infinity;
+      for (const candidate of this.buildings) {
+        if (
+          candidate.type !== "inn" ||
+          candidate.progress !== 1 ||
+          candidate.paused ||
+          this.innBreadSpace(candidate) <= 0
+        )
+          continue;
+        const distance = Math.hypot(
+          origin.x - candidate.x,
+          origin.z - candidate.z,
+        );
+        if (distance < innDistance) {
+          inn = candidate;
+          innDistance = distance;
+        }
+      }
       if (inn) return inn;
     }
-    return this.stores().sort(nearest)[0] || null;
+    let store = null;
+    let storeDistance = Infinity;
+    for (const candidate of this.buildings) {
+      if (candidate.progress !== 1 || !isStoreBuilding(candidate.type)) continue;
+      const distance = Math.hypot(
+        origin.x - candidate.x,
+        origin.z - candidate.z,
+      );
+      if (distance < storeDistance) {
+        store = candidate;
+        storeDistance = distance;
+      }
+    }
+    return store;
   }
   storeResource(target, resource, amount) {
     const wanted = Math.max(0, Math.floor(finiteNumber(amount, 0)));
@@ -4395,9 +5050,12 @@ export class Village {
     if (accepted <= 0) return 0;
     if (target?.type === "inn")
       target.breadStock = Math.max(0, finiteNumber(target.breadStock, 0)) + accepted;
-    this.resources[resource] = (this.resources[resource] || 0) + accepted;
-    this.delivered[resource] = (this.delivered[resource] || 0) + accepted;
-    if (resource === "wood") this.gathered += accepted;
+    this.resources[resource] = this.resourceAmount(resource) + accepted;
+    this.delivered ||= {};
+    this.delivered[resource] =
+      Math.max(0, finiteNumber(this.delivered[resource], 0)) + accepted;
+    if (resource === "wood")
+      this.gathered = Math.max(0, finiteNumber(this.gathered, 0)) + accepted;
     return accepted;
   }
   releaseHaul(worker) {
@@ -4405,6 +5063,7 @@ export class Village {
     worker.carry = null;
     worker.haulSource = null;
     worker.haulTarget = null;
+    worker.routeTarget = null;
     worker.deliveryRetry = 0;
     worker.workDuration = 0;
     worker.workInside = false;
@@ -4412,30 +5071,66 @@ export class Village {
     worker.building = null;
     worker.phase = "idle";
     worker.timer = 0;
+    worker.waitingForSpace = false;
+    worker.waitingFor = null;
+    worker.spaceWait = 0;
+    worker.forcedYield = null;
+    worker.avoidanceTarget = null;
+    worker.avoidanceTime = 0;
+    worker.deadlockLeaderTime = 0;
+    worker.deadlockYieldTime = 0;
+    worker.deadlockYieldTo = null;
+    worker.waitingForInput = false;
+    worker.waitingForStock = false;
+    worker.waitingForInn = false;
+    worker.mealSeat = null;
   }
   // A haul job is a building with goods waiting and a store that can take
   // them. Fullest building first, then nearest, so nothing stays blocked.
   tryAssignHaul(worker) {
-    const claimed = new Set(
-      this.workers
-        .filter((candidate) => candidate !== worker && candidate.haulSource)
-        .map((candidate) => candidate.haulSource),
-    );
-    const fullness = (building) =>
-      this.storedAt(building) / Math.max(1, outputCapForBuilding(building.type));
+    const claimed = new Set();
+    for (const candidate of this.workers) {
+      if (candidate !== worker && candidate.haulSource)
+        claimed.add(candidate.haulSource);
+    }
+    const destinationCache = new Map();
+    const destinationFor = (resource) => {
+      if (!destinationCache.has(resource))
+        destinationCache.set(resource, this.haulDestination(worker, resource));
+      return destinationCache.get(resource);
+    };
+    const sourceMetrics = new Map();
+    const metricsFor = (building) => {
+      let metrics = sourceMetrics.get(building);
+      if (!metrics) {
+        const stored = this.storedAt(building);
+        metrics = {
+          stored,
+          fullness: stored / Math.max(1, outputCapForBuilding(building.type)),
+          distance: Math.hypot(
+            worker.m.position.x - building.x,
+            worker.m.position.z - building.z,
+          ),
+        };
+        sourceMetrics.set(building, metrics);
+      }
+      return metrics;
+    };
     const sources = this.buildings
       .filter(
-        (building) =>
-          building.progress === 1 &&
-          this.storedAt(building) > 0 &&
-          !claimed.has(building) &&
-          this.haulDestination(worker, CATALOG[building.type]?.resource),
+        (building) => {
+          if (building.progress !== 1 || claimed.has(building)) return false;
+          const metrics = metricsFor(building);
+          return metrics.stored > 0 &&
+            destinationFor(CATALOG[building.type]?.resource);
+        },
       )
       .sort(
-        (a, b) =>
-          fullness(b) - fullness(a) ||
-          Math.hypot(worker.m.position.x - a.x, worker.m.position.z - a.z) -
-            Math.hypot(worker.m.position.x - b.x, worker.m.position.z - b.z),
+        (a, b) => {
+          const first = metricsFor(a);
+          const second = metricsFor(b);
+          return second.fullness - first.fullness || first.distance - second.distance;
+        },
       );
     for (const source of sources) {
       const [sx, sz] = this.jobPoint(source, worker);
@@ -4458,6 +5153,16 @@ export class Village {
   assign(w) {
     if (!WORKER_TYPE_LABELS[w.workerType])
       this.setWorkerType(w, WORKER_TYPES.BUILDER);
+    // Assignment is the boundary between jobs. A worker may arrive here from
+    // a failed route or a completed cycle with stale navigation metadata;
+    // clear it before choosing the next destination so the old job cannot
+    // influence the new one.
+    w.path = [];
+    w.routeTarget = null;
+    w.repathCooldown = 0;
+    w.workDuration = 0;
+    w.materialResource = null;
+    w.announcedFullStores = false;
     w.workInside = false;
     this.setWorkerInside(w, false);
     w.waitingForSpace = false;
@@ -4468,6 +5173,9 @@ export class Village {
     w.avoidanceTime = 0;
     w.mealSeat = null;
     w.waitingForInn = false;
+    w.waitingForInput = false;
+    w.waitingForStock = false;
+    w.deliveryRetry = 0;
     const hunger = Math.max(0, Math.min(1, finiteNumber(w.hunger, 0)));
     if (hunger >= HUNGRY_THRESHOLD) {
       const meal = this.availableInnFor(w);
@@ -4485,25 +5193,66 @@ export class Village {
         meal.inn.lastRouteBlocked = true;
       }
     }
-    const workerLoad = (building) =>
-      this.workers.filter(
-        (v) =>
-          v !== w &&
-          (v.building === building || v.field === building),
-      ).length;
+    // Assignment compares the same worksite many times while sorting. Count
+    // current occupants once so a larger village does not repeatedly scan all
+    // workers for every candidate building.
+    const workerLoads = new Map();
+    const occupiedBuildings = new Set();
+    for (const worker of this.workers) {
+      if (worker === w) continue;
+      if (worker.building) {
+        occupiedBuildings.add(worker.building);
+        workerLoads.set(
+          worker.building,
+          (workerLoads.get(worker.building) || 0) + 1,
+        );
+      }
+      if (worker.field && worker.field !== worker.building) {
+        workerLoads.set(
+          worker.field,
+          (workerLoads.get(worker.field) || 0) + 1,
+        );
+      }
+    }
+    const workerLoad = (building) => workerLoads.get(building) || 0;
+    // Farm connectivity is a small graph walk and job ranking asks for the
+    // same ripe plots again during selection. Cache it for this assignment;
+    // claims are only mutated after a job is chosen.
+    const readyFieldsCache = new Map();
+    const readyFieldsFor = (building) => {
+      if (building?.type !== "farm") return [];
+      if (!readyFieldsCache.has(building))
+        readyFieldsCache.set(building, this.readyGrainFields(building));
+      return readyFieldsCache.get(building);
+    };
+    const nearestFieldCache = new Map();
+    const nearestReadyField = (building) => {
+      if (nearestFieldCache.has(building)) return nearestFieldCache.get(building);
+      let nearest = null;
+      let nearestDistance = Infinity;
+      for (const field of readyFieldsFor(building)) {
+        const distance = Math.hypot(
+          w.m.position.x - field.x,
+          w.m.position.z - field.z,
+        );
+        if (distance < nearestDistance) {
+          nearest = field;
+          nearestDistance = distance;
+        }
+      }
+      nearestFieldCache.set(building, nearest);
+      return nearest;
+    };
+    const distanceCache = new Map();
     const distanceToJob = (building) => {
-      const ripeField =
-        building.type === "farm"
-          ? this.readyGrainFields(building).sort(
-              (a, b) =>
-                Math.hypot(w.m.position.x - a.x, w.m.position.z - a.z) -
-                Math.hypot(w.m.position.x - b.x, w.m.position.z - b.z),
-            )[0]
-          : null;
+      if (distanceCache.has(building)) return distanceCache.get(building);
+      const ripeField = building.type === "farm" ? nearestReadyField(building) : null;
       const [x, z] = ripeField
         ? [ripeField.x, ripeField.z]
         : this.jobPoint(building, w);
-      return Math.hypot(w.m.position.x - x, w.m.position.z - z);
+      const distance = Math.hypot(w.m.position.x - x, w.m.position.z - z);
+      distanceCache.set(building, distance);
+      return distance;
     };
     const compareJobs = (a, b) =>
       (a.priority === "priority" ? 0 : 1) - (b.priority === "priority" ? 0 : 1) ||
@@ -4514,7 +5263,7 @@ export class Village {
         (b) =>
           b.progress < 1 &&
           !b.paused &&
-          !this.workers.some((v) => v !== w && v.building === b),
+          !occupiedBuildings.has(b),
       )
       .sort(compareJobs);
     const sites = this.buildings.filter(
@@ -4527,79 +5276,69 @@ export class Village {
         // A building whose own store is full stops taking workers until a
         // carrier has cleared it.
         this.stockSpace(b) > 0 &&
-        (b.type !== "farm" || this.readyGrainFields(b).length > 0),
+        (b.type !== "farm" || readyFieldsFor(b).length > 0),
     );
     const employedSites = sites
       .filter((building) => workerTypeForBuilding(building.type) === w.workerType)
       .sort(compareJobs);
+    const forestTrees = (this.decor || []).filter((decor) => decor.type === "tree");
     const tryJobs = (list) => {
       for (const b of list) {
-      const productionType = workerTypeForBuilding(b.type);
-      if (
-        b.progress === 1 &&
-        (!productionType ||
-          workerLoad(b) >= workerCapacityForBuilding(b.type) ||
-          (w.workerType !== WORKER_TYPES.BUILDER && productionType !== w.workerType))
-      )
-        continue;
-      const material = b.progress < 1 ? this.nextConstructionMaterial(b) : null;
-      const forestTrees = (this.decor || []).filter((decor) => decor.type === "tree");
-      const tree = !material && b.type === "lumberyard" && forestTrees.length
-        ? this.availableTreeFor(b, w)
-        : null;
-      const destination = material ? this.materialSource(material) : b;
-      if (!material && b.type === "lumberyard" && forestTrees.length && !tree) {
-        b.lastRouteBlocked = false;
-        continue;
-      }
-      if (!destination) {
-        b.lastRouteBlocked = true;
-        continue;
-      }
-      const field =
-        !material && b.type === "farm"
-          ? this.readyGrainFields(b).sort(
-              (a, candidate) =>
-                Math.hypot(w.m.position.x - a.x, w.m.position.z - a.z) -
-                Math.hypot(
-                  w.m.position.x - candidate.x,
-                  w.m.position.z - candidate.z,
-                ),
-            )[0]
+        const productionType = workerTypeForBuilding(b.type);
+        if (
+          b.progress === 1 &&
+          (!productionType ||
+            workerLoad(b) >= workerCapacityForBuilding(b.type) ||
+            (w.workerType !== WORKER_TYPES.BUILDER && productionType !== w.workerType))
+        )
+          continue;
+        const material = b.progress < 1 ? this.nextConstructionMaterial(b) : null;
+        const tree = !material && b.type === "lumberyard" && forestTrees.length
+          ? this.availableTreeFor(b, w)
           : null;
-      // Farmers work at the actual grain plot so the player can see them
-      // cutting the crop. Processing buildings keep their indoor work loop.
-      const workInside =
-        !material && ["bakery", "windmill", "vineyard"].includes(b.type);
-      w.workInside = workInside;
-      const [x, z] = tree
-        ? [tree.x, tree.z]
-        : workInside
-          ? [b.x, b.z]
-          : field
-          ? [field.x, field.z]
-          : this.jobPoint(destination, w);
-      if (!this.route(w, x, z, workInside ? b : field, tree)) {
-        w.workInside = false;
-        b.lastRouteBlocked = true;
-        continue;
-      }
-      b.lastRouteBlocked = false;
-      w.building = b;
-      w.field = field || null;
-      w.tree = tree || null;
-      if (field) field.claimedBy = w.id;
-      if (tree) tree.claimedBy = w.id;
-      w.materialResource = material;
-      this.setWorkerType(
-        w,
-        material || b.progress < 1
-          ? WORKER_TYPES.BUILDER
-          : productionType || WORKER_TYPES.BUILDER,
-      );
-      w.phase = material ? "material_pickup" : "travel";
-      w.waitingForSpace = false;
-      return true;
+        const destination = material ? this.materialSource(material) : b;
+        if (!material && b.type === "lumberyard" && forestTrees.length && !tree) {
+          b.lastRouteBlocked = false;
+          continue;
+        }
+        if (!destination) {
+          b.lastRouteBlocked = true;
+          continue;
+        }
+        const field = !material && b.type === "farm" ? nearestReadyField(b) : null;
+        // Farmers work at the actual grain plot so the player can see them
+        // cutting the crop. Processing buildings keep their indoor work loop.
+        const workInside =
+          !material && ["bakery", "windmill", "vineyard"].includes(b.type);
+        w.workInside = workInside;
+        const [x, z] = tree
+          ? [tree.x, tree.z]
+          : workInside
+            ? [b.x, b.z]
+            : field
+            ? [field.x, field.z]
+            : this.jobPoint(destination, w);
+        if (!this.route(w, x, z, workInside ? b : field, tree)) {
+          w.workInside = false;
+          b.lastRouteBlocked = true;
+          continue;
+        }
+        b.lastRouteBlocked = false;
+        w.building = b;
+        w.field = field || null;
+        w.tree = tree || null;
+        if (field) field.claimedBy = w.id;
+        if (tree) tree.claimedBy = w.id;
+        w.materialResource = material;
+        this.setWorkerType(
+          w,
+          material || b.progress < 1
+            ? WORKER_TYPES.BUILDER
+            : productionType || WORKER_TYPES.BUILDER,
+        );
+        w.phase = material ? "material_pickup" : "travel";
+        w.waitingForSpace = false;
+        return true;
       }
       return false;
     };
@@ -4655,8 +5394,48 @@ export class Village {
       (other) =>
         other !== worker &&
         other.m?.position &&
-        candidate.distanceTo(other.m.position) < WORKER_CLEARANCE,
+        candidate.distanceToSquared(other.m.position) < WORKER_CLEARANCE_SQUARED,
     );
+  }
+  workerMotionVectors(worker) {
+    return (worker.motionVectors ||= {
+      delta: new THREE.Vector3(),
+      avoidanceDelta: new THREE.Vector3(),
+      candidate: new THREE.Vector3(),
+      lane: new THREE.Vector3(),
+      probe: new THREE.Vector3(),
+    });
+  }
+  deadlockMotionVectors(worker) {
+    return (worker.deadlockMotionVectors ||= {
+      away: new THREE.Vector3(),
+      direction: new THREE.Vector3(),
+      probe: new THREE.Vector3(),
+      targets: Array.from({ length: DEADLOCK_RADII.length * DEADLOCK_TURNS.length }, () => new THREE.Vector3()),
+      candidateSlots: Array.from(
+        { length: DEADLOCK_RADII.length * DEADLOCK_TURNS.length },
+        () => ({ target: null, score: 0 }),
+      ),
+      candidates: [],
+    });
+  }
+  workerOnRoad(worker) {
+    const position = worker?.m?.position;
+    if (!position) return false;
+    const x = Math.round(position.x);
+    const z = Math.round(position.z);
+    const revision = this.roadRevision || 0;
+    if (
+      worker.roadRevision !== revision ||
+      worker.roadTileX !== x ||
+      worker.roadTileZ !== z
+    ) {
+      worker.roadRevision = revision;
+      worker.roadTileX = x;
+      worker.roadTileZ = z;
+      worker.onRoad = Boolean(this.roads?.has(`${x},${z}`));
+    }
+    return worker.onRoad === true;
   }
   workerCanStepTo(worker, candidate) {
     return (
@@ -4674,28 +5453,33 @@ export class Village {
     );
   }
   deadlockEscapeTarget(worker, clusterCenter) {
-    const away = worker.m.position.clone().sub(clusterCenter);
+    const vectors = this.deadlockMotionVectors(worker);
+    const away = vectors.away.copy(worker.m.position).sub(clusterCenter);
     away.y = 0;
     if (away.lengthSq() < 0.01) {
       const angle = (this.workerPriority(worker) * 2.399963229728653) % (Math.PI * 2);
       away.set(Math.cos(angle), 0, Math.sin(angle));
     } else away.normalize();
-    const candidates = [];
-    for (const radius of [1.15, 1.55, 2]) {
-      for (const turn of [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI]) {
-        const direction = away.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), turn);
-        const target = worker.m.position.clone().addScaledVector(direction, radius);
+    const candidates = vectors.candidates;
+    candidates.length = 0;
+    let candidateIndex = 0;
+    for (const radius of DEADLOCK_RADII) {
+      for (const turn of DEADLOCK_TURNS) {
+        const direction = vectors.direction.copy(away).applyAxisAngle(DEADLOCK_AXIS, turn);
+        const target = vectors.targets[candidateIndex];
+        target.copy(worker.m.position).addScaledVector(direction, radius);
         let clear = true;
         const samples = Math.ceil(radius / (WORKER_CLEARANCE * 0.35));
         for (let sample = 1; sample <= samples; sample++) {
-          const probe = worker.m.position
-            .clone()
+          const probe = vectors.probe
+            .copy(worker.m.position)
             .addScaledVector(direction, (radius * sample) / samples);
           if (!this.workerCanStepTo(worker, probe)) {
             clear = false;
             break;
           }
         }
+        const slot = vectors.candidateSlots[candidateIndex++];
         if (!clear) continue;
         const congestion = this.workers.reduce(
           (score, other) =>
@@ -4704,20 +5488,27 @@ export class Village {
               : score + Math.max(0, 2.5 - target.distanceTo(other.m.position)),
           0,
         );
-        candidates.push({ target, score: congestion + Math.abs(turn) * 0.2 - radius * 0.1 });
+        slot.target = target;
+        slot.score = congestion + Math.abs(turn) * 0.2 - radius * 0.1;
+        candidates.push(slot);
       }
     }
     candidates.sort((a, b) => a.score - b.score);
-    return candidates[0]?.target || null;
+    return candidates[0]?.target?.clone() || null;
   }
   resolveWorkerDeadlocks() {
-    const stuck = this.workers.filter(
-      (worker) =>
+    let stuck = null;
+    for (const worker of this.workers) {
+      if (
         worker.path?.length &&
         (worker.spaceWait || 0) >= WORKER_DEADLOCK_SECONDS &&
         !worker.deadlockYieldTime &&
-        !worker.deadlockLeaderTime,
-    );
+        !worker.deadlockLeaderTime
+      ) {
+        (stuck ||= []).push(worker);
+      }
+    }
+    if (!stuck || stuck.length < 2) return;
     const remaining = new Set(stuck);
     while (remaining.size) {
       const first = remaining.values().next().value;
@@ -4752,7 +5543,8 @@ export class Village {
         );
       if (!options.length) continue;
       const { worker: leader, target } = options[0];
-      leader.avoidanceTarget = target;
+      leader.avoidanceTarget ||= new THREE.Vector3();
+      leader.avoidanceTarget.copy(target);
       leader.avoidanceTime = WORKER_DEADLOCK_YIELD_SECONDS;
       leader.deadlockLeaderTime = WORKER_DEADLOCK_YIELD_SECONDS;
       leader.deadlockYieldTime = 0;
@@ -4771,24 +5563,23 @@ export class Village {
     // Everyone prefers the same passing side, so a dense crossing circulates
     // instead of forming an alternating ring of workers yielding into one
     // another. The opposite side remains a fallback near walls and scenery.
-    const sides = [1, -1];
-    for (const passingSide of sides) {
-      const candidate = worker.m.position.clone();
+    const { candidate, lane, probe } = this.workerMotionVectors(worker);
+    for (const passingSide of PASSING_SIDES) {
+      candidate.copy(worker.m.position);
       // Commit to a lateral lane before resuming the original route. Adding a
       // forward component here points the worker back into a head-on blocker
       // and recreates the frame-by-frame shiver this maneuver is meant to stop.
       candidate.x -= direction.z * passingSide * 1.05;
       candidate.z += direction.x * passingSide * 1.05;
-      const lane = candidate.clone().sub(worker.m.position);
-      const probe = worker.m.position
-        .clone()
-        .addScaledVector(lane.normalize(), 0.15);
+      lane.copy(candidate).sub(worker.m.position).normalize();
+      probe.copy(worker.m.position).addScaledVector(lane, 0.15);
       if (
         !this.workerCanStepTo(worker, probe) ||
         !this.workerCanStepTo(worker, candidate)
       )
         continue;
-      worker.avoidanceTarget = candidate;
+      worker.avoidanceTarget ||= new THREE.Vector3();
+      worker.avoidanceTarget.copy(candidate);
       worker.avoidanceTime = WORKER_PASS_SECONDS;
       worker.forcedYield = null;
       return true;
@@ -4798,7 +5589,8 @@ export class Village {
   followAvoidance(worker, step, dt) {
     if (!worker.avoidanceTarget) return false;
     worker.avoidanceTime = Math.max(0, (worker.avoidanceTime || 0) - dt);
-    const delta = worker.avoidanceTarget.clone().sub(worker.m.position);
+    const { avoidanceDelta: delta, candidate } = this.workerMotionVectors(worker);
+    delta.copy(worker.avoidanceTarget).sub(worker.m.position);
     delta.y = 0;
     const distance = delta.length();
     if (distance <= 0.04 || worker.avoidanceTime === 0) {
@@ -4807,9 +5599,7 @@ export class Village {
       return false;
     }
     const direction = delta.multiplyScalar(1 / distance);
-    const candidate = worker.m.position
-      .clone()
-      .addScaledVector(direction, Math.min(distance, step));
+    candidate.copy(worker.m.position).addScaledVector(direction, Math.min(distance, step));
     if (!this.workerCanStepTo(worker, candidate)) {
       worker.waitingForSpace = true;
       return true;
@@ -4880,10 +5670,31 @@ export class Village {
         w.mealSeat = null;
         this.setWorkerInside(w, false);
         w.timer = 2;
+        w.workDuration = 0;
+        w.routeTarget = null;
+        w.waitingForInput = false;
+        w.waitingForStock = false;
+        w.waitingForInn = false;
+        w.deliveryRetry = 0;
+        w.materialResource = null;
+        w.waitingForSpace = false;
+        w.waitingFor = null;
+        w.spaceWait = 0;
+        w.forcedYield = null;
+        w.avoidanceTarget = null;
+        w.avoidanceTime = 0;
+        w.deadlockLeaderTime = 0;
+        w.deadlockYieldTime = 0;
+        w.deadlockYieldTo = null;
       }
       return false;
     }
-    const delta = next.clone().sub(w.m.position);
+    const { delta, candidate } = this.workerMotionVectors(w);
+    delta.set(
+      next.x - w.m.position.x,
+      0,
+      next.z - w.m.position.z,
+    );
     delta.y = 0;
     const distance = delta.length();
     if (!distance) {
@@ -4891,18 +5702,12 @@ export class Village {
       w.waitingForSpace = false;
       return true;
     }
-    const pace = travelSpeed(
-      this.roads.has(
-        `${Math.round(w.m.position.x)},${Math.round(w.m.position.z)}`,
-      ),
-    );
+    const pace = travelSpeed(this.workerOnRoad(w));
     // The cap keeps a large simulation tick from jumping through a neighbour.
     const step = Math.min(dt * 1.5 * pace, WORKER_CLEARANCE * 0.62);
     if (this.followAvoidance(w, step, dt)) return true;
     const direction = delta.multiplyScalar(1 / distance);
-    const candidate = w.m.position
-      .clone()
-      .addScaledVector(direction, Math.min(distance, step));
+    candidate.copy(w.m.position).addScaledVector(direction, Math.min(distance, step));
     const blocker = this.workerMoveBlocker(w, candidate);
     if (blocker) {
       w.spaceWait = (w.spaceWait || 0) + dt;
@@ -4949,6 +5754,8 @@ export class Village {
       this.activityTime = Math.max(0, this.activityTime - dt);
       if (this.activityTime === 0) this.activity = "";
     }
+    let shouldResolveDeadlocks = false;
+    let hasMovementPressure = false;
     for (const w of this.workers) {
       w.hunger = Math.max(
         0,
@@ -4961,14 +5768,32 @@ export class Village {
       w.deadlockLeaderTime = Math.max(0, (w.deadlockLeaderTime || 0) - dt);
       w.deadlockYieldTime = Math.max(0, (w.deadlockYieldTime || 0) - dt);
       if (!w.deadlockYieldTime) w.deadlockYieldTo = null;
+      const spaceWait = w.spaceWait || 0;
+      const deadlockLeaderTime = w.deadlockLeaderTime || 0;
+      const deadlockYieldTime = w.deadlockYieldTime || 0;
+      if (
+        w.path?.length &&
+        spaceWait >= WORKER_DEADLOCK_SECONDS &&
+        !deadlockYieldTime &&
+        !deadlockLeaderTime
+      )
+        shouldResolveDeadlocks = true;
+      if (spaceWait > 0 || deadlockLeaderTime > 0 || deadlockYieldTime > 0)
+        hasMovementPressure = true;
     }
-    this.resolveWorkerDeadlocks();
-    const movementOrder = [...this.workers].sort(
-      (a, b) =>
-        Number(Boolean(b.deadlockLeaderTime)) - Number(Boolean(a.deadlockLeaderTime)) ||
-        (b.spaceWait || 0) - (a.spaceWait || 0) ||
-        this.workerPriority(a) - this.workerPriority(b),
-    );
+    if (shouldResolveDeadlocks) this.resolveWorkerDeadlocks();
+    // With no congestion, the stable worker array already matches the final
+    // comparator tie-breaker. Avoid allocating and sorting a copy every frame;
+    // only pay for priority ordering while a worker is actually waiting or
+    // yielding around another worker.
+    const movementOrder = hasMovementPressure
+      ? [...this.workers].sort(
+          (a, b) =>
+            Number(Boolean(b.deadlockLeaderTime)) - Number(Boolean(a.deadlockLeaderTime)) ||
+            (b.spaceWait || 0) - (a.spaceWait || 0) ||
+            this.workerPriority(a) - this.workerPriority(b),
+        )
+      : this.workers;
     for (const w of movementOrder) {
       if (
         w.building?.paused &&
@@ -4989,11 +5814,18 @@ export class Village {
         w.waitingFor = null;
         w.spaceWait = 0;
         w.forcedYield = null;
+        w.waitingForInput = false;
+        w.waitingForStock = false;
+        w.waitingForInn = false;
+        w.deliveryRetry = 0;
+        w.workDuration = 0;
+        w.routeTarget = null;
         w.avoidanceTarget = null;
         w.avoidanceTime = 0;
         w.deadlockLeaderTime = 0;
         w.deadlockYieldTime = 0;
         w.deadlockYieldTo = null;
+        w.materialResource = null;
       }
       if (w.path.length) {
         this.moveWorker(w, dt);
@@ -5103,10 +5935,13 @@ export class Village {
           finiteNumber(inn.breadStock, 0) <= 0 ||
           finiteNumber(this.resources.food, 0) <= 0
         ) {
+          this.setWorkerInside(w, false);
           w.phase = "idle";
           w.building = null;
           w.workInside = false;
+          w.waitingForInn = false;
           w.mealSeat = null;
+          w.routeTarget = null;
           w.timer = 1;
           continue;
         }
@@ -5121,7 +5956,9 @@ export class Village {
       } else if (w.phase === "eat") {
         w.timer -= dt;
         if (w.timer <= 0) {
-          if (w.building?.type === "inn") w.building.cycles++;
+          if (w.building?.type === "inn")
+            w.building.cycles =
+              Math.max(0, Math.floor(finiteNumber(w.building.cycles, 0))) + 1;
           w.hunger = MEAL_SATIETY;
           w.phase = "idle";
           w.workDuration = 0;
@@ -5259,7 +6096,7 @@ export class Village {
           }
           field.plantedAt = this.elapsed;
           field.claimedBy = null;
-          field.cycles = (field.cycles || 0) + 1;
+          field.cycles = Math.max(0, Math.floor(finiteNumber(field.cycles, 0))) + 1;
           this.updateGrainFieldVisual(field, true);
           const amount =
             CATALOG.farm.amount + (farm.upgrade === "Rich soil" ? 4 : 0);
@@ -5302,7 +6139,7 @@ export class Village {
             continue;
           }
           w.waitingForStock = false;
-          if (c.input && (this.resources[inputResource] || 0) < c.input) {
+          if (c.input && this.resourceAmount(inputResource) < c.input) {
             if (!w.waitingForInput)
               this.announce(`${c.name} is waiting for ${inputResource}.`);
             w.waitingForInput = true;
@@ -5313,7 +6150,7 @@ export class Village {
           const resumedFromWaiting = w.waitingForInput;
           w.waitingForInput = false;
           if (resumedFromWaiting) this.announce(`${c.name} has ${inputResource} again.`);
-          if (c.input) this.resources[inputResource] -= c.input;
+          if (c.input) this.spendResource(inputResource, c.input);
           const batch = c.amount + (site.upgrade === "Rich soil" ? 4 : 0);
           const stored = this.depositStock(site, batch);
           site.cycles = Math.max(0, Math.floor(finiteNumber(site.cycles, 0))) + 1;
@@ -5347,8 +6184,24 @@ export class Village {
           }
           continue;
         }
-        const stored = this.depositStock(site, w.carry.amount);
-        this.deliveryBurst(site, w.carry.resource, stored);
+        const wasWaitingForStock = Boolean(w.waitingForStock);
+        const carried = Math.max(0, Math.floor(finiteNumber(w.carry.amount, 0)));
+        const stored = this.depositStock(site, carried);
+        if (stored > 0) this.deliveryBurst(site, w.carry.resource, stored);
+        const remaining = carried - stored;
+        if (remaining > 0) {
+          // A carrier may have drained only part of the farmhouse while this
+          // farmer was returning. Keep the undelivered sheaves in hand rather
+          // than silently destroying them; the carrier can now see the stock
+          // that still needs to leave before this farmer finishes unloading.
+          w.carry.amount = remaining;
+          w.waitingForStock = true;
+          w.deliveryRetry = 1.5;
+          if (!wasWaitingForStock)
+            this.announce("The Farmhouse is full. A carrier must collect the wheat.");
+          continue;
+        }
+        w.waitingForStock = false;
         this.clearCarry(w);
         w.carry = null;
         w.phase = "idle";
@@ -5466,7 +6319,7 @@ export class Village {
     }
     for (const b of this.buildings)
       if (b.type === "windmill" && b.progress === 1) {
-        const sails = b.m.getObjectByName("Sails");
+        const sails = b.sails;
         if (sails && !this.reduceMotion) sails.rotation.z += dt * 0.45;
       }
     if (this.feast?.remaining > 0) {
@@ -5518,6 +6371,53 @@ export class Village {
   }
   emit() {
     if (!this.chapterRewards) this.chapterRewards = {};
+    const assignedByBuilding = new Map();
+    const collectorsByBuilding = new Map();
+    const incomingByBuilding = new Map();
+    const addWorker = (map, building, worker) => {
+      if (!building) return;
+      const workers = map.get(building);
+      if (workers) workers.push(worker);
+      else map.set(building, [worker]);
+    };
+    for (const worker of this.workers) {
+      addWorker(assignedByBuilding, worker.building, worker);
+      if (worker.field && worker.field !== worker.building)
+        addWorker(assignedByBuilding, worker.field, worker);
+      if (worker.haulSource && worker.phase === "haul_pickup")
+        addWorker(collectorsByBuilding, worker.haulSource, worker);
+      if (worker.haulTarget && worker.phase === "haul_deliver")
+        addWorker(incomingByBuilding, worker.haulTarget, worker);
+    }
+    const forestTrees = this.decor?.filter((tree) => tree.type === "tree") || [];
+    const availableTrees = forestTrees.some(
+      (tree) => tree.state === "available" && !tree.claimedBy,
+    );
+    // Farm connectivity is a small graph walk, and the same farm can be
+    // queried several times while projecting one HUD snapshot. Cache it for
+    // this emit; simulation mutations invalidate it naturally on the next
+    // projection.
+    const farmFieldsCache = new Map();
+    const readyFieldsCache = new Map();
+    const farmFieldsFor = (building) => {
+      if (building?.type !== "farm") return [];
+      if (!farmFieldsCache.has(building))
+        farmFieldsCache.set(building, this.grainFieldsForFarm(building));
+      return farmFieldsCache.get(building);
+    };
+    const readyFieldsFor = (building) => {
+      if (building?.type !== "farm") return [];
+      if (!readyFieldsCache.has(building))
+        readyFieldsCache.set(
+          building,
+          farmFieldsFor(building).filter(
+            (field) =>
+              grainGrowthStage(field.plantedAt, this.elapsed) === "ripe" &&
+              !field.claimedBy,
+          ),
+        );
+      return readyFieldsCache.get(building);
+    };
     const chapterGoals = chapterGoalState(this.chapterRewards, {
       buildings: this.buildings,
       created: this.created,
@@ -5533,15 +6433,24 @@ export class Village {
       (building) =>
         building.progress === 1 &&
         CATALOG[building.type]?.resource &&
-        (building.type !== "farm" || this.readyGrainFields(building).length > 0) &&
+        (building.type !== "farm" || readyFieldsFor(building).length > 0) &&
         (building.paused ||
           this.stockSpace(building) <= 0 ||
           building.lastRouteBlocked ||
-          !this.workers.some((worker) => worker.building === building)),
+          !assignedByBuilding.has(building)),
     ).length;
+    const storageCaps = this.storageCapacities();
+    const villageStorage = storageCaps.wood ?? this.storageCapacity();
+    // Every completed School sees the same village-wide training availability.
+    // Compute it once per HUD snapshot instead of repeating the worker/building
+    // scans for every School in the settlement.
+    let schoolTrainingOptions = null;
+    const trainingOptionsForSnapshot = () =>
+      schoolTrainingOptions ||
+      (schoolTrainingOptions = trainingOptions(this.buildings, this.workers));
     this.onUpdate({
       resources: { ...this.resources },
-      storage: this.storageCapacities(),
+      storage: storageCaps,
       population: this.workers.length,
       capacity: housingCapacity(this.buildings),
       day: Math.floor(this.elapsed / 120) + 1,
@@ -5549,15 +6458,9 @@ export class Village {
       speed: this.speed,
       name: this.name,
       buildings: this.buildings.map((b) => {
-        const assigned = this.workers.filter(
-          (w) => w.building === b || w.field === b,
-        );
-        const collectors = this.workers.filter(
-          (w) => w.haulSource === b && w.phase === "haul_pickup",
-        );
-        const incoming = this.workers.filter(
-          (w) => w.haulTarget === b && w.phase === "haul_deliver",
-        );
+        const assigned = assignedByBuilding.get(b) || [];
+        const collectors = collectorsByBuilding.get(b) || [];
+        const incoming = incomingByBuilding.get(b) || [];
         const stockCap = outputCapForBuilding(b.type);
         const stored = this.storedAt(b);
         const materialsReady = constructionMaterialsReady(b);
@@ -5576,18 +6479,17 @@ export class Village {
           b.type === "grainfield"
             ? grainGrowthStage(b.plantedAt, this.elapsed)
             : null;
-        const farmFields = b.type === "farm" ? this.grainFieldsForFarm(b) : [];
-        const forestTrees = this.decor?.filter((tree) => tree.type === "tree") || [];
-        const availableTrees = forestTrees.some(
-          (tree) => tree.state === "available" && !tree.claimedBy,
-        );
-        const nextFarmGrowth = farmFields.length
-          ? Math.max(
-              ...farmFields.map((field) =>
-                grainGrowthProgress(field.plantedAt, this.elapsed),
-              ),
-            )
-          : null;
+        const farmFields = farmFieldsFor(b);
+        const readyFarmFields = readyFieldsFor(b);
+        let nextFarmGrowth = null;
+        if (farmFields.length) {
+          nextFarmGrowth = 0;
+          for (const field of farmFields)
+            nextFarmGrowth = Math.max(
+              nextFarmGrowth,
+              grainGrowthProgress(field.plantedAt, this.elapsed),
+            );
+        }
         const innDiners =
           b.type === "inn"
             ? assigned.filter((worker) => ["eat_travel", "eat"].includes(worker.phase))
@@ -5663,7 +6565,7 @@ export class Village {
                     : "Working"
                   : b.type === "farm" && !farmFields.length
                     ? "Needs grain fields"
-                  : b.type === "farm" && !this.readyGrainFields(b).length
+                  : b.type === "farm" && !readyFarmFields.length
                     ? "Waiting for grain"
                   : assigned.length
                     ? "Assigned"
@@ -5706,14 +6608,14 @@ export class Village {
           ...(isStoreBuilding(b.type) && b.progress === 1
             ? {
                 storage: storageForBuilding(b.type),
-                villageStorage: this.storageCapacity(),
-                storedCaps: this.storageCapacities(),
+                villageStorage,
+                storedCaps: storageCaps,
                 stored: { ...this.resources },
               }
             : {}),
           ...(b.type === "school" && b.progress === 1
             ? {
-                training: trainingOptions(this.buildings, this.workers),
+                training: trainingOptionsForSnapshot(),
                 trainingSession: b.training
                   ? {
                       type: b.training.type,
@@ -5772,80 +6674,85 @@ export class Village {
       placement: this.placement,
       activity: this.activity,
       activityLog: this.activityLog.map(({ message }) => message),
+      healthCheck: this.healthCheck,
       saveAvailable: this.storageAvailable !== false && !this.storageConflict,
       saveConflict: this.storageConflict,
       hasSaved: this.lastSavedAt > 0,
     });
   }
+  saveRecord() {
+    return {
+      version: SAVE_VERSION,
+      name: this.name,
+      resources: normalizedAmountRecord(this.resources),
+      population: this.workers.length,
+      elapsed: this.elapsed,
+      created: normalizedCountRecord(this.created),
+      gathered: Math.max(0, finiteNumber(this.gathered, 0)),
+      delivered: normalizedAmountRecord(this.delivered),
+      chapterRewards: this.chapterRewards,
+      feast: this.feast,
+      tutorialStep: this.tutorialStep,
+      tutorialDismissed: this.tutorialDismissed,
+      workerNeeds: this.workers.map((worker) => ({
+        hunger: Math.max(0, Math.min(1, finiteNumber(worker.hunger, 0))),
+        ...(worker.trainedType ? { trained: worker.trainedType } : {}),
+      })),
+      activityLog: (Array.isArray(this.activityLog) ? this.activityLog : [])
+        .slice(0, 4)
+        .map(({ message }) => String(message).slice(0, 140)),
+      view: this.viewRecord(),
+      roads: [...this.roads].filter((key) => !this.baseRoads?.has(key)),
+      trees: (this.decor || [])
+        .filter((tree) => tree.type === "tree" && tree.state !== "available")
+        .map((tree) => ({
+          x: tree.x,
+          z: tree.z,
+          state: tree.state === "regrowing" ? "regrowing" : "available",
+          regrowAt: tree.regrowAt,
+        })),
+      clearedScenery: [...(this.clearedScenery || [])],
+      buildings: this.buildings.map(
+        ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt, breadStock, training, stock }) => ({
+          type,
+          x,
+          z,
+          rotation,
+          progress,
+          cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
+          priority: priority === "priority" ? "priority" : "normal",
+          paused: Boolean(paused),
+          upgrade: upgrade ? String(upgrade) : null,
+          materials: { ...materials },
+          ...(type === "grainfield"
+            ? { plantedAt: Math.max(0, finiteNumber(plantedAt, this.elapsed)) }
+            : {}),
+          ...(type === "inn"
+            ? { breadStock: Math.max(0, Math.floor(finiteNumber(breadStock, 0))) }
+            : {}),
+          ...(type === "school" && training
+            ? { training: normalizedTrainingSession(type, training) }
+            : {}),
+          ...(outputCapForBuilding(type)
+            ? {
+                stock: Math.max(
+                  0,
+                  Math.min(savedStockLimit(type), Math.floor(finiteNumber(stock, 0))),
+                ),
+              }
+            : {}),
+        }),
+      ),
+    };
+  }
   save() {
-    if (!this.ready || this.storageConflict) return false;
+    if (this.healthCheck || !this.ready || this.storageConflict) return false;
     try {
       if (this.storageChanged()) {
         this.markStorageConflict();
         return false;
       }
-      const serialized = JSON.stringify({
-        version: SAVE_VERSION,
-        name: this.name,
-        resources: this.resources,
-        population: this.workers.length,
-        elapsed: this.elapsed,
-        created: this.created,
-        gathered: this.gathered,
-        delivered: this.delivered,
-        chapterRewards: this.chapterRewards,
-        feast: this.feast,
-        tutorialStep: this.tutorialStep,
-        tutorialDismissed: this.tutorialDismissed,
-        workerNeeds: this.workers.map((worker) => ({
-          hunger: Math.max(0, Math.min(1, finiteNumber(worker.hunger, 0))),
-          ...(worker.trainedType ? { trained: worker.trainedType } : {}),
-        })),
-        activityLog: (Array.isArray(this.activityLog) ? this.activityLog : [])
-          .slice(0, 4)
-          .map(({ message }) => String(message).slice(0, 140)),
-        view: this.viewRecord(),
-        roads: [...this.roads].filter((key) => !this.baseRoads?.has(key)),
-        trees: (this.decor || [])
-          .filter((tree) => tree.type === "tree" && tree.state !== "available")
-          .map((tree) => ({
-            x: tree.x,
-            z: tree.z,
-            state: tree.state === "regrowing" ? "regrowing" : "available",
-            regrowAt: tree.regrowAt,
-          })),
-        buildings: this.buildings.map(
-          ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt, breadStock, training, stock }) => ({
-            type,
-            x,
-            z,
-            rotation,
-            progress,
-            cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
-            priority: priority === "priority" ? "priority" : "normal",
-            paused: Boolean(paused),
-            upgrade: upgrade ? String(upgrade) : null,
-            materials: { ...materials },
-            ...(type === "grainfield"
-              ? { plantedAt: Math.max(0, finiteNumber(plantedAt, this.elapsed)) }
-              : {}),
-            ...(type === "inn"
-              ? { breadStock: Math.max(0, Math.floor(finiteNumber(breadStock, 0))) }
-              : {}),
-            ...(type === "school" && training
-              ? { training: normalizedTrainingSession(type, training) }
-              : {}),
-            ...(outputCapForBuilding(type)
-              ? {
-                  stock: Math.max(
-                    0,
-                    Math.min(savedStockLimit(type), Math.floor(finiteNumber(stock, 0))),
-                  ),
-                }
-              : {}),
-          }),
-        ),
-      });
+      const serialized = JSON.stringify(this.saveRecord());
       localStorage.setItem("hearth-v1", serialized);
       this.saveFingerprint = serialized;
       this.lastSavedAt = Date.now();
@@ -5860,15 +6767,38 @@ export class Village {
     }
   }
   exportSave() {
-    if (!this.save()) return null;
+    if (this.healthCheck || !this.ready || this.storageConflict) return null;
+    let serialized;
     try {
-      return localStorage.getItem("hearth-v1");
+      serialized = JSON.stringify(this.saveRecord());
     } catch {
       return null;
     }
+    if (this.storageAvailable !== false) {
+      try {
+        if (this.storageChanged()) {
+          this.markStorageConflict();
+          return null;
+        }
+      } catch {
+        this.storageAvailable = false;
+        return serialized;
+      }
+      try {
+        localStorage.setItem("hearth-v1", serialized);
+        this.saveFingerprint = serialized;
+        this.lastSavedAt = Date.now();
+        this.storageAvailable = true;
+      } catch {
+        // The in-memory record is still a valid backup when browser storage is
+        // blocked or full. Keep export useful even when autosave is not.
+        this.storageAvailable = false;
+      }
+    }
+    return serialized;
   }
   importVillage(value) {
-    if (this.storageConflict) return false;
+    if (this.healthCheck || this.storageConflict) return false;
     if (this.storageChanged()) {
       this.markStorageConflict();
       return false;
@@ -5894,7 +6824,7 @@ export class Village {
     return true;
   }
   clearSave() {
-    if (this.storageConflict) return false;
+    if (this.healthCheck || this.storageConflict) return false;
     try {
       if (this.storageChanged()) {
         this.markStorageConflict();
@@ -5913,6 +6843,7 @@ export class Village {
   }
   storageChanged() {
     return Boolean(
+      !this.healthCheck &&
       this.lastSavedAt > 0 &&
         this.saveFingerprint != null &&
         typeof localStorage.getItem === "function" &&
@@ -5938,6 +6869,18 @@ export class Village {
     if (!["low", "balanced", "high"].includes(preset)) return false;
     this.graphicsPreset = preset;
     this.renderer.shadowMap.enabled = preset !== "low";
+    this.renderer.shadowMap.type =
+      preset === "high" ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+    const viewportWidth =
+      typeof window === "undefined" ? 1280 : window.innerWidth;
+    const shadowMapSize = shadowMapSizeForPreset(preset, viewportWidth);
+    if (this.sun?.shadow && this.shadowMapSize !== shadowMapSize) {
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+      this.sun.shadow.mapSize.set(shadowMapSize, shadowMapSize);
+      this.shadowMapSize = shadowMapSize;
+    }
+    this.syncGraphicsDetail();
     this.syncLanternLightPool();
     try {
       localStorage.setItem(
@@ -6020,23 +6963,40 @@ export class Village {
   }
   animate = () => {
     if (this.dead) return;
+    if (document.visibilityState === "hidden") {
+      this.frame = null;
+      this.clock.getDelta();
+      return;
+    }
     this.frame = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 0.1);
     const t = this.clock.elapsedTime;
     const motion = this.reduceMotion ? 0 : 1;
+    // Event feedback belongs to the simulation timeline. Keep it visible but
+    // frozen while paused, while ambient effects can continue rendering.
+    const simulationMotion = this.speed > 0 ? 1 : 0;
+    // Keep the world renderable while paused, but freeze simulation actors so
+    // villagers do not walk in place or continue working against a stopped
+    // simulation clock.
+    const actorMotion = motion * (this.speed > 0 ? 1 : 0);
     if (this.ready && this.speed) this.simulate(dt * this.speed);
     this.controls.update();
     this.updateAtmosphere();
-    for (const w of this.workers) {
-      if (!w.m?.position) continue;
-      const walking = !this.reduceMotion && w.path.length > 0;
-      const cycle = walking
+    if (!shouldRenderWorldFrame(this.speed, t, this.lastPausedRender)) return;
+    if (!this.speed) this.lastPausedRender = t;
+    if (this.speed > 0) {
+      for (const w of this.workers) {
+        if (!w.m?.position) continue;
+        const walking = actorMotion > 0 && w.path.length > 0;
+      const cycle = actorMotion && walking
         ? t * 9.5 + (w.walkPhase || 0)
-        : t * 2.2 + (w.idlePhase || 0);
+        : actorMotion
+          ? t * 2.2 + (w.idlePhase || 0)
+          : 0;
       const targetBlend = walking ? 1 : 0;
       w.walkBlend += (targetBlend - (w.walkBlend || 0)) * Math.min(1, dt * 10);
       const stride = walking ? Math.sin(cycle) : 0;
-      const idleStride = Math.sin(cycle) * 0.08;
+      const idleStride = actorMotion ? Math.sin(cycle) * 0.08 : 0;
       const gait = stride * w.walkBlend + idleStride * (1 - w.walkBlend);
       const lift = walking ? Math.abs(stride) * 0.012 : 0;
       const eating = w.phase === "eat";
@@ -6063,14 +7023,15 @@ export class Village {
           w.insideBuilding;
         const mining =
           w.workerType === WORKER_TYPES.MINER && w.phase === "work";
-        const workBeat = Math.sin(t * (baking ? 5.5 : 7) + (w.walkPhase || 0));
+        const workBeat =
+          actorMotion * Math.sin(t * (baking ? 5.5 : 7) + (w.walkPhase || 0));
         w.rig.leftArm.rotation.x +=
           ((chopping || mining
             ? -0.72
             : harvesting
               ? -0.92 + Math.max(0, workBeat) * 0.85
               : eating
-                ? -0.9 + Math.sin(t * 4.2) * 0.16
+                ? -0.9 + actorMotion * Math.sin(t * 4.2) * 0.16
               : baking
                 ? -0.48 + workBeat * 0.42
                 : -gait * 0.3) -
@@ -6082,7 +7043,7 @@ export class Village {
             : harvesting
               ? -0.5 - workBeat * 0.4
               : eating
-                ? -0.72 - Math.sin(t * 4.2) * 0.16
+                ? -0.72 - actorMotion * Math.sin(t * 4.2) * 0.16
               : baking
                 ? -0.58 - workBeat * 0.4
                 : gait * 0.3) -
@@ -6099,7 +7060,7 @@ export class Village {
         }
         if (w.rig.pickaxe) {
           if (mining) {
-            const swing = Math.max(0, Math.sin(t * 6.5 + w.walkPhase));
+            const swing = actorMotion * Math.max(0, Math.sin(t * 6.5 + w.walkPhase));
             w.rig.pickaxe.rotation.z = AXE_CARRY_ANGLE + swing * 1.2;
           } else {
             w.rig.pickaxe.rotation.z +=
@@ -6109,7 +7070,7 @@ export class Village {
         if (w.rig.axe) {
           w.rig.axe.visible = w.workerType === WORKER_TYPES.WOODCUTTER;
           if (chopping) {
-            const swing = Math.max(0, Math.sin(t * 7.5 + w.walkPhase));
+            const swing = actorMotion * Math.max(0, Math.sin(t * 7.5 + w.walkPhase));
             w.rig.axe.rotation.z = AXE_CARRY_ANGLE + swing * 1.35;
           } else {
             w.rig.axe.rotation.z +=
@@ -6117,48 +7078,63 @@ export class Village {
           }
         }
       }
-      if (w.contactShadow) {
-        w.contactShadow.position.set(w.m.position.x, 0.006, w.m.position.z);
+      if (w.shadowIndex != null || w.contactShadow) {
         const squash = walking ? 1 - Math.abs(stride) * 0.12 : 1;
-        w.contactShadow.scale.set(squash, 0.58 * squash, 1);
-        w.contactShadow.material.opacity = walking
-          ? 0.18 + Math.abs(stride) * 0.035
-          : 0.18;
+        this.updateWorkerShadow(w, squash);
       }
-      this.updateWorkerWorkEffect(w, t, motion);
+        const hasActiveWorkEffect =
+          w.insideBuilding &&
+          w.building &&
+          (w.phase === "harvest" || w.phase === "work") &&
+          WORK_EFFECT_BUILDINGS.has(w.building.type);
+        if (hasActiveWorkEffect || w.workEffect?.visible)
+          this.updateWorkerWorkEffect(w, t, actorMotion);
+      }
+      if (this.workerShadowField?.dirty) {
+        this.workerShadowField.mesh.instanceMatrix.needsUpdate = true;
+        this.workerShadowField.dirty = false;
+      }
     }
-    for (const m of this.ripples) {
-      const phase = m.userData.phase || 0;
-      const speed = m.userData.speed || 0.5;
-      const wave = motion * Math.sin(t * speed + phase);
-      m.position.x = (m.userData.baseX || m.position.x) + wave * 0.1;
-      m.scale.x = 0.9 + (wave + 1) * 0.12;
-      m.material.opacity = 0.25 + (wave + 1) * 0.1;
-    }
-    for (const m of this.swayers) {
-      if (!m.parent) continue;
-      const phase = m.userData.phase || 0;
-      const speed = m.userData.speed || 0.7;
-      const amount = motion * (m.userData.amount || 0.02);
-      m.rotation.z = (m.userData.baseZ || 0) + Math.sin(t * speed + phase) * amount;
+    if (this.graphicsPreset !== "low" && motion) {
+      for (const m of this.ripples) {
+        const phase = m.userData.phase || 0;
+        const speed = m.userData.speed || 0.5;
+        const wave = motion * Math.sin(t * speed + phase);
+        m.position.x = (m.userData.baseX || m.position.x) + wave * 0.1;
+        m.scale.x = 0.9 + (wave + 1) * 0.12;
+        m.material.opacity = 0.25 + (wave + 1) * 0.1;
+      }
+      for (const m of this.swayers) {
+        if (!m.parent) continue;
+        const phase = m.userData.phase || 0;
+        const speed = m.userData.speed || 0.7;
+        const amount = motion * (m.userData.amount || 0.02);
+        m.rotation.z = (m.userData.baseZ || 0) + Math.sin(t * speed + phase) * amount;
+      }
     }
     this.updateGrassField(t, motion);
     if (this.roadsDirty) this.rebuildRoadSurface();
     for (const tree of this.decor || []) {
-      if (tree.type !== "tree" || tree.state !== "chopping" || !tree.m?.visible)
+      if (
+        !actorMotion ||
+        tree.type !== "tree" ||
+        tree.state !== "chopping" ||
+        !tree.m?.visible
+      )
         continue;
       const chopWave = Math.max(0, Math.sin(t * 10 + (tree.chopProgress || 0)));
       tree.m.rotation.x = chopWave * 0.14;
       tree.m.rotation.z = (tree.baseRotation || 0) + chopWave * 0.035;
     }
-    if (this.motes) {
+    if (this.motes && this.graphicsPreset !== "low" && motion) {
       const positions = this.motes.geometry.attributes.position.array;
-      this.moteSeeds.forEach((seed, i) => {
+      for (let i = 0; i < this.moteSeeds.length; i++) {
+        const seed = this.moteSeeds[i];
         const wave = motion * (t * seed.speed + seed.phase);
         positions[i * 3] = seed.x + Math.sin(wave) * 0.18;
         positions[i * 3 + 1] = seed.y + Math.sin(wave * 1.23) * 0.12;
         positions[i * 3 + 2] = seed.z + Math.cos(wave * 0.7) * 0.12;
-      });
+      }
       this.motes.geometry.attributes.position.needsUpdate = true;
       this.motes.material.opacity =
         0.38 + motion * Math.sin(t * 1.4) * 0.08;
@@ -6183,7 +7159,17 @@ export class Village {
       }
       if (motion) this.guideMarker.rotation.y = t * 0.8;
     }
+    const updateBuildingEffects =
+      t - this.lastBuildingEffectUpdate >= BUILDING_EFFECT_UPDATE_INTERVAL;
+    if (updateBuildingEffects) this.lastBuildingEffectUpdate = t;
     for (const b of this.buildings) {
+      if (
+        !b.siteRing &&
+        !(b.pop > 0 && b.progress === 1) &&
+        !b.smoke &&
+        !b.lanterns
+      )
+        continue;
       if (b.siteRing) {
         const pulse =
           motion *
@@ -6193,16 +7179,20 @@ export class Village {
         b.siteRing.material.opacity = 0.27 + pulse * 0.25;
       }
       if (b.pop > 0 && b.progress === 1) {
-        const amount = motion * Math.sin(b.pop * Math.PI) * 0.09;
+        // Completion feedback belongs to simulation time. Do not let the
+        // ambient render clock keep a finished building pulsing while paused.
+        const amount =
+          motion * simulationMotion * Math.sin(b.pop * Math.PI) * 0.09;
         b.m.scale.x = 1 + amount;
         b.m.scale.y = 1 + amount;
         b.m.scale.z = 1 + amount;
-        b.pop = Math.max(0, b.pop - dt * 2.4);
+        b.pop = Math.max(0, b.pop - dt * 2.4 * simulationMotion);
         if (b.pop === 0) b.m.scale.set(1, 1, 1);
       }
-      if (b.smoke) {
+      if (b.smoke && updateBuildingEffects && motion) {
         const smokeWave = motion * (t * 0.65 + b.smoke.phase);
-        b.smoke.particles.forEach((p, i) => {
+        for (let i = 0; i < b.smoke.particles.length; i++) {
+          const p = b.smoke.particles[i];
           const cycle = motion * ((t * 0.46 + i * 0.55 + b.smoke.phase) % 2.6);
           const rise = cycle / 2.6;
           p.position.x = 0.13 + Math.sin(smokeWave + i * 0.9) * 0.11 * rise;
@@ -6210,45 +7200,50 @@ export class Village {
           p.position.z = 0.04 + Math.cos(smokeWave * 0.7 + i) * 0.06 * rise;
           p.scale.setScalar(0.7 + rise * 1.5);
           p.material.opacity = (1 - rise) * 0.17;
-        });
+        }
       }
-      if (b.lanterns) {
+      if (b.lanterns && updateBuildingEffects) {
         const glow = this.atmosphere.nightAmount || 0;
-        b.lanterns.lamps.forEach((lamp) => {
+        for (const lamp of b.lanterns.lamps) {
           lamp.glow.material.opacity = 0.025 + glow * 0.86;
           lamp.glow.scale.setScalar(0.8 + glow * 0.45);
-        });
+        }
       }
     }
     this.updateLanternLights(t, motion, dt);
     const daylight = this.atmosphere.sunHeight ?? 1;
-    for (const bird of this.birds) {
-      const visible = daylight > 0.16 && !this.reduceMotion;
-      bird.group.visible = visible;
-      if (!visible) continue;
-      const wave = t * bird.speed + bird.phase;
-      bird.group.position.x = bird.centerX + Math.sin(wave) * 4.2;
-      bird.group.position.z = bird.centerZ + Math.cos(wave * 0.72) * 3.2;
-      bird.group.position.y = bird.baseY + Math.sin(wave * 1.25) * 0.3;
-      bird.group.rotation.y = wave * 0.75;
-      const flap = Math.sin(t * 7 + bird.phase) * 0.18;
-      bird.left.rotation.y = -0.3 - flap;
-      bird.right.rotation.y = 0.3 + flap;
+    const birdsVisible =
+      daylight > 0.16 && !this.reduceMotion && this.graphicsPreset !== "low";
+    if (this.birdsVisible !== birdsVisible) {
+      this.birdsVisible = birdsVisible;
+      for (const bird of this.birds) bird.group.visible = birdsVisible;
     }
+    if (birdsVisible)
+      for (const bird of this.birds) {
+        const wave = t * bird.speed + bird.phase;
+        bird.group.position.x = bird.centerX + Math.sin(wave) * 4.2;
+        bird.group.position.z = bird.centerZ + Math.cos(wave * 0.72) * 3.2;
+        bird.group.position.y = bird.baseY + Math.sin(wave * 1.25) * 0.3;
+        bird.group.rotation.y = wave * 0.75;
+        const flap = Math.sin(t * 7 + bird.phase) * 0.18;
+        bird.left.rotation.y = -0.3 - flap;
+        bird.right.rotation.y = 0.3 + flap;
+      }
     for (let i = this.deliveryBursts.length - 1; i >= 0; i--) {
       const burst = this.deliveryBursts[i];
-      burst.life -= dt;
+      burst.life -= dt * simulationMotion;
       const progress = 1 - Math.max(0, burst.life / 0.95);
       burst.group.position.y = 0.08 + progress * 0.55;
       burst.group.scale.setScalar(1 + progress * 0.65);
       burst.ring.material.opacity = burst.life * 0.76;
-      burst.sparks.forEach((spark, index) => {
+      for (let index = 0; index < burst.sparks.length; index++) {
+        const spark = burst.sparks[index];
         const angle = (index / burst.sparks.length) * Math.PI * 2;
         spark.position.x = Math.cos(angle) * (0.22 + progress * 0.36);
         spark.position.z = Math.sin(angle) * (0.22 + progress * 0.36);
-        spark.rotation.y += motion * dt * 4;
+        spark.rotation.y += motion * simulationMotion * dt * 4;
         spark.material.opacity = burst.life * 0.9;
-      });
+      }
       if (burst.life <= 0) {
         this.scene.remove(burst.group);
         burst.group.traverse((object) => {
@@ -6261,10 +7256,16 @@ export class Village {
       }
     }
     this.renderer.render(this.scene, this.camera);
-    this.lastUI += dt;
-    if (this.lastUI > 0.4) {
-      this.lastUI = 0;
-      if (this.ready) this.emit();
+    // A paused village still renders so the camera and ambient scene remain
+    // usable, but its simulation projection cannot change. Avoid rebuilding
+    // the React HUD until time starts moving again; explicit actions still
+    // call emit() immediately when they change state.
+    if (this.speed) {
+      this.lastUI += dt;
+      if (this.lastUI > 0.4) {
+        this.lastUI = 0;
+        if (this.ready) this.emit();
+      }
     }
     if (
       this.ready &&
@@ -6278,11 +7279,29 @@ export class Village {
   dispose() {
     this.save();
     this.dead = true;
+    this.disposeAudio();
     if (this.thumbnailTaskKind === "idle") window.cancelIdleCallback?.(this.thumbnailTask);
     if (this.thumbnailTaskKind === "timeout") window.clearTimeout(this.thumbnailTask);
+    this.thumbnailTask = null;
+    this.thumbnailTaskKind = null;
+    this.thumbnailWaitResolve?.(false);
+    this.thumbnailWaitResolve = null;
+    this.thumbnailRenderer?.dispose();
+    this.thumbnailRenderer = null;
     cancelAnimationFrame(this.frame);
+    if (this.resizeFrame != null) cancelAnimationFrame(this.resizeFrame);
+    this.resizeFrame = null;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.cancelPointerMove();
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("pagehide", this.beforeUnload);
+    document.removeEventListener("visibilitychange", this.visibilityChange);
+    if (this.motionQuery?.removeEventListener) {
+      this.motionQuery.removeEventListener("change", this.motionChange);
+    } else {
+      this.motionQuery?.removeListener?.(this.motionChange);
+    }
     this.container.removeEventListener("pointermove", this.move);
     this.container.removeEventListener("pointerdown", this.down);
     this.container.removeEventListener("pointerup", this.up);

@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Activity, Box, Check, Clock3, Cpu, Gauge, HardDrive, RefreshCw, Smartphone, Zap } from "lucide-react";
+import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left.js";
+import Activity from "lucide-react/dist/esm/icons/activity.js";
+import Box from "lucide-react/dist/esm/icons/box.js";
+import Check from "lucide-react/dist/esm/icons/check.js";
+import Clock3 from "lucide-react/dist/esm/icons/clock-3.js";
+import Cpu from "lucide-react/dist/esm/icons/cpu.js";
+import Gauge from "lucide-react/dist/esm/icons/gauge.js";
+import HardDrive from "lucide-react/dist/esm/icons/hard-drive.js";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.js";
+import Smartphone from "lucide-react/dist/esm/icons/smartphone.js";
+import Zap from "lucide-react/dist/esm/icons/zap.js";
 import "./health-check.css";
 
 const bytesToLabel = (bytes, emptyLabel = "—") => {
@@ -163,13 +173,33 @@ function HealthCheck() {
   }, [metrics]);
 
   const rerun = () => {
-    frameRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    frameRef.current?.scrollIntoView({
+      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+        ? "auto"
+        : "smooth",
+      block: "center",
+    });
     setRun((value) => value + 1);
   };
   const totalEncoded = metrics?.summary?.total?.encoded || 0;
   const frameRate = runtime?.fps;
   const longTasks = runtime?.longTasks;
-  const statusLabel = status === "ready" ? "Ready" : status === "error" ? "Needs attention" : "Running startup check";
+  const runtimeSampling = status === "ready" && !runtime;
+  const statusClass = runtimeSampling ? "loading" : status;
+  const statusLabel = status === "error"
+    ? "Needs attention"
+    : runtimeSampling
+      ? "Sampling runtime"
+      : status === "ready"
+        ? "Ready"
+        : "Running startup check";
+  const statusDescription = status === "error"
+    ? lastError
+    : runtimeSampling
+      ? "Five-second FPS and long-task sample in progress"
+      : status === "ready"
+        ? "Startup and runtime sample complete"
+        : "Loading the 3D world…";
 
   return (
     <main className="health-shell">
@@ -194,18 +224,18 @@ function HealthCheck() {
             This page loads a real game instance and reads the browser’s timing, payload, WebGL, and runtime signals. Use it after adding assets or interactions.
           </p>
         </div>
-        <div className={`health-status ${status}`} role="status">
+        <div className={`health-status ${statusClass}`} role="status">
           <span className="status-dot" />
           <strong>{statusLabel}</strong>
-          <span>{status === "ready" ? "Game startup complete" : status === "error" ? lastError : "Loading the 3D world…"}</span>
+          <span>{statusDescription}</span>
         </div>
       </section>
 
       <section className="health-grid health-grid-primary" aria-label="Key performance metrics">
         <MetricCard icon={HardDrive} label="Game payload" value={bytesToLabel(totalEncoded)} detail="Compressed bytes requested by the game" tone="terra" />
         <MetricCard icon={Clock3} label="Ready to play" value={msToLabel(metrics?.ready)} detail="Document start → visible game UI ready" tone="green" />
-        <MetricCard icon={Gauge} label="Frame rate" value={metricState(frameRate, " fps")} detail="5-second requestAnimationFrame sample; keep the game visible" tone="blue" />
-        <MetricCard icon={Cpu} label="Long tasks" value={metricState(longTasks, " tasks")} detail={Number.isFinite(runtime?.longestTask) ? `Longest task ${msToLabel(runtime.longestTask)}` : "Main-thread tasks over 50 ms during sample"} tone="gold" />
+        <MetricCard icon={Gauge} label="Frame rate" value={runtime ? metricState(frameRate, " fps") : runtimeSampling ? "Sampling…" : "—"} detail="5-second requestAnimationFrame sample; keep the game visible" tone="blue" />
+        <MetricCard icon={Cpu} label="Long tasks" value={runtime ? metricState(longTasks, " tasks") : runtimeSampling ? "Sampling…" : "—"} detail={Number.isFinite(runtime?.longestTask) ? `Longest task ${msToLabel(runtime.longestTask)}` : "Main-thread tasks over 50 ms during sample"} tone="gold" />
       </section>
 
       <section className="health-grid health-grid-secondary">

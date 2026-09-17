@@ -4,21 +4,55 @@
 
 ## Functional checks
 
-- `npm test`: fifty passing tests for land/footprint/scenery/resource validation, nearest-clear guided placement, tutorial villager focus progression, direct worker-click tutorial persistence, worker-footprint placement protection, scenery-aware worker routing, saved-building footprint and duplicate-town-hall validation, sparse-restore milestone detection, town-hall progress sanitization, zero-capacity population recovery, reachable-job assignment fallback, live rerouting around newly blocked worker paths, bounded camera-view persistence, obstacle-aware path painting, road-aware routing around occupied buildings, construction completion and worker arrival, unique activity-history retention, crediting production on delivery, blocked-delivery retry behavior, windmill input requirements, live building worker-status reporting, worker task/carry snapshots, save-number, population, road-count, autosave-cycle, and cross-tab conflict sanitization including pre-write fingerprint checks for saves, destructive clears, and backup imports plus rename rollback, delivery-history persistence, safe-save clearing, stale-tab inspector/feast/tutorial mutation guards, relocation preview type resolution, selection-ring and focused-worker-marker cleanup, placement-preview (including line material), construction-effect cleanup, scene-resource cleanup, bounded keyboard camera panning, and village-name sanitization.
+- `npm test`: 173 passing tests for land/footprint/scenery/resource validation, nearest-clear guided placement, tutorial villager focus progression, direct worker-click tutorial persistence, worker-footprint placement protection, scenery-aware worker routing, saved-building footprint and duplicate-town-hall validation, sparse-restore milestone detection, town-hall progress sanitization, zero-capacity population recovery, reachable-job assignment fallback, live rerouting around newly blocked worker paths, no-detour worker cleanup, clean worker assignment handoffs, malformed-feast protection, bounded camera-view persistence, obstacle-aware path painting, road-aware routing around occupied buildings, construction completion and worker arrival, unique activity-history retention, crediting production on delivery, blocked-delivery retry behavior, windmill input requirements, live building worker-status reporting, worker task/carry snapshots, save-number, population, road-count, autosave-cycle, and cross-tab conflict sanitization including pre-write fingerprint checks for saves, destructive clears, and backup imports plus rename rollback, delivery-history persistence, safe-save clearing, stale-tab inspector/feast/tutorial mutation guards, embedded health-sample save isolation, selection-ring and focused-worker-marker cleanup, placement-preview (including line material and validity-change repainting), inspector and scene-resource cleanup, bounded keyboard camera panning, village-name sanitization, per-resource storage-safe refunds, scoped Inn meal reservations, graphics-preset shadow-map scaling, cleared scenery persistence, per-frame worker vector reuse, expired-avoidance recovery, cached road-speed lookup, per-search route caching, advisor resource context preservation, single-pass job-point ranking, cached assignment distances, allocation-free storage-capacity counters, shared storage-capacity calculation, shared build-boundary calculation, coalesced pointer movement, cached carrier source ranking, shared HUD storage projection, single-worker construction assignments, pooled deadlock recovery vectors, Inn pantry reconciliation, food-spending pantry reconciliation, building-priority toggles, grain-visual update throttling, partial farmhouse harvest retention, cadence-limited atmosphere lighting, paused-render cadence, render-loop effect gating, late-load model-resource disposal, ambient-audio teardown, ended-action-sound cleanup, malformed-resource spending protection, storage-independent village export, normalized saved counters, and grain-field worker cleanup.
 - `npm run build`: production bundle generated successfully.
-- Codex in-app browser: the earlier pass was tested at 1536×1024 and 390×844; the latest native IAB pass used the live 640×765 viewport for focus, overlay, tutorial-marker, inspector, and relocation checks.
+- Codex in-app browser: the earlier pass was tested at 1536×1024 and 390×844; the latest native IAB pass used the live 640×765 viewport for focus, overlay, tutorial-marker, and inspector checks.
 - Actual UI construction: selected a cottage, rejected an obstructed tree site, placed a cottage, observed scaffolding, completed construction, and saw population increase from 8/16 to 10/20.
 - Actual UI farm construction: rejected an out-of-bounds river-side site, placed a valid farm, observed construction, and confirmed all three settlement goals completed.
 - Wood, stone, and food increased through worker deliveries. Tested pause, speed controls, save, reload, and help dialog.
 - After manual save and reload: the added cottage/farm, completed goals, resource stock, population 10/20, and advancing day persisted.
 - Browser error log was empty on the inspected run.
-- Latest polish pass: Playwright fallback verified the updated render at 1280×720 and 390×844, including the period-aware header, paused/resumed simulation controls, modal focus behavior, building placement preview, inspector open/close behavior, responsive containment, and a clean console.
+- Latest polish pass: Playwright fallback verified the updated render at 1280×720 and 390×844, including the period-aware header, paused/resumed simulation controls, advisor focus behavior, modal focus behavior, building placement preview, inspector open/close behavior, responsive containment, and a clean console.
+- Health-check runtime cards now distinguish startup readiness from the five-second FPS and long-task sampling phase.
+- Thumbnail framing keeps its 160×130 display resolution while using a half-resolution edge probe, reducing startup readback work without changing the visible palette cards.
+- Placement hover keeps the preview moving but only repaints its meshes when validity changes, reducing work while searching for a site.
+- Grain-field stage checks run at a bounded visual cadence while explicit planting, harvesting, and restore paths still force immediate swaps, reducing repeated simulation work without delaying a visible transition materially.
+- Terrain and river-water vertex colors now reuse color scratch objects and typed buffers during world creation, reducing startup garbage without changing the generated palette.
+- Help placement guidance now clearly tells players that buildings are fixed once placed, making the no-relocation rule discoverable before committing a site.
+- Storage capacity and Inn pantry counts use direct counters in the simulation hot path, avoiding temporary filtered arrays while worker jobs check available room.
+- Resource affordability, spending, delivery writes, and timber milestones normalize missing or non-finite runtime totals, so malformed state cannot create free actions or propagate `NaN` through the save.
+- Partial farmhouse stock now keeps excess harvested wheat in the farmer's carry state until a carrier clears room, preventing production loss when a harvest arrives during a nearly full worksite store.
+- Build-boundary checks share one direct watchtower counter across placement, previews, and save restoration, avoiding repeated temporary arrays and keeping the expansion rule consistent.
+- Embedded health-check villages use a fresh in-memory save and ignore player storage events, so diagnostics cannot pause or overwrite an open game tab.
+- Manual Save now explains when the village is still loading instead of misreporting a temporary startup state as unavailable browser storage.
+- The save indicator and export action use the same loading-state language during startup, so transient initialization cannot look like missing storage or an unsaved village.
+- Export serialization is separate from browser persistence, so a playable village can still download an in-memory backup when local storage is blocked or full; cross-tab conflicts continue to block stale exports.
+- Backup, restore, and live counter updates are normalized, preventing malformed created/resource/delivery values from poisoning future progress after reload or the next placement.
+- Simulation movement pressure is now derived during the existing worker cooldown pass instead of a second per-tick scan.
+- Building inspectors now expose accessible Pause/Resume controls for non-townhall structures.
+- Building inspectors now expose a pressed-state priority toggle for construction and production sites, so the existing worker-ranking preference is usable without editing a save.
+- Worker reassignment clears stale input, stock, and route-retry flags before a new job is chosen.
+- Carrier cleanup clears stale route, wait, meal, and deadlock state when a haul ends.
+- The performance health-check page is now route-split: the playable village does not request its diagnostic JS/CSS, while `/health-check` still loads independently and reaches Ready.
+- Lucide UI icons now use individual modules with React dependency deduplication, reducing the measured health-check payload from 7.2 MB to 6.4 MB without changing the rendered controls.
+- The closed village view skips overview-only building, delivery, workforce, and focus-list aggregation; opening the overview computes those values in one memoized pass without changing its dashboard output.
+- The build palette is isolated behind a value-aware memoized component, so simulation ticks with unchanged resources do not rebuild all fourteen tool cards or their affordability labels.
+- HUD projection reuses the village-wide School training options across completed Schools, avoiding duplicate worker and workplace scans as the settlement grows.
+- Build-card labels now use a compact natural-wrap treatment instead of desktop ellipses, keeping longer building and path-tool names readable within the fixed palette rail.
+- Day/night colour and directional-light writes are cadence-limited to 30 Hz; the render loop keeps full visual motion while avoiding redundant high-refresh updates.
+- Paused villages redraw the world at 30 Hz for camera and ambient responsiveness instead of spending GPU time at the display refresh rate while simulation state is frozen.
+- The world canvas now observes its own container as well as window resizes, coalescing camera/backing-buffer updates and ignoring transient zero-size layout states during responsive transitions.
+- A village disposed while GLB requests are still settling releases unattached model resources, preventing late-load GPU allocations from surviving an unmount.
+- Turning Ambient tone off, or disposing the village, now stops ambient oscillators and disconnects their nodes; disposal also closes the Web Audio context so remounts do not leave background audio running. Short action cues disconnect their oscillator and gain nodes when playback ends.
+- Startup model loading no longer requests the unused standalone fence or duplicate base grainfield GLBs; the grain-field palette preview uses the already-loaded ripe-stage asset, while live growth still uses each stage-specific model.
+- Grain-field placement and initial field creation now use the loaded sown-stage model, so removing the duplicate base asset does not degrade the in-world preview to a generic fallback.
+- Balanced graphics now uses a smaller shadow map and cheaper filtering on phones and desktop; High retains the full-quality shadow map, and changing presets live rebuilds the shadow target safely.
 - Underfunded-build pass: a zeroed-material save showed exact wood/stone shortfalls in palette labels, build-cost tooltips, and placement feedback; the shortfall treatment stayed readable at 390×844.
 - Short-phone pass: the compact-height breakpoint was verified at 390×480 with the goals card, palette, camera/help controls, and zoom controls contained inside the viewport without horizontal or vertical overflow.
 - Goal completion now produces a one-time flourishing toast and a subtle completed-objectives treatment after the cottage, farm, and timber milestones are all met.
 - The first-steps introduction now provides direct actions for cottage placement, villager inspection, and path selection; cottage placement searches for a nearby clear site, and both guided and direct worker selection persist tutorial progress.
 - Guided placement actions now run through the same validator as ordinary placement, so an invalid tutorial preview explains why it cannot be placed instead of failing silently; a successful guided cottage placement preserves the worker marker for the next step.
-- Keyboard Enter placement now clears the React placement state after a successful build or relocation, matching the visible Place control instead of leaving a stale ghost prompt on screen.
+- Keyboard Enter placement now clears the React placement state after a successful build, matching the visible Place control instead of leaving a stale ghost prompt on screen.
 - Focused villagers now receive a small animated world-space ring and faceted marker that follow them while the inspector is open, improving orientation without competing with building selection rings.
 - Responsive polish corrected palette key labels above 09, moved action toasts out of the tutorial surface, and gives the advisor a full-width focus surface on narrow phones through 620px.
 - Menu and advisor toggles now expose their open/close state through their accessible names, and disabled controls use an unavailable cursor rather than a busy cursor.
@@ -34,17 +68,17 @@
 - Palette labels also announce the 1–9 keyboard shortcut, and Path clarifies that its stone cost applies per tile.
 - Settlement status now prioritizes blocked routes and windmill food shortages over generic construction progress, keeping actionable warnings visible.
 - Overview graphics presets now stay in one three-option row instead of leaving the High control stranded on a second line.
-- Path placement now shows drag-specific guidance and only the cancel action; relocation confirms as “Move” rather than “Place”.
+- Path placement now shows drag-specific guidance and only the cancel action.
 - Path removal now labels its detail panel “Recovered” instead of “Build cost”, clarifying that one stone is refunded per removed tile.
 - Compact-height tutorial layouts suppress the redundant build-cost tooltip during placement, preventing it from rising into the onboarding card.
 - The mobile footer restores the primary “Drag to explore” guidance at widths where it fits, while keeping the narrow-phone footer concise and overflow-free.
+- Touch-sized layouts now replace mouse-only footer instructions with “Pinch to zoom” and “Two-finger orbit”; the canvas label and Help copy describe both touch and pointer controls.
 - Onboarding now yields when a player starts an unrelated build from the goal card, then returns after placement is cancelled; the tutorial action itself keeps its guidance visible.
 - The palette landmark now accurately announces itself as the village building and path tools, including the removal utility.
+- The overview workforce summary now includes Carrier staffing, so storehouse and town-hall hauling capacity is visible alongside the production trades.
+- Reduced-motion preferences are observed live while the village is open, and the media-query listener is removed during disposal so accessibility changes do not require a reload or leak across remounts.
 - Upgrade controls now expose exact resource costs in their accessible names and hover guidance before spending.
-- Closing, cancelling, or relocating from an inspector now clears its world-space selection marker instead of leaving a stale ring behind.
-- Failed relocation or construction-cancel attempts now leave the inspector state intact instead of switching the UI into a placement mode that never started.
-- Relocation previews now resolve the selected building's catalog type before creating the ghost model, so the inspector's relocate action enters a valid move preview instead of throwing.
-- Relocation guidance now separates movement from construction economics: it no longer shows a misleading build cost or construction duration, and explains that workers will reroute automatically.
+- Closing or cancelling from an inspector now clears its world-space selection marker instead of leaving a stale ring behind.
 - Backup import now explains that a stale tab must reload before replacing the current village, matching the other cross-tab protection messages.
 - The overview feast control now explains when it is unavailable, and announces the active countdown to assistive technology.
 - Cottage completion now reports the number of new villagers who actually arrive, alongside the population update.
@@ -58,7 +92,7 @@
 - Saved camera position, orbit target, and zoom are restored after reload; malformed view coordinates are bounded or ignored.
 - Cross-tab storage changes now freeze a stale tab and make it read-only until reload; storage fingerprints are rechecked immediately before writes or destructive clears, preventing autosave, pagehide, placement, path painting, renaming, reset, or simulation changes from overwriting, deleting, or diverging from a newer village; the save indicator becomes an accessible one-click reload action.
 - Housing pressure is surfaced in both the population resource indicator and the live settlement status when villagers meet or exceed capacity.
-- Number keys 1–9 mirror the first nine numbered build cards for faster keyboard play; the remaining decorative actions stay directly available in the palette.
+- Number keys 1–9 mirror the first nine numbered build cards for faster keyboard play; the remaining building, path, and removal tools stay directly available in the palette.
 - Arrow keys now pan the orthographic camera without requiring a pointer drag.
 - `?` now opens the help dialog from the keyboard, with the dialog focus trap and return-focus behavior preserved.
 - The settlement name can be edited from the village menu and persists with the local save.
@@ -74,12 +108,19 @@
 - Completed scaffolding and site rings now release their owned GPU resources, including de-duplicated shared scaffold materials.
 - Escape closes the active menu or dialog before canceling a build preview, and works from the rename input without losing the selected building.
 - Building delivery totals are stored with saves and restored for the overview and building inspector after reload.
+- Restored Inn pantry stock is reconciled across all Inns so the per-Inn bread totals never exceed the village-wide food total.
+- Feast, grain-field planting, and food-input production now reconcile stored Inn bread after spending from the village-wide food pool, so pantry stock cannot become inaccessible or exceed the remaining food total.
 - Speed selection, building-grid state, and the collapsible objectives panel expose their current state through pressed/expanded accessibility attributes.
 - Persisted paths are revalidated against the village boundary, river, and building footprints before being recreated.
 - Building placement also rejects any existing path tile inside the proposed footprint, keeping roads readable and traversable.
 - Building placement also keeps active villagers clear of the proposed footprint and explains the blockage through the live placement hint.
 - Windmill input starvation announces once when food runs out and again when production can resume.
+- If an Inn meal reservation becomes unavailable before arrival, the villager is released cleanly instead of remaining flagged indoors.
 - The building inspector shows a live estimated time remaining while construction is underway.
+- Completed buildings stay fixed after construction; inspectors expose only the controls relevant to pause, upgrade, construction cancellation, or clearing a field.
+- Clearing a grain field now clears the farmer's route, wait, material, and deadlock state along with the assignment, so the worker returns to a clean idle state.
+- When a worker loses a blocked route with no detour, the fallback now clears transient route, work, wait, material, and deadlock state before returning the worker to idle.
+- New job assignment clears stale navigation and work metadata before choosing the next destination, while preserving any goods already in the worker's hands.
 - Worker and production-building inspectors now show the current production-cycle progress and estimated time to the next delivery while a villager is working.
 - Build cards expose resource readiness in their labels/titles and mark unaffordable choices without disabling placement feedback.
 - Placement validity and obstacle reasons are exposed through a polite atomic live region so keyboard and screen-reader users receive the same placement feedback as pointer users.
@@ -99,6 +140,8 @@
 - Worker and building inspectors distinguish a blocked delivery as “Waiting for route” instead of reporting a misleading active delivery.
 - The settlement status line also surfaces blocked deliveries and windmill food shortages when no transient activity message is active.
 - Pausing at 2× or 4× now preserves the last selected speed when the simulation resumes, including the Space shortcut.
+- While paused, villagers and their work effects now hold their last rendered pose, avoiding per-frame actor animation work while the camera remains usable.
+- The render loop skips inactive villager work-effect checks and buildings with no transient effects, reducing per-frame bookkeeping in quiet villages.
 - Worker routing now uses a weighted search that prefers connected paths while retaining obstacle, river, and boundary avoidance.
 - Job assignment now balances worker load first and uses the closest job point as the tie-breaker, reducing unnecessary cross-village walks.
 - If the preferred work site cannot be reached, workers now try the next valid construction or production site instead of idling while reachable work remains.
@@ -151,11 +194,11 @@ The concept and `game-desktop.png` were both opened with `view_image` in the sam
 
 | Point inspected | Result / intentional difference |
 | --- | --- |
-| Layout | Retained full-screen isometric world, top resource strip, left goals, bottom eleven-action palette, compass, and zoom controls. |
+| Layout | Retained full-screen isometric world, top resource strip, left goals, bottom full build-and-path palette, compass, and zoom controls. |
 | Palette | Parchment UI, olive grass, timber, terracotta cottages, blue roofs, and turquoise water. Fixed initially washed-out lighting using correct color conversion and adjusted ambient light. |
 | Typography | Serif brand/headings with compact sans-serif UI. Reduced concept title size to leave room for labeled live resource counts. |
 | Asset treatment | Actual editable Blender geometry and Three.js rendering, intentionally replacing generated raster art. Refined tower height, sail widths, cottage fences, and visible lumber stacks after browser review. |
-| Spacing and controls | Eleven palette actions remain accessible on the mobile viewport. Header resources wrap to a second row. Inspector hides underlying objectives on narrow screens. |
+| Spacing and controls | The full palette remains accessible through the mobile horizontal rail. Header resources wrap to a second row. Inspector hides underlying objectives on narrow screens. |
 | Copy | Intentional changes: House → Cottage, Mine → Stone mine, Road → Path, Gather 100 wood → Gather timber with a 100-unit counter. Added settlement name, concise instructions, and state feedback. No unrelated marketing sections. |
 | Motion | Villagers travel to jobs, structures grow during construction, and windmill sails rotate. Pause stops simulation. |
 | Atmosphere and feedback | Added a restrained time-of-day cycle with matching sun/moon header state, dusk lanterns, daytime birds, worker carry props, town-hall delivery bursts, readable delivery/build activity feedback, clickable villager task inspection with forgiving hit targets, resource value motion, construction/selection pulses, and reduced-motion support for decorative animation. |

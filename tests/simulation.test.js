@@ -20,9 +20,11 @@ import {
   constructionMaterialsReady,
   constructionMaterialProgress,
   GRAIN_GROW_SECONDS,
+  GRAIN_VISUAL_UPDATE_INTERVAL,
   grainGrowthProgress,
   grainGrowthStage,
   TREE_REGROW_SECONDS,
+  TREE_VISUAL_UPDATE_INTERVAL,
   TREE_LOG_AMOUNT,
   LUMBERYARD_PROCESS_SECONDS,
   HUNGRY_THRESHOLD,
@@ -53,8 +55,13 @@ import {
   grassCandidates,
   SCENERY_COUNT,
   GRASS_COUNT,
+  GRASS_UPDATE_INTERVAL,
+  ATMOSPHERE_UPDATE_INTERVAL,
+  PAUSED_RENDER_INTERVAL,
+  shouldRenderWorldFrame,
   lanternLightBudget,
   LANTERN_LIGHT_BUDGET,
+  shadowMapSizeForPreset,
   buildRoadSurfaceGeometry,
   ROAD_TILE,
   ROAD_TINTS,
@@ -77,6 +84,7 @@ function village() {
     buildings: [],
     workers: [],
     decor: [],
+    clearedScenery: new Set(),
     roads: new Set(),
     elapsed: 0,
     gathered: 0,
@@ -109,6 +117,59 @@ test("placement rejects occupied sites, river, scenery, and insufficient resourc
   assert.match(v.valid(-8, -8, "house").reason, /resources/);
   assert.match(v.valid(-8, -8, "house").reason, /Need 30 wood \+ 10 stone/);
 });
+
+test("malformed resource values cannot satisfy costs or create NaN totals", () => {
+  const v = village();
+  v.resources.wood = Number.NaN;
+  assert.equal(v.valid(-8, -8, "house").ok, false);
+  assert.match(v.valid(-8, -8, "house").reason, /30 wood/);
+  assert.equal(v.spendResource("wood", 5), 0);
+  assert.equal(v.resources.wood, 0);
+
+  v.roads = new Set();
+  v.roadTiles = new Map();
+  v.created = { road: "corrupt" };
+  v.addRoad(2, 2);
+  assert.equal(v.created.road, 1);
+
+  v.resources.wood = 12;
+  assert.equal(v.spendResource("wood", 5), 5);
+  assert.equal(v.resources.wood, 7);
+
+  v.buildings = [{ type: "townhall", progress: 1 }];
+  v.resources.wood = -4;
+  v.delivered.wood = "corrupt";
+  v.gathered = Number.NaN;
+  assert.equal(v.storeResource(v.buildings[0], "wood", 5), 5);
+  assert.equal(v.resources.wood, 5);
+  assert.equal(v.delivered.wood, 5);
+  assert.equal(v.gathered, 5);
+});
+
+test("malformed food cannot start a free feast", () => {
+  const v = village();
+  let notice = "";
+  Object.assign(v, {
+    storageConflict: false,
+    feast: null,
+    notify(message) {
+      notice = message;
+    },
+    announce() {},
+    save() {},
+    emit() {},
+  });
+
+  v.resources.food = Number.NaN;
+  assert.equal(v.startFeast(), false);
+  assert.equal(v.feast, null);
+  assert.match(notice, /30 food/);
+
+  v.resources.food = "29";
+  assert.equal(v.startFeast(), false);
+  assert.equal(v.feast, null);
+});
+
 test("starter village buildings never overlap starter paths", () => {
   assert.equal(
     STARTER_BUILDINGS.filter(([type]) => type === "house").length,
@@ -151,6 +212,7 @@ test("cleared resource nodes stop blocking placement until they are removed", ()
     x: 0,
     z: 0,
     r: 0.5,
+    sceneryKey: "0.000,0.000",
   };
   v.decor = [tree];
   assert.equal(v.valid(0, 0, "house").ok, true);
@@ -162,6 +224,26 @@ test("cleared resource nodes stop blocking placement until they are removed", ()
   tree.state = "regrowing";
   tree.m.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)));
   assert.equal(v.clearClearedDecorInFootprint(0, 0, 1.5), 1);
+  assert.equal(v.decor.length, 0);
+  assert.equal(v.clearedScenery.has("0.000,0.000"), true);
+});
+test("clearing shared scenery removes the instance without disposing its template resources", () => {
+  const v = village();
+  let disposed = 0;
+  v.disposeOwnedObject = () => {
+    disposed += 1;
+  };
+  const tree = {
+    type: "tree",
+    state: "regrowing",
+    x: 0,
+    z: 0,
+    r: 0.5,
+    m: new THREE.Object3D(),
+  };
+  v.decor = [tree];
+  assert.equal(v.clearClearedDecorInFootprint(0, 0, 1.5), 1);
+  assert.equal(disposed, 0);
   assert.equal(v.decor.length, 0);
 });
 test("mined or depleted stone nodes stop blocking roads and buildings", () => {
@@ -185,6 +267,16 @@ test("guided placement searches for the nearest clear site", () => {
   const site = v.findOpenPlacement("house", { x: 0, z: 3 });
   assert.equal(v.valid(site.x, site.z, "house").ok, true);
   assert.notDeepEqual(site, { x: 0, z: 3 });
+});
+test("road overlap checks use the numeric tile index and retain a save-set fallback", () => {
+  const v = village();
+  v.roads = new Set(["99,99"]);
+  v.roadTiles = new Map([["2,-3", { x: 2, z: -3 }]]);
+  assert.equal(v.overlapsRoad(2, -3, 1), true);
+  assert.equal(v.overlapsRoad(10, 10, 1), false);
+
+  v.roadTiles.clear();
+  assert.equal(v.overlapsRoad(99, 99, 1), true);
 });
 test("successful building placement clears the active placement tool", () => {
   const selections = [];
@@ -309,6 +401,16 @@ test("saved building footprints reject overlap, river, and invalid types", () =>
     false,
   );
 });
+
+test("watchtowers expand the shared build boundary", () => {
+  const v = village();
+  assert.equal(v.buildBoundary(), 18);
+  v.buildings.push({ type: "watchtower", progress: 1 });
+  assert.equal(v.buildBoundary(), 21);
+  v.buildings.push({ type: "watchtower", progress: 0.5 });
+  assert.equal(v.buildBoundary(), 21);
+});
+
 test("path painting lays a segment and stops before an occupied tile", () => {
   const v = village();
   v.addRoad = (x, z) => v.roads.add(`${x},${z}`);
@@ -372,6 +474,22 @@ test("villagers keep full pace on a stone path and cross open ground at 0.7x", (
     Number((0.7 / 1.5).toFixed(4)),
   );
 });
+test("worker road-speed caching follows path edits and tile changes", () => {
+  const v = village();
+  v.baseRoads = new Set();
+  v.emit = () => {};
+  const worker = { m: new THREE.Object3D() };
+  worker.m.position.set(0, 0, 0);
+  assert.equal(v.workerOnRoad(worker), false);
+  v.addRoad(0, 0);
+  assert.equal(v.workerOnRoad(worker), true);
+  worker.m.position.x = 1;
+  assert.equal(v.workerOnRoad(worker), false);
+  v.addRoad(1, 0);
+  assert.equal(v.workerOnRoad(worker), true);
+  assert.equal(v.removeRoad(1, 0), true);
+  assert.equal(v.workerOnRoad(worker), false);
+});
 test("routing costs a tile by travel time, so open ground costs more than paving", () => {
   assert.ok(travelStepCost(false) > travelStepCost(true));
   // Cost is the inverse of speed, so the cost ratio mirrors the speed ratio.
@@ -396,6 +514,77 @@ test("worker routing prefers a longer connected road", () => {
   w.m.position.set(0, 0, 0);
   assert.equal(v.route(w, 4, 0), true);
   assert.ok(w.path.some((point) => point.z === -2));
+});
+test("worker routing caches static and congestion checks per tile", () => {
+  const v = village();
+  const worker = { m: new THREE.Object3D(), path: [] };
+  worker.m.position.set(0, 0, 0);
+  const blockedTiles = new Set();
+  const congestionTiles = new Set();
+  let blockedCalls = 0;
+  let congestionCalls = 0;
+  v.routeBlocked = (x, z) => {
+    blockedCalls++;
+    blockedTiles.add(`${x},${z}`);
+    return false;
+  };
+  v.workerCongestion = (x, z) => {
+    congestionCalls++;
+    congestionTiles.add(`${x},${z}`);
+    return 0;
+  };
+  assert.equal(v.route(worker, 6, 0), true);
+  assert.equal(blockedCalls, blockedTiles.size);
+  assert.equal(congestionCalls, congestionTiles.size);
+});
+test("worker movement reuses its temporary vectors across frames", () => {
+  const v = village();
+  v.routeTargetBlocked = () => false;
+  v.workerMoveBlocker = () => null;
+  const worker = {
+    m: new THREE.Object3D(),
+    path: [new THREE.Vector3(2, 0, 0)],
+    phase: "travel",
+    deadlockYieldTime: 0,
+  };
+  v.workers = [worker];
+  v.moveWorker(worker, 0.05);
+  const vectors = worker.motionVectors;
+  assert.ok(vectors);
+  worker.path = [new THREE.Vector3(2, 0, 0)];
+  v.moveWorker(worker, 0.05);
+  assert.equal(worker.motionVectors, vectors);
+});
+test("deadlock escape reuses its candidate vectors without sharing targets", () => {
+  const v = village();
+  const worker = { m: new THREE.Object3D(), movementPriority: 0 };
+  v.workers = [worker];
+  v.workerCanStepTo = () => true;
+  const center = new THREE.Vector3();
+  const first = v.deadlockEscapeTarget(worker, center);
+  const vectors = worker.deadlockMotionVectors;
+  const second = v.deadlockEscapeTarget(worker, center);
+
+  assert.ok(vectors);
+  assert.equal(worker.deadlockMotionVectors, vectors);
+  assert.notEqual(first, second);
+  assert.deepEqual(first.toArray(), second.toArray());
+});
+test("expired avoidance resumes the worker's original path direction", () => {
+  const v = village();
+  v.routeTargetBlocked = () => false;
+  v.workerMoveBlocker = () => null;
+  const worker = {
+    m: new THREE.Object3D(),
+    path: [new THREE.Vector3(2, 0, 0)],
+    phase: "travel",
+    deadlockYieldTime: 0,
+    avoidanceTarget: new THREE.Vector3(0.01, 0, 0),
+    avoidanceTime: 0,
+  };
+  v.workers = [worker];
+  v.moveWorker(worker, 0.05);
+  assert.ok(worker.m.position.x > 0.05);
 });
 test("worker assignment prefers the closest equally staffed work site", () => {
   const v = village();
@@ -429,6 +618,54 @@ test("worker assignment prefers the closest equally staffed work site", () => {
   v.simulate(0.1);
   assert.equal(w.building, near);
   assert.equal(w.phase, "travel");
+});
+test("job point ranking keeps the first lowest-cost approach", () => {
+  const v = village();
+  const worker = { m: new THREE.Object3D() };
+  worker.m.position.set(0, 0, 0);
+  const building = { type: "well", x: 0, z: 0 };
+  v.routeBlocked = () => false;
+  v.workerPositionBlocked = () => false;
+  v.workerTargetBlocked = () => false;
+  v.workerCongestion = (x, z) => (x === 2 && z === 0 ? 0 : 10);
+  assert.deepEqual(v.jobPoint(building, worker), [2, 0]);
+});
+test("worker assignment reuses each site's ranked distance", () => {
+  const v = village();
+  const near = {
+    type: "lumberyard",
+    progress: 1,
+    x: 2,
+    z: 0,
+    cycles: 0,
+    m: new THREE.Object3D(),
+  };
+  const far = {
+    type: "mine",
+    progress: 1,
+    x: 10,
+    z: 0,
+    cycles: 0,
+    m: new THREE.Object3D(),
+  };
+  const worker = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+  };
+  v.buildings = [far, near];
+  v.workers = [worker];
+  v.route = () => true;
+  let jobPointCalls = 0;
+  v.jobPoint = (building) => {
+    jobPointCalls++;
+    return [building.x, building.z];
+  };
+  v.simulate(0.1);
+  assert.equal(worker.building, near);
+  assert.equal(jobPointCalls, 3, "two ranking distances plus the selected route");
 });
 test("production buildings enforce worker roles and employment caps", () => {
   assert.equal(workerTypeForBuilding("lumberyard"), WORKER_TYPES.WOODCUTTER);
@@ -550,12 +787,75 @@ test("lumberyard workers chop trees, saw planks, and wait for regrowth", () => {
   assert.equal(treeRegrowthProgress(tree.regrowAt, v.elapsed), 1);
 });
 
+test("tree selection skips unavailable nodes without reordering the forest", () => {
+  const v = village();
+  const lumberyard = { type: "lumberyard", x: 0, z: 0 };
+  const worker = { m: new THREE.Object3D() };
+  worker.m.position.set(0, 0, 0);
+  const claimed = {
+    type: "tree",
+    state: "available",
+    claimedBy: "other-worker",
+    x: 1,
+    z: 0,
+  };
+  const regrowing = {
+    type: "tree",
+    state: "regrowing",
+    claimedBy: null,
+    x: 0,
+    z: 1,
+  };
+  const nearest = {
+    type: "tree",
+    state: "available",
+    claimedBy: null,
+    x: 0,
+    z: 1.5,
+  };
+  const tieByYard = {
+    type: "tree",
+    state: "available",
+    claimedBy: null,
+    x: 2,
+    z: 0,
+  };
+  v.decor = [claimed, regrowing, nearest, tieByYard];
+  assert.equal(v.availableTreeFor(lumberyard, worker), nearest);
+  nearest.claimedBy = "worker-lumber";
+  assert.equal(v.availableTreeFor(lumberyard, worker), tieByYard);
+});
+
 test("grain fields grow through readable stages and cap at ripe", () => {
   assert.equal(grainGrowthStage(10, 10), "sown");
   assert.equal(grainGrowthStage(10, 10 + GRAIN_GROW_SECONDS * 0.3), "sprout");
   assert.equal(grainGrowthStage(10, 10 + GRAIN_GROW_SECONDS * 0.7), "growing");
   assert.equal(grainGrowthStage(10, 10 + GRAIN_GROW_SECONDS), "ripe");
   assert.equal(grainGrowthProgress(10, 1000), 1);
+});
+
+test("grain visual stage checks are throttled between updates", () => {
+  const v = village();
+  const field = { type: "grainfield", plantedAt: 0, fieldStage: "sown" };
+  let checks = 0;
+  v.buildings = [field];
+  v.updateGrainFieldVisual = (candidate) => {
+    checks++;
+    candidate.fieldStage = grainGrowthStage(candidate.plantedAt, v.elapsed);
+  };
+
+  assert.equal(v.updateGrainFields(), false);
+  assert.equal(checks, 1);
+  v.elapsed = GRAIN_VISUAL_UPDATE_INTERVAL * 0.5;
+  assert.equal(v.updateGrainFields(), false);
+  assert.equal(checks, 1);
+  v.elapsed = GRAIN_VISUAL_UPDATE_INTERVAL;
+  assert.equal(v.updateGrainFields(), false);
+  assert.equal(checks, 2);
+  v.elapsed = GRAIN_GROW_SECONDS * 0.3;
+  assert.equal(v.updateGrainFields(), true);
+  assert.equal(field.fieldStage, "sprout");
+  assert.equal(checks, 3);
 });
 
 test("tree regrowth uses stump, sapling, and full stages", () => {
@@ -588,8 +888,12 @@ test("tree visuals hide the canopy at the stump and restore it while growing", (
   assert.equal(canopy.visible, false);
   assert.equal(tree.m.scale.y, 0.24);
 
+  v.elapsed = TREE_VISUAL_UPDATE_INTERVAL * 0.5;
+  assert.equal(v.updateTreeVisual(tree), false, "unchanged tree visuals are throttled");
+  assert.equal(tree.m.scale.y, 0.24);
+
   v.elapsed = TREE_REGROW_SECONDS * 0.3;
-  v.updateTreeVisual(tree);
+  assert.equal(v.updateTreeVisual(tree), true);
   assert.equal(tree.m.userData.growthStage, "sapling");
   assert.equal(canopy.visible, true);
   assert.ok(tree.m.scale.y > 0.24 && tree.m.scale.y < 1);
@@ -599,6 +903,92 @@ test("tree visuals hide the canopy at the stump and restore it while growing", (
   assert.equal(tree.m.userData.growthStage, "full");
   assert.equal(canopy.visible, true);
   assert.equal(tree.m.scale.y, 1);
+});
+
+test("building pick roots follow grain-field model swaps", () => {
+  const v = village();
+  v.scene = { remove() {} };
+  v.buildingPickTargets = [];
+  v.pickTargets = [];
+  v.model = () => new THREE.Group();
+  const field = {
+    type: "grainfield",
+    x: 2,
+    z: 3,
+    plantedAt: 0,
+    rotation: 0,
+  };
+
+  v.updateGrainFieldVisual(field, true);
+  const first = field.m;
+  assert.deepEqual(v.buildingPickTargets, [first]);
+  assert.deepEqual(v.pickTargets, [first]);
+
+  v.elapsed = GRAIN_GROW_SECONDS;
+  v.updateGrainFieldVisual(field);
+  assert.notEqual(field.m, first);
+  assert.deepEqual(v.buildingPickTargets, [field.m]);
+  assert.deepEqual(v.pickTargets, [field.m]);
+});
+
+test("windmills do not show bakery work effects", () => {
+  const v = village();
+  v.scene = { add() {}, remove() {} };
+  const worker = {
+    insideBuilding: true,
+    building: { type: "windmill" },
+    phase: "work",
+    workEffect: null,
+  };
+
+  v.updateWorkerWorkEffect(worker, 1, 1);
+  assert.equal(worker.workEffect, null);
+});
+
+test("leaving an open worksite hides its transient work effect", () => {
+  const v = village();
+  const worker = {
+    m: new THREE.Object3D(),
+    building: { type: "bakery" },
+    workEffect: { visible: true },
+  };
+  v.setWorkerInside(worker, false);
+  assert.equal(worker.insideBuilding, false);
+  assert.equal(worker.workEffect.visible, false);
+});
+
+test("reduced motion leaves work effects in a static pose", () => {
+  const v = village();
+  const worker = {
+    building: { type: "bakery" },
+    insideBuilding: true,
+    phase: "work",
+    workEffect: {
+      visible: false,
+      position: new THREE.Vector3(),
+      userData: {
+        type: "bakery",
+        action: { rotation: { z: 1 } },
+        flour: { position: { y: 2 }, rotation: { y: 3 } },
+      },
+    },
+  };
+  v.updateWorkerWorkEffect(worker, 10, 0);
+  assert.equal(worker.workEffect.visible, true);
+  assert.equal(worker.workEffect.userData.action.rotation.z, 0);
+  assert.equal(worker.workEffect.userData.flour.position.y, 0);
+});
+
+test("windmills cache their sail pivot when added", () => {
+  const v = village();
+  const model = new THREE.Group();
+  const sails = new THREE.Group();
+  sails.name = "Sails";
+  model.add(sails);
+  v.model = () => model;
+
+  const windmill = v.addBuilding("windmill", 4, 5);
+  assert.equal(windmill.sails, sails);
 });
 
 test("grain plots must connect to a completed farmhouse and can extend as a chain", () => {
@@ -611,6 +1001,18 @@ test("grain plots must connect to a completed farmhouse and can extend as a chai
   v.buildings[0].progress = 0.5;
   v.buildings.splice(1);
   assert.equal(v.valid(9, 6, "grainfield").ok, false);
+});
+
+test("farm field lookup follows only four-way connected plots", () => {
+  const v = village();
+  const farm = { type: "farm", progress: 1, x: 0, z: 0 };
+  const first = { type: "grainfield", progress: 1, x: 3, z: 0 };
+  const second = { type: "grainfield", progress: 1, x: 4, z: 0 };
+  const diagonal = { type: "grainfield", progress: 1, x: 4, z: 1 };
+  v.buildings = [farm, first, second, diagonal];
+  assert.deepEqual(v.grainFieldsForFarm(farm), [first, second, diagonal]);
+  v.buildings = [farm, first, diagonal];
+  assert.deepEqual(v.grainFieldsForFarm(farm), [first]);
 });
 
 test("a farmer harvests only ripe connected grain and stocks it at the farmhouse", () => {
@@ -673,6 +1075,47 @@ test("a farmer harvests only ripe connected grain and stocks it at the farmhouse
   assert.equal(farm.stock, 8);
   assert.equal(v.resources.wheat, 0);
   assert.equal(worker.carry, null);
+});
+
+test("a farmer keeps a partial harvest until the farmhouse has room", () => {
+  const v = village();
+  const farm = {
+    type: "farm",
+    progress: 1,
+    x: 6,
+    z: 6,
+    cycles: 0,
+    stock: outputCapForBuilding("farm") - 2,
+  };
+  const worker = {
+    id: "worker-farmer",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "stock_delivery",
+    timer: 0,
+    workDuration: 0,
+    building: farm,
+    carry: { resource: "wheat", amount: 8, toStock: true },
+    waitingForStock: false,
+  };
+  v.buildings = [farm];
+  v.workers = [worker];
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+
+  v.simulate(0.1);
+  assert.equal(farm.stock, outputCapForBuilding("farm"));
+  assert.deepEqual(worker.carry, { resource: "wheat", amount: 6, toStock: true });
+  assert.equal(worker.phase, "stock_delivery");
+  assert.equal(worker.waitingForStock, true);
+
+  farm.stock -= 8;
+  worker.deliveryRetry = 0;
+  v.simulate(0.1);
+  assert.equal(farm.stock, 14);
+  assert.equal(worker.carry, null);
+  assert.equal(worker.phase, "idle");
+  assert.equal(worker.waitingForStock, false);
 });
 
 test("a baker enters the bakery before starting a production cycle", () => {
@@ -843,7 +1286,7 @@ test("a graduate waits at the School until a bed is free", () => {
   const buildings = [school, cottage];
   const v = trainingVillage(buildings, [{}, {}, {}, {}, {}]);
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.BUILDER), true);
-  // A cottage is relocated mid-course and the village loses its spare bed.
+  // A cottage loses its completed housing mid-course.
   cottage.progress = 0.3;
   v.updateTraining(TRAINING_SECONDS + 0.1);
   assert.equal(v.workers.length, 5);
@@ -905,6 +1348,9 @@ test("a trained villager keeps their trade between jobs", () => {
     building: null,
     workerType: WORKER_TYPES.BUILDER,
     trainedType: WORKER_TYPES.BAKER,
+    waitingForInput: true,
+    waitingForStock: true,
+    deliveryRetry: 1.5,
   };
   v.buildings = [];
   v.workers = [worker];
@@ -914,6 +1360,9 @@ test("a trained villager keeps their trade between jobs", () => {
   // assignment pass gives them first claim on the bakery.
   assert.equal(worker.phase, "idle");
   assert.equal(worker.workerType, WORKER_TYPES.BAKER);
+  assert.equal(worker.waitingForInput, false);
+  assert.equal(worker.waitingForStock, false);
+  assert.equal(worker.deliveryRetry, 0);
   const untrained = { ...worker, trainedType: null, m: new THREE.Object3D(), path: [] };
   v.workers = [untrained];
   v.assign(untrained);
@@ -931,6 +1380,54 @@ test("only a completed, working School trains anyone", () => {
   site.paused = false;
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), true);
   assert.equal(v.trainWorker("bakery-1", WORKER_TYPES.WOODCUTTER), false);
+});
+
+test("worker rigs remove hidden source meshes after extracting their palette", () => {
+  const v = Object.create(Village.prototype);
+  const source = new THREE.Group();
+  const sourceMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 0.2, 0.2),
+    new THREE.MeshStandardMaterial({ color: "#4167a2" }),
+  );
+  sourceMesh.name = "head";
+  source.add(sourceMesh);
+  const rig = v.createWorkerRig(source);
+  assert.equal(source.getObjectByName("head"), undefined);
+  assert.deepEqual(source.children, [rig.rig]);
+  assert.equal(sourceMesh.parent, null);
+});
+
+test("worker contact shadows share one instanced field and hide indoors", () => {
+  const v = Object.create(Village.prototype);
+  v.scene = { add() {} };
+  v.workerShadowField = v.createWorkerShadowField();
+  assert.equal(v.workerShadowField.mesh.count, 0);
+  assert.equal(v.workerShadowField.mesh.frustumCulled, false);
+  v.workerShadowField.mesh.count = 1;
+  const worker = {
+    shadowIndex: 0,
+    shadowVisible: true,
+    m: new THREE.Object3D(),
+  };
+  worker.m.position.set(3, 0, -4);
+  assert.equal(v.updateWorkerShadow(worker, 0.9), true);
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const matrix = new THREE.Matrix4();
+  v.workerShadowField.mesh.getMatrixAt(0, matrix);
+  matrix.decompose(position, new THREE.Quaternion(), scale);
+  assert.ok(Math.abs(position.x - 3) < 1e-6);
+  assert.ok(Math.abs(position.y - 0.006) < 1e-6);
+  assert.ok(Math.abs(position.z + 4) < 1e-6);
+  assert.ok(Math.abs(scale.x - 0.9) < 1e-6);
+  assert.ok(Math.abs(scale.y - 0.522) < 1e-6);
+  assert.ok(Math.abs(scale.z - 1) < 1e-6);
+  worker.shadowVisible = false;
+  v.updateWorkerShadow(worker);
+  v.workerShadowField.mesh.getMatrixAt(0, matrix);
+  matrix.decompose(position, new THREE.Quaternion(), scale);
+  assert.equal(scale.x, 0);
+  assert.equal(scale.y, 0);
 });
 
 test("the woodcutter wears the straw hat, scarf and satchel and shoulders the axe", () => {
@@ -1119,6 +1616,97 @@ test("workers reroute when a new building blocks their next step", () => {
   assert.equal(w.path[0].z, 1);
   assert.equal(w.phase, "travel");
 });
+
+test("workers reset transient state when a blocked route has no detour", () => {
+  const v = village();
+  const site = { type: "farm", progress: 1, x: 6, z: 0 };
+  const w = {
+    m: new THREE.Object3D(),
+    path: [new THREE.Vector3(1, 0, 0)],
+    phase: "travel",
+    timer: 0,
+    workDuration: 4,
+    building: site,
+    routeTarget: { x: 6, z: 0 },
+    waitingForInput: true,
+    waitingForStock: true,
+    waitingForInn: true,
+    deliveryRetry: 1.5,
+    materialResource: "wood",
+    waitingForSpace: true,
+    waitingFor: "worker-2",
+    spaceWait: 2,
+    forcedYield: "worker-2",
+    avoidanceTarget: new THREE.Vector3(2, 0, 2),
+    avoidanceTime: 1,
+    deadlockLeaderTime: 1,
+    deadlockYieldTime: 0,
+    deadlockYieldTo: "worker-2",
+  };
+  Object.assign(v, {
+    buildings: [site],
+    workers: [w],
+    routeTargetBlocked() { return true; },
+    route() { return false; },
+    setWorkerInside() {},
+  });
+
+  assert.equal(v.moveWorker(w, 0.1), false);
+  assert.equal(w.phase, "idle");
+  assert.equal(w.building, null);
+  assert.equal(w.workDuration, 0);
+  assert.equal(w.routeTarget, null);
+  assert.equal(w.waitingForInput, false);
+  assert.equal(w.waitingForStock, false);
+  assert.equal(w.waitingForInn, false);
+  assert.equal(w.deliveryRetry, 0);
+  assert.equal(w.materialResource, null);
+  assert.equal(w.waitingForSpace, false);
+  assert.equal(w.waitingFor, null);
+  assert.equal(w.spaceWait, 0);
+  assert.equal(w.forcedYield, null);
+  assert.equal(w.avoidanceTarget, null);
+  assert.equal(w.avoidanceTime, 0);
+  assert.equal(w.deadlockLeaderTime, 0);
+  assert.equal(w.deadlockYieldTime, 0);
+  assert.equal(w.deadlockYieldTo, null);
+});
+
+test("worker assignment clears stale navigation and job metadata", () => {
+  const v = village();
+  const w = {
+    workerType: "builder",
+    trainedType: "builder",
+    phase: "idle",
+    timer: 0,
+    path: [new THREE.Vector3(1, 0, 1)],
+    routeTarget: { x: 4, z: 4 },
+    repathCooldown: 0.75,
+    workDuration: 8,
+    materialResource: "stone",
+    announcedFullStores: true,
+    workInside: false,
+    hunger: 0,
+    m: new THREE.Object3D(),
+  };
+  Object.assign(v, {
+    workers: [w],
+    buildings: [],
+    setWorkerInside() {},
+    setWorkerType() {},
+    tryAssignHaul() { return false; },
+  });
+
+  v.assign(w);
+  assert.deepEqual(w.path, []);
+  assert.equal(w.routeTarget, null);
+  assert.equal(w.repathCooldown, 0);
+  assert.equal(w.workDuration, 0);
+  assert.equal(w.materialResource, null);
+  assert.equal(w.announcedFullStores, false);
+  assert.equal(w.phase, "idle");
+});
+
 test("workers pass a head-on collision without overlapping or deadlocking", () => {
   const v = village();
   const first = {
@@ -1391,6 +1979,33 @@ test("construction assignments collect each material from its producer", () => {
   assert.equal(w.materialResource, "wood");
   assert.deepEqual(destination, v.jobPoint(lumberyard, w));
 });
+test("construction sites stay single-worker assignments", () => {
+  const v = village();
+  const site = {
+    type: "house",
+    progress: 0,
+    materials: { wood: 0, stone: 0 },
+    x: 8,
+    z: 8,
+  };
+  const assigned = {
+    m: new THREE.Object3D(),
+    building: site,
+    phase: "material_delivery",
+  };
+  const waiting = {
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+  };
+  v.buildings = [site];
+  v.workers = [assigned, waiting];
+  v.assign(waiting);
+  assert.equal(waiting.building, null);
+  assert.equal(waiting.phase, "idle");
+});
 
 test("construction material state is bounded and reports delivery progress", () => {
   const materials = normalizedConstructionMaterials(
@@ -1583,6 +2198,52 @@ test("a carrier collects a full building and credits the pool on arrival", () =>
   assert.equal(carrier.phase, "idle");
 });
 
+test("carrier source ranking reuses each source's stored amount and distance", () => {
+  const v = village();
+  const worker = { m: new THREE.Object3D(), phase: "idle" };
+  worker.m.position.set(0, 0, 0);
+  const hall = {
+    type: "townhall",
+    progress: 1,
+    x: 8,
+    z: 0,
+    m: new THREE.Object3D(),
+  };
+  const bakery = {
+    type: "bakery",
+    progress: 1,
+    x: 2,
+    z: 0,
+    stock: 5,
+    m: new THREE.Object3D(),
+  };
+  const vineyard = {
+    type: "vineyard",
+    progress: 1,
+    x: 4,
+    z: 0,
+    stock: 3,
+    m: new THREE.Object3D(),
+  };
+  v.buildings = [hall, bakery, vineyard];
+  v.workers = [worker];
+  v.haulDestination = () => hall;
+  v.route = () => true;
+  v.jobPoint = (building) => [building.x, building.z];
+  v.setWorkerType = () => {};
+  const originalStoredAt = v.storedAt;
+  const reads = new Map();
+  v.storedAt = (building) => {
+    reads.set(building, (reads.get(building) || 0) + 1);
+    return originalStoredAt.call(v, building);
+  };
+
+  assert.equal(v.tryAssignHaul(worker), true);
+  assert.equal(worker.haulSource, bakery);
+  assert.equal(reads.get(bakery), 1);
+  assert.equal(reads.get(vineyard), 1);
+});
+
 test("bread fills the canteen first and only then spills into a store", () => {
   const v = village();
   const inn = {
@@ -1625,6 +2286,30 @@ test("bread fills the canteen first and only then spills into a store", () => {
   assert.equal(v.haulDestination(worker, "food"), hall);
   assert.equal(v.storeResource(hall, "food", 3), 3);
   assert.equal(v.resources.food, 5);
+});
+
+test("carrier destination skips a paused Inn without losing the store fallback", () => {
+  const v = village();
+  const inn = {
+    type: "inn",
+    progress: 1,
+    paused: true,
+    x: 0,
+    z: 0,
+    breadStock: 0,
+  };
+  const hall = {
+    type: "townhall",
+    progress: 1,
+    x: 6,
+    z: 0,
+  };
+  const worker = { m: new THREE.Object3D() };
+  worker.m.position.set(0, 0, 0);
+  v.buildings = [inn, hall];
+  v.resources.food = 0;
+  assert.equal(v.haulDestination(worker, "food"), hall);
+  assert.equal(v.haulDestination(worker, "stone"), hall);
 });
 
 test("a blocked carrier waits instead of crediting resources remotely", () => {
@@ -1700,6 +2385,20 @@ test("a full village hands the load back rather than destroying it", () => {
     deliveryRetry: 0,
     carry: { resource: "stone", amount: 6, haul: true },
     workerType: WORKER_TYPES.CARRIER,
+    waitingForSpace: true,
+    waitingFor: "worker-2",
+    spaceWait: 2,
+    forcedYield: "worker-2",
+    avoidanceTarget: new THREE.Vector3(2, 0, 2),
+    avoidanceTime: 1,
+    deadlockLeaderTime: 1,
+    deadlockYieldTime: 1,
+    deadlockYieldTo: "worker-2",
+    waitingForInput: true,
+    waitingForStock: true,
+    waitingForInn: true,
+    mealSeat: 1,
+    routeTarget: { x: 4, z: 0 },
   };
   v.workers = [carrier];
   v.route = () => true;
@@ -1711,6 +2410,21 @@ test("a full village hands the load back rather than destroying it", () => {
   assert.equal(v.resources.stone, TOWNHALL_STORAGE);
   assert.equal(mine.stock, 6);
   assert.equal(carrier.carry, null);
+  assert.equal(carrier.phase, "idle");
+  assert.equal(carrier.routeTarget, null);
+  assert.equal(carrier.waitingForSpace, false);
+  assert.equal(carrier.waitingFor, null);
+  assert.equal(carrier.spaceWait, 0);
+  assert.equal(carrier.forcedYield, null);
+  assert.equal(carrier.avoidanceTarget, null);
+  assert.equal(carrier.avoidanceTime, 0);
+  assert.equal(carrier.deadlockLeaderTime, 0);
+  assert.equal(carrier.deadlockYieldTime, 0);
+  assert.equal(carrier.deadlockYieldTo, null);
+  assert.equal(carrier.waitingForInput, false);
+  assert.equal(carrier.waitingForStock, false);
+  assert.equal(carrier.waitingForInn, false);
+  assert.equal(carrier.mealSeat, null);
 });
 
 test("a Storehouse raises the ceiling every resource is measured against", () => {
@@ -1728,6 +2442,216 @@ test("a Storehouse raises the ceiling every resource is measured against", () =>
   store.progress = 0.5;
   assert.equal(v.storageCapacity(), TOWNHALL_STORAGE);
 });
+test("storage capacity calculates Inn pantry space only for food", () => {
+  const v = village();
+  const hall = { type: "townhall", progress: 1, x: 0, z: 0 };
+  const inn = { type: "inn", progress: 1, paused: false, x: 6, z: 0 };
+  v.buildings = [hall, inn];
+  const capacities = v.storageCapacities();
+  assert.equal(capacities.wood, TOWNHALL_STORAGE);
+  assert.equal(capacities.wheat, TOWNHALL_STORAGE);
+  assert.equal(
+    capacities.food,
+    TOWNHALL_STORAGE + CATALOG.inn.breadCap,
+  );
+  inn.paused = true;
+  assert.equal(v.storageCapacities().food, TOWNHALL_STORAGE);
+});
+
+test("storage capacity counters match the completed building set", () => {
+  const v = village();
+  v.buildings = [
+    { type: "townhall", progress: 1 },
+    { type: "storehouse", progress: 1 },
+    { type: "inn", progress: 1, paused: false },
+    { type: "inn", progress: 1, paused: true },
+    { type: "storehouse", progress: 0 },
+  ];
+  assert.equal(
+    v.storageCapacity(),
+    TOWNHALL_STORAGE + CATALOG.storehouse.storage,
+  );
+  assert.equal(v.completedInnCount(), 1);
+  assert.equal(
+    v.capacityFor("food"),
+    TOWNHALL_STORAGE + CATALOG.storehouse.storage + CATALOG.inn.breadCap,
+  );
+});
+
+test("building snapshots reuse storage capacities across store cards", () => {
+  const v = village();
+  let state;
+  const townhall = { id: "hall-1", type: "townhall", progress: 1, cycles: 0 };
+  const storehouse = { id: "store-1", type: "storehouse", progress: 1, cycles: 0 };
+  v.buildings = [townhall, storehouse];
+  v.onUpdate = (next) => (state = next);
+  let capacityReads = 0;
+  let capacitiesReads = 0;
+  v.storageCapacity = () => {
+    capacityReads += 1;
+    return 180;
+  };
+  v.storageCapacities = () => {
+    capacitiesReads += 1;
+    return { wood: 180, stone: 180, food: 240, wheat: 180, wine: 180 };
+  };
+
+  v.emit();
+  assert.equal(state.buildings.length, 2);
+  assert.equal(capacityReads, 0);
+  assert.equal(capacitiesReads, 1);
+  assert.equal(state.buildings[0].villageStorage, 180);
+  assert.equal(state.buildings[1].storedCaps.food, 240);
+});
+test("atmosphere lighting updates are cadence-limited", () => {
+  let lightWrites = 0;
+  const trackedColor = () => ({
+    copy() {
+      lightWrites++;
+      return this;
+    },
+    lerp() {
+      lightWrites++;
+      return this;
+    },
+  });
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    elapsed: 0,
+    lastAtmosphereUpdate: -Infinity,
+    sun: {
+      position: { set() { lightWrites++; } },
+      color: trackedColor(),
+      intensity: 0,
+    },
+    hemi: { intensity: 0 },
+    scene: {
+      background: trackedColor(),
+      fog: { color: trackedColor() },
+    },
+    atmosphere: {
+      lastElapsed: -Infinity,
+      day: new THREE.Color("#a7b673"),
+      dusk: new THREE.Color("#c98d6a"),
+      night: new THREE.Color("#516878"),
+      fog: new THREE.Color(),
+      sky: new THREE.Color(),
+      sunDay: new THREE.Color("#fff0cd"),
+      sunWarm: new THREE.Color("#ffc083"),
+      sun: new THREE.Color(),
+    },
+  });
+
+  v.updateAtmosphere();
+  const firstUpdateWrites = lightWrites;
+  assert.ok(firstUpdateWrites > 0);
+
+  v.elapsed = ATMOSPHERE_UPDATE_INTERVAL / 2;
+  v.updateAtmosphere();
+  assert.equal(lightWrites, firstUpdateWrites);
+
+  v.elapsed = ATMOSPHERE_UPDATE_INTERVAL + Number.EPSILON;
+  v.updateAtmosphere();
+  assert.ok(lightWrites > firstUpdateWrites);
+});
+test("paused world frames are cadence-limited without slowing active simulation", () => {
+  assert.equal(shouldRenderWorldFrame(1, 0, 0), true);
+  assert.equal(shouldRenderWorldFrame(0, 0, 0), false);
+  assert.equal(
+    shouldRenderWorldFrame(0, PAUSED_RENDER_INTERVAL / 2, 0),
+    false,
+  );
+  assert.equal(
+    shouldRenderWorldFrame(0, PAUSED_RENDER_INTERVAL, 0),
+    true,
+  );
+});
+test("pointer movement keeps only the latest event per frame", () => {
+  const previousRequest = globalThis.requestAnimationFrame;
+  const previousCancel = globalThis.cancelAnimationFrame;
+  let callback = null;
+  let nextFrame = 0;
+  const cancelled = [];
+  globalThis.requestAnimationFrame = (next) => {
+    callback = next;
+    return ++nextFrame;
+  };
+  globalThis.cancelAnimationFrame = (frame) => cancelled.push(frame);
+  try {
+    const v = Object.create(Village.prototype);
+    const handled = [];
+    Object.assign(v, { dead: false, pointerFrame: null, pendingPointerEvent: null });
+    v.pointerMove = (event) => handled.push(event);
+
+    v.schedulePointerMove("first");
+    v.schedulePointerMove("latest");
+    assert.deepEqual(handled, []);
+    assert.equal(v.pendingPointerEvent, "latest");
+    callback();
+    assert.deepEqual(handled, ["latest"]);
+
+    v.schedulePointerMove("cancelled");
+    v.cancelPointerMove();
+    assert.deepEqual(cancelled, [2]);
+    assert.equal(v.pendingPointerEvent, null);
+  } finally {
+    if (previousRequest === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousRequest;
+    if (previousCancel === undefined) delete globalThis.cancelAnimationFrame;
+    else globalThis.cancelAnimationFrame = previousCancel;
+  }
+});
+
+test("placement hover only repaints the preview when validity changes", () => {
+  const colorWrites = [];
+  let traversals = 0;
+  let validity = { ok: true, reason: "clear" };
+  const color = { set(value) { colorWrites.push(value); } };
+  const mesh = { isMesh: true, material: { color } };
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    selected: "house",
+    rotation: 0,
+    ghost: {
+      visible: false,
+      position: { set() {} },
+      rotation: {},
+      traverse(callback) {
+        traversals++;
+        callback(mesh);
+      },
+    },
+    footprint: { visible: false, position: { set() {} }, material: { color } },
+    previewOutline: {
+      visible: false,
+      position: { set() {} },
+      rotation: {},
+      material: { color },
+    },
+    valid() {
+      return validity;
+    },
+    emit() {},
+  });
+
+  v.updatePlacement(0, 0);
+  v.updatePlacement(1, 0);
+  assert.equal(traversals, 1);
+  assert.equal(
+    colorWrites.length,
+    3,
+    "initial placement paints the footprint, outline, and ghost",
+  );
+
+  validity = { ok: false, reason: "occupied" };
+  v.updatePlacement(2, 0);
+  assert.equal(traversals, 2);
+  assert.equal(
+    colorWrites.length,
+    6,
+    "a validity flip repaints all preview surfaces",
+  );
+});
 
 test("restoring a village trims resources to the storage it actually has", () => {
   const v = village();
@@ -1743,6 +2667,49 @@ test("restoring a village trims resources to the storage it actually has", () =>
   assert.equal(spilled, 60);
   assert.equal(v.resources.wood, TOWNHALL_STORAGE);
   assert.equal(v.resources.stone, 10);
+});
+
+test("restoring a village keeps Inn bread within the global food total", () => {
+  const v = village();
+  v.buildings = [
+    { type: "townhall", progress: 1, x: 0, z: 0 },
+    { type: "inn", progress: 1, x: 4, z: 0, breadStock: 9 },
+    { type: "inn", progress: 1, x: 8, z: 0, breadStock: 7 },
+  ];
+  v.resources.food = 5;
+
+  v.clampResourcesToStorage();
+
+  assert.equal(v.buildings[1].breadStock, 5);
+  assert.equal(v.buildings[2].breadStock, 0);
+  assert.equal(
+    v.buildings
+      .filter((building) => building.type === "inn")
+      .reduce((total, inn) => total + inn.breadStock, 0),
+    v.resources.food,
+  );
+});
+
+test("sparse restore adds starter storage before clamping resources", () => {
+  const v = village();
+  v.buildings = [];
+  v.addBuilding = (type, x, z) =>
+    v.buildings.push({ type, x, z, progress: 1 });
+  v.resources = {
+    wood: TOWNHALL_STORAGE + 40,
+    stone: 12,
+    food: 8,
+    wheat: 0,
+    wine: 0,
+  };
+
+  assert.equal(v.ensureStarterVillage(), true);
+  v.clampResourcesToStorage();
+  assert.equal(v.buildings.some((building) => building.type === "townhall"), true);
+  assert.equal(v.resources.wood, TOWNHALL_STORAGE);
+  assert.equal(v.resources.stone, 12);
+  assert.equal(v.resources.food, 8);
+  assert.equal(v.ensureStarterVillage(), false);
 });
 
 test("windmill waits for input rather than producing free food", () => {
@@ -1891,6 +2858,7 @@ test("save keeps delivery history, Inn stock, and worker hunger safely bounded",
       activityLog: [{ message: "Wood +8 delivered to the hall." }],
       roads: new Set(["0,0", "2,2"]),
       baseRoads: new Set(["0,0"]),
+      clearedScenery: new Set(["1.234,5.678"]),
       buildings: [
         { type: "mine", x: 1, z: 1, rotation: 0, progress: 1, cycles: 7.8 },
         { type: "farm", x: 4, z: 4, rotation: 0, progress: 1, cycles: -3 },
@@ -1915,6 +2883,7 @@ test("save keeps delivery history, Inn stock, and worker hunger safely bounded",
     assert.deepEqual(saved.workerNeeds, [{ hunger: 0.73 }]);
     assert.deepEqual(saved.activityLog, ["Wood +8 delivered to the hall."]);
     assert.deepEqual(saved.roads, ["2,2"]);
+    assert.deepEqual(saved.clearedScenery, ["1.234,5.678"]);
     assert.deepEqual(saved.view, {
       position: [30, 37, 42],
       target: [0, 0, -1],
@@ -1924,6 +2893,43 @@ test("save keeps delivery history, Inn stock, and worker hunger safely bounded",
     if (previous) Object.defineProperty(globalThis, "localStorage", previous);
     else delete globalThis.localStorage;
   }
+});
+
+test("export still returns an in-memory backup when browser storage is unavailable", () => {
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    ready: true,
+    healthCheck: false,
+    storageConflict: false,
+    storageAvailable: false,
+    name: "Willowbrook",
+    resources: { wood: "corrupt", stone: 18, food: 7, wheat: 3, wine: 0 },
+    workers: [],
+    elapsed: 9,
+    created: { house: "2.8" },
+    gathered: Number.NaN,
+    delivered: { wood: "corrupt", stone: 0, food: 0, wheat: 0, wine: 0 },
+    feast: null,
+    activityLog: [],
+    roads: new Set(),
+    baseRoads: new Set(),
+    clearedScenery: new Set(),
+    buildings: [],
+    camera: {
+      position: new THREE.Vector3(30, 37, 42),
+      zoom: 1,
+    },
+    controls: { target: new THREE.Vector3(0, 0, -1) },
+  });
+
+  const serialized = v.exportSave();
+  assert.equal(typeof serialized, "string");
+  const saved = JSON.parse(serialized);
+  assert.equal(saved.resources.wood, 0);
+  assert.equal(saved.resources.food, 7);
+  assert.equal(saved.created.house, 2);
+  assert.equal(saved.gathered, 0);
+  assert.equal(saved.delivered.wood, 0);
 });
 
 test("clearSave removes the local village and resets save state", () => {
@@ -2034,6 +3040,36 @@ test("clearGhost disposes preview geometry without touching shared model geometr
   assert.equal(v.ghostGeometryOwned, false);
 });
 
+test("fallback model templates are cached for repeated previews", () => {
+  let created = 0;
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    models: {},
+    makeDecorationModel() {
+      created++;
+      return { created };
+    },
+  });
+  const first = v.modelTemplate("missing-model");
+  const second = v.modelTemplate("missing-model");
+  assert.equal(first, second);
+  assert.equal(created, 1);
+});
+
+test("placed building roots are registered for raycasts and can be removed", () => {
+  const v = village();
+  v.model = () => new THREE.Group();
+  v.buildingPickTargets = [];
+  v.pickTargets = [];
+  const building = v.addBuilding("school", 2, 3);
+
+  assert.deepEqual(v.buildingPickTargets, [building.m]);
+  assert.deepEqual(v.pickTargets, [building.m]);
+  v.removePickTarget(building.m);
+  assert.deepEqual(v.buildingPickTargets, []);
+  assert.deepEqual(v.pickTargets, []);
+});
+
 test("disposeOwnedObject releases shared scaffold resources once", () => {
   let removed = 0;
   let geometryDisposed = 0;
@@ -2084,6 +3120,116 @@ test("disposeSceneResources releases shared scene allocations once", () => {
   assert.equal(materialDisposed, 1);
   assert.equal(textureDisposed, 1);
   assert.equal(cleared, 1);
+});
+test("late model loads release resources after the village is disposed", () => {
+  let geometryDisposed = 0;
+  let materialDisposed = 0;
+  let textureDisposed = 0;
+  const geometry = { dispose() { geometryDisposed++; } };
+  const texture = { isTexture: true, dispose() { textureDisposed++; } };
+  const material = {
+    map: texture,
+    dispose() { materialDisposed++; },
+  };
+  const root = {
+    traverse(callback) {
+      callback({ isMesh: true, geometry, material });
+      callback({ isMesh: true, geometry, material });
+    },
+  };
+  const v = Object.create(Village.prototype);
+  v.models = { house: root, well: root };
+  v.disposeLoadedModelResources();
+  assert.equal(geometryDisposed, 1);
+  assert.equal(materialDisposed, 1);
+  assert.equal(textureDisposed, 1);
+  assert.deepEqual(v.models, {});
+});
+
+test("disposing a village stops ambient audio and closes its context", () => {
+  let stopped = 0;
+  let oscillatorDisconnected = 0;
+  let gainDisconnected = 0;
+  let closed = 0;
+  const v = Object.create(Village.prototype);
+  v.ambientOscillator = {
+    oscillator: {
+      stop() {
+        stopped++;
+      },
+      disconnect() {
+        oscillatorDisconnected++;
+      },
+    },
+    gain: {
+      disconnect() {
+        gainDisconnected++;
+      },
+    },
+  };
+  v.audioContext = {
+    close() {
+      closed++;
+      return Promise.resolve();
+    },
+  };
+
+  v.stopAmbientAudio();
+
+  assert.equal(stopped, 1);
+  assert.equal(oscillatorDisconnected, 1);
+  assert.equal(gainDisconnected, 1);
+  assert.equal(v.ambientOscillator, null);
+
+  v.disposeAudio();
+  assert.equal(closed, 1);
+  assert.equal(v.audioContext, null);
+});
+
+test("action sounds disconnect their nodes after ending", () => {
+  let oscillator;
+  let oscillatorDisconnected = 0;
+  let gainDisconnected = 0;
+  const gain = {
+    gain: {
+      setValueAtTime() {},
+      exponentialRampToValueAtTime() {},
+    },
+    connect() {
+      return this;
+    },
+    disconnect() {
+      gainDisconnected++;
+    },
+  };
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    audioSettings: { effects: true },
+    audioContext: {
+      currentTime: 0,
+      destination: {},
+      createGain: () => gain,
+      createOscillator: () => {
+        oscillator = {
+          frequency: {},
+          connect: () => gain,
+          disconnect() {
+            oscillatorDisconnected++;
+          },
+          start() {},
+          stop() {},
+        };
+        return oscillator;
+      },
+    },
+  });
+
+  v.playSound("notice");
+  assert.equal(typeof oscillator.onended, "function");
+  oscillator.onended();
+  oscillator.onended();
+  assert.equal(oscillatorDisconnected, 1);
+  assert.equal(gainDisconnected, 1);
 });
 
 test("keyboard camera panning stays inside the playable world", () => {
@@ -2290,7 +3436,6 @@ test("stale tabs refuse inspector and feast mutations", () => {
     },
   });
   assert.equal(v.removeBuilding("building-1"), false);
-  assert.equal(v.beginMove("building-1"), false);
   assert.equal(v.setPriority("building-1", "priority"), false);
   assert.equal(v.setPaused("building-1", true), false);
   assert.equal(v.upgradeBuilding("building-1"), false);
@@ -2299,12 +3444,41 @@ test("stale tabs refuse inspector and feast mutations", () => {
   assert.match(notice, /changed in another tab/);
 });
 
-test("move selection resolves the building type for relocation previews", () => {
-  const v = Object.create(Village.prototype);
-  v.buildings = [{ id: "house-1", type: "house" }];
+test("building priority can be toggled for construction and production sites", () => {
+  const v = village();
+  let announced = "";
+  Object.assign(v, {
+    storageConflict: false,
+    buildings: [
+      { id: "farm-1", type: "farm", progress: 0.4, priority: "normal" },
+      { id: "mine-1", type: "mine", progress: 1, priority: "normal" },
+      { id: "hall-1", type: "townhall", progress: 1, priority: "normal" },
+    ],
+    announce(message) {
+      announced = message;
+    },
+    emit() {},
+  });
+  assert.equal(v.setPriority("farm-1", "priority"), true);
+  assert.equal(v.buildings[0].priority, "priority");
+  assert.match(announced, /priority/);
+  assert.equal(v.setPriority("mine-1", "priority"), true);
+  assert.equal(v.buildings[1].priority, "priority");
+  assert.equal(v.setPriority("mine-1", "normal"), true);
+  assert.equal(v.buildings[1].priority, "normal");
+  assert.equal(v.setPriority("hall-1", "priority"), false);
+});
 
-  assert.equal(v.placementType("move:house-1"), "house");
-  assert.equal(v.placementType("move:missing"), "");
+test("embedded health samples cannot mutate the player's save", () => {
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    healthCheck: true,
+    ready: true,
+    storageConflict: false,
+  });
+  assert.equal(v.save(), false);
+  assert.equal(v.importVillage({ buildings: [] }), false);
+  assert.equal(v.clearSave(), false);
 });
 
 test("rename rolls back when a storage conflict appears during save", () => {
@@ -2424,15 +3598,33 @@ test("chapter goals track persistent progress and rewards", () => {
     buildings: [
       { type: "house", progress: 1 },
       { type: "house", progress: 1 },
-      { type: "house", progress: 1 },
-      { type: "house", progress: 1 },
       { type: "well", progress: 1 },
     ],
   });
   assert.equal(goals.length, CHAPTER_GOALS.length);
   assert.equal(goals[0].progress, 8);
   assert.equal(goals[1].progress, 18);
+  assert.equal(goals[1].description, "Deliver 32 food through bakeries and windmills.");
   assert.equal(goals[2].completed, true);
+});
+
+test("beautiful home needs one additional completed cottage and a well", () => {
+  const withOneCottage = chapterGoalState({}, {
+    buildings: [
+      { type: "house", progress: 1 },
+      { type: "well", progress: 1 },
+    ],
+  })[2];
+  assert.equal(withOneCottage.completed, false);
+
+  const withTwoCottages = chapterGoalState({}, {
+    buildings: [
+      { type: "house", progress: 1 },
+      { type: "house", progress: 1 },
+      { type: "well", progress: 1 },
+    ],
+  })[2];
+  assert.equal(withTwoCottages.completed, true);
 });
 
 test("village backups are parseable and summarize safely", () => {
@@ -2472,12 +3664,139 @@ test("feasts spend food and pause controls release current workers", () => {
   assert.equal(v.resources.food, 70);
   assert.equal(v.feast.remaining, 45);
   const building = { id: "farm-1", type: "farm", progress: 1, paused: false };
-  const worker = { building, phase: "work", path: [], timer: 2 };
+  const worker = {
+    building,
+    phase: "work",
+    path: [],
+    timer: 2,
+    waitingForInput: true,
+    waitingForStock: true,
+    waitingForInn: true,
+    mealSeat: 1,
+    deliveryRetry: 1.5,
+    workDuration: 4,
+    routeTarget: { x: 4, z: 4 },
+    materialResource: "wood",
+    waitingForSpace: true,
+    waitingFor: "worker-2",
+    spaceWait: 2,
+    forcedYield: "worker-2",
+    avoidanceTarget: new THREE.Vector3(2, 0, 2),
+    avoidanceTime: 1,
+    deadlockLeaderTime: 1,
+    deadlockYieldTime: 1,
+    deadlockYieldTo: "worker-2",
+  };
   v.buildings = [building];
   v.workers = [worker];
   assert.equal(v.setPaused("farm-1", true), true);
   assert.equal(worker.building, null);
   assert.equal(building.paused, true);
+  assert.equal(worker.waitingForInput, false);
+  assert.equal(worker.waitingForStock, false);
+  assert.equal(worker.waitingForInn, false);
+  assert.equal(worker.mealSeat, null);
+  assert.equal(worker.deliveryRetry, 0);
+  assert.equal(worker.workDuration, 0);
+  assert.equal(worker.routeTarget, null);
+  assert.equal(worker.materialResource, null);
+  assert.equal(worker.waitingForSpace, false);
+  assert.equal(worker.waitingFor, null);
+  assert.equal(worker.spaceWait, 0);
+  assert.equal(worker.forcedYield, null);
+  assert.equal(worker.avoidanceTarget, null);
+  assert.equal(worker.avoidanceTime, 0);
+  assert.equal(worker.deadlockLeaderTime, 0);
+  assert.equal(worker.deadlockYieldTime, 0);
+  assert.equal(worker.deadlockYieldTo, null);
+});
+
+test("clearing a grain field releases stale farmer work state", () => {
+  const v = village();
+  const field = {
+    id: "field-1",
+    type: "grainfield",
+    progress: 1,
+    x: 2,
+    z: 2,
+    claimedBy: "farmer-1",
+    m: new THREE.Object3D(),
+  };
+  const worker = {
+    id: "farmer-1",
+    field,
+    building: field,
+    phase: "harvest",
+    timer: 2,
+    workDuration: 8,
+    path: [new THREE.Vector3(1, 0, 1)],
+    routeTarget: { x: 2, z: 2 },
+    waitingForInput: true,
+    waitingForStock: true,
+    waitingForInn: true,
+    mealSeat: 1,
+    deliveryRetry: 1.5,
+    waitingForSpace: true,
+    waitingFor: "worker-2",
+    spaceWait: 2,
+    forcedYield: "worker-2",
+    avoidanceTarget: new THREE.Vector3(3, 0, 3),
+    avoidanceTime: 1,
+    deadlockLeaderTime: 1,
+    deadlockYieldTime: 1,
+    deadlockYieldTo: "worker-2",
+    materialResource: "wheat",
+    m: new THREE.Object3D(),
+  };
+  Object.assign(v, {
+    buildings: [field],
+    workers: [worker],
+    created: { grainfield: 1 },
+    removePickTarget() {},
+    refundResource() { return 0; },
+    announce() {},
+    notify() {},
+    save() {},
+    emit() {},
+  });
+
+  assert.equal(v.removeBuilding(field.id), true);
+  assert.equal(v.buildings.length, 0);
+  assert.equal(worker.field, null);
+  assert.equal(worker.building, null);
+  assert.equal(worker.phase, "idle");
+  assert.equal(worker.workDuration, 0);
+  assert.deepEqual(worker.path, []);
+  assert.equal(worker.routeTarget, null);
+  assert.equal(worker.waitingForInput, false);
+  assert.equal(worker.waitingForStock, false);
+  assert.equal(worker.waitingForInn, false);
+  assert.equal(worker.mealSeat, null);
+  assert.equal(worker.deliveryRetry, 0);
+  assert.equal(worker.waitingForSpace, false);
+  assert.equal(worker.waitingFor, null);
+  assert.equal(worker.spaceWait, 0);
+  assert.equal(worker.forcedYield, null);
+  assert.equal(worker.avoidanceTarget, null);
+  assert.equal(worker.avoidanceTime, 0);
+  assert.equal(worker.deadlockLeaderTime, 0);
+  assert.equal(worker.deadlockYieldTime, 0);
+  assert.equal(worker.deadlockYieldTo, null);
+  assert.equal(worker.materialResource, null);
+});
+
+test("food spending keeps Inn pantry stock within the village food total", () => {
+  const v = village();
+  const hall = { type: "townhall", progress: 1 };
+  const inn = { type: "inn", progress: 1, paused: false, breadStock: 8 };
+  v.buildings = [hall, inn];
+  v.resources.food = 31;
+  v.emit = () => {};
+
+  assert.equal(v.startFeast(), true);
+  assert.equal(v.resources.food, 1);
+  assert.equal(inn.breadStock, 1);
+  assert.ok(v.resources.food >= inn.breadStock);
 });
 
 
@@ -2593,6 +3912,41 @@ test("hungry workers reserve an Inn seat, eat one bread, and return satisfied", 
   assert.equal(inn.cycles, 1);
 });
 
+test("a lost meal reservation releases the worker from the Inn", () => {
+  const v = village();
+  const inn = {
+    type: "inn",
+    progress: 1,
+    x: 6,
+    z: 6,
+    breadStock: 0,
+  };
+  const worker = {
+    id: "worker-lost-meal",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "eat_travel",
+    timer: 0,
+    building: inn,
+    workInside: true,
+    insideBuilding: true,
+    waitingForInn: true,
+    mealSeat: 1,
+    routeTarget: { x: inn.x, z: inn.z },
+  };
+  v.buildings = [inn];
+  v.workers = [worker];
+  v.simulate(0.1);
+  assert.equal(worker.phase, "idle");
+  assert.equal(worker.building, null);
+  assert.equal(worker.workInside, false);
+  assert.equal(worker.insideBuilding, false);
+  assert.equal(worker.m.visible, true);
+  assert.equal(worker.waitingForInn, false);
+  assert.equal(worker.mealSeat, null);
+  assert.equal(worker.routeTarget, null);
+});
+
 test("bread already served to a seated diner does not reserve the remaining pantry stock", () => {
   const v = village();
   const inn = {
@@ -2625,6 +3979,49 @@ test("bread already served to a seated diner does not reserve the remaining pant
   const meal = v.availableInnFor(hungry);
   assert.equal(meal.inn, inn);
   assert.equal(meal.seat, 1);
+  assert.equal(meal.availableBread, 1);
+});
+
+test("an incoming meal at one Inn does not block another Inn", () => {
+  const v = village();
+  const stockedInn = {
+    id: "inn-stocked",
+    type: "inn",
+    progress: 1,
+    x: 6,
+    z: 6,
+    paused: false,
+    breadStock: 1,
+  };
+  const otherInn = {
+    id: "inn-other",
+    type: "inn",
+    progress: 1,
+    x: -6,
+    z: -6,
+    paused: false,
+    breadStock: 0,
+  };
+  const incoming = {
+    id: "worker-incoming",
+    m: new THREE.Object3D(),
+    phase: "eat_travel",
+    building: otherInn,
+    mealSeat: 0,
+  };
+  const hungry = {
+    id: "worker-hungry",
+    m: new THREE.Object3D(),
+    phase: "idle",
+    building: null,
+    hunger: HUNGRY_THRESHOLD,
+  };
+  v.buildings = [stockedInn, otherInn];
+  v.workers = [incoming, hungry];
+  v.resources.food = 1;
+
+  const meal = v.availableInnFor(hungry);
+  assert.equal(meal.inn, stockedInn);
   assert.equal(meal.availableBread, 1);
 });
 
@@ -2730,6 +4127,65 @@ test("removing a path does not inflate progress with starter roads", () => {
   // Starter roads stay protected and uncounted.
   assert.equal(v.removeRoad(0, -9), false);
   assert.equal(v.created.road, 1);
+});
+
+test("removing a path never exceeds stone storage", () => {
+  const v = village();
+  v.baseRoads = new Set();
+  v.roads = new Set(["4,4", "5,4"]);
+  v.buildings = [{ type: "townhall", progress: 1 }];
+  v.created.road = 2;
+  v.scene = { remove() {}, children: [] };
+  v.disposeOwnedObject = () => {};
+  v.announce = () => {};
+  v.emit = () => {};
+
+  v.resources.stone = TOWNHALL_STORAGE;
+  assert.equal(v.removeRoad(4, 4), true);
+  assert.equal(v.resources.stone, TOWNHALL_STORAGE);
+
+  v.roads.add("4,4");
+  v.resources.stone = TOWNHALL_STORAGE - 1;
+  assert.equal(v.removeRoad(4, 4), true);
+  assert.equal(v.resources.stone, TOWNHALL_STORAGE);
+});
+
+test("building refunds stay within each resource storage limit", () => {
+  const v = village();
+  const hall = { id: "hall", type: "townhall", progress: 1, x: 0, z: 0 };
+  const field = {
+    id: "field",
+    type: "grainfield",
+    progress: 1,
+    x: 3,
+    z: 0,
+    m: new THREE.Object3D(),
+  };
+  const house = {
+    id: "house",
+    type: "house",
+    progress: 0.5,
+    x: -3,
+    z: 0,
+    m: new THREE.Object3D(),
+    scaffolding: new THREE.Object3D(),
+    siteRing: new THREE.Object3D(),
+  };
+  v.buildings = [hall, field, house];
+  v.resources.food = TOWNHALL_STORAGE;
+  v.resources.wood = TOWNHALL_STORAGE;
+  v.resources.stone = TOWNHALL_STORAGE;
+  v.disposeOwnedObject = () => {};
+  v.removePickTarget = () => {};
+  v.setWorkerInside = () => {};
+  v.announce = () => {};
+  v.emit = () => {};
+
+  assert.equal(v.removeBuilding("field"), true);
+  assert.equal(v.resources.food, TOWNHALL_STORAGE);
+  assert.equal(v.removeBuilding("house"), true);
+  assert.equal(v.resources.wood, TOWNHALL_STORAGE);
+  assert.equal(v.resources.stone, TOWNHALL_STORAGE);
 });
 
 test("scenery lands on the same coordinates whatever the village contains", () => {
@@ -2848,6 +4304,51 @@ test("a small village lights every lamp it has, and low graphics lights none", (
   assert.equal(lanternLightBudget("nonsense"), LANTERN_LIGHT_BUDGET.balanced);
 });
 
+test("low graphics drops optional atmospheric animation", () => {
+  const v = Object.create(Village.prototype);
+  const grass = { visible: true };
+  const motes = { visible: true };
+  const ripple = { visible: true };
+  const bird = { group: { visible: true } };
+  Object.assign(v, {
+    graphicsPreset: "balanced",
+    renderer: { shadowMap: {} },
+    grassField: { mesh: grass },
+    motes,
+    ripples: [ripple],
+    birds: [bird],
+    resize: () => {},
+    emit: () => {},
+    syncLanternLightPool: () => {},
+  });
+
+  assert.equal(v.setGraphicsPreset("low"), true);
+  assert.equal(grass.visible, false);
+  assert.equal(motes.visible, false);
+  assert.equal(ripple.visible, false);
+  assert.equal(bird.group.visible, false);
+
+  assert.equal(v.setGraphicsPreset("balanced"), true);
+  assert.equal(grass.visible, true);
+  assert.equal(motes.visible, true);
+  assert.equal(ripple.visible, true);
+  assert.equal(bird.group.visible, true);
+
+  v.reduceMotion = true;
+  assert.equal(v.setGraphicsPreset("low"), true);
+  assert.equal(v.setGraphicsPreset("balanced"), true);
+  assert.equal(bird.group.visible, false, "reduced motion keeps birds hidden after a toggle");
+});
+
+test("graphics presets scale shadow-map cost with the viewport", () => {
+  assert.equal(shadowMapSizeForPreset("low", 390), 512);
+  assert.equal(shadowMapSizeForPreset("balanced", 390), 1024);
+  assert.equal(shadowMapSizeForPreset("balanced", 1280), 1536);
+  assert.equal(shadowMapSizeForPreset("high", 390), 1536);
+  assert.equal(shadowMapSizeForPreset("high", 1280), 2048);
+  assert.equal(shadowMapSizeForPreset("unknown", 1280), 1536);
+});
+
 test("lantern lights follow the lamps nearest the camera", () => {
   const v = lanternVillage("balanced");
   const budget = lanternLightBudget("balanced");
@@ -2865,6 +4366,9 @@ test("lantern lights follow the lamps nearest the camera", () => {
   const farX = v.lanternLights.map((l) => l.position.x).sort((a, b) => a - b);
   assert.ok(farX[0] > 20, "lights follow the camera to the far cottages");
   assert.notDeepEqual(nearX, farX);
+  const anchor = v.lanternAnchor;
+  v.aimLanternLights();
+  assert.equal(v.lanternAnchor, anchor, "lantern ranking reuses its scratch point");
 });
 
 test("lantern flicker drives the pooled lights and brightens with nightfall", () => {
@@ -2888,6 +4392,42 @@ test("lantern flicker drives the pooled lights and brightens with nightfall", ()
   const still = v.lanternLights.map((l) => l.intensity);
   v.updateLanternLights(9.876, 0, 1);
   assert.deepEqual(v.lanternLights.map((l) => l.intensity), still);
+});
+
+test("atmosphere projection skips unchanged simulation time", () => {
+  const v = Object.create(Village.prototype);
+  Object.assign(v, {
+    elapsed: 0,
+    sun: {
+      position: new THREE.Vector3(),
+      color: new THREE.Color(),
+      intensity: 0,
+    },
+    hemi: { intensity: 0 },
+    scene: {
+      background: new THREE.Color(),
+      fog: { color: new THREE.Color() },
+    },
+    atmosphere: {
+      day: new THREE.Color("#a7b673"),
+      dusk: new THREE.Color("#c98d6a"),
+      night: new THREE.Color("#516878"),
+      fog: new THREE.Color(),
+      sky: new THREE.Color(),
+      sunDay: new THREE.Color("#fff0cd"),
+      sunWarm: new THREE.Color("#ffc083"),
+      sun: new THREE.Color(),
+    },
+  });
+
+  v.updateAtmosphere();
+  v.sun.intensity = -1;
+  v.updateAtmosphere();
+  assert.equal(v.sun.intensity, -1, "paused time avoids repeating light writes");
+
+  v.elapsed = 1;
+  v.updateAtmosphere();
+  assert.notEqual(v.sun.intensity, -1, "a new simulation time refreshes lighting");
 });
 
 test("path tiles merge into one surface instead of one mesh each", () => {
@@ -2997,6 +4537,11 @@ test("grass blades share one instanced draw and sway together", () => {
   };
   v.updateGrassField(0, 1);
   const calm = poseAt(0);
+  assert.equal(
+    v.updateGrassField(GRASS_UPDATE_INTERVAL * 0.5, 1),
+    false,
+    "atmospheric sway skips a sub-frame update",
+  );
   v.updateGrassField(1.7, 1);
   assert.notEqual(poseAt(0), calm, "blades sway over time");
 

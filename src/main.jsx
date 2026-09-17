@@ -1,51 +1,92 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  Wheat,
-  Wine,
-  GraduationCap,
-  Croissant,
-  Trees,
-  Mountain,
-  Users,
-  Sun,
-  Moon,
-  Plus,
-  Minus,
-  Compass,
-  HelpCircle,
-  Save,
-  X,
-  Check,
-  ArrowUpRight,
-  RotateCw,
-  MousePointer2,
-  Grid2X2,
-  Leaf,
-  Info,
-  House,
-  Hammer,
-  ChevronDown,
-  BarChart3,
-  Gauge,
-  Route,
-  MessageCircle,
-  Send,
-  FileDown,
-  FileUp,
-  Eraser,
-  Move,
-  Sparkles,
-  ArrowDownRight,
-} from "lucide-react";
+import Wheat from "lucide-react/dist/esm/icons/wheat.js";
+import Wine from "lucide-react/dist/esm/icons/wine.js";
+import GraduationCap from "lucide-react/dist/esm/icons/graduation-cap.js";
+import Croissant from "lucide-react/dist/esm/icons/croissant.js";
+import Trees from "lucide-react/dist/esm/icons/trees.js";
+import Mountain from "lucide-react/dist/esm/icons/mountain.js";
+import Users from "lucide-react/dist/esm/icons/users.js";
+import Sun from "lucide-react/dist/esm/icons/sun.js";
+import Moon from "lucide-react/dist/esm/icons/moon.js";
+import Plus from "lucide-react/dist/esm/icons/plus.js";
+import Minus from "lucide-react/dist/esm/icons/minus.js";
+import Compass from "lucide-react/dist/esm/icons/compass.js";
+import HelpCircle from "lucide-react/dist/esm/icons/circle-help.js";
+import Save from "lucide-react/dist/esm/icons/save.js";
+import X from "lucide-react/dist/esm/icons/x.js";
+import Check from "lucide-react/dist/esm/icons/check.js";
+import ArrowUpRight from "lucide-react/dist/esm/icons/arrow-up-right.js";
+import ArrowUp from "lucide-react/dist/esm/icons/arrow-up.js";
+import RotateCw from "lucide-react/dist/esm/icons/rotate-cw.js";
+import MousePointer2 from "lucide-react/dist/esm/icons/mouse-pointer-2.js";
+import Grid2X2 from "lucide-react/dist/esm/icons/grid-2x2.js";
+import Leaf from "lucide-react/dist/esm/icons/leaf.js";
+import Info from "lucide-react/dist/esm/icons/info.js";
+import House from "lucide-react/dist/esm/icons/house.js";
+import Hammer from "lucide-react/dist/esm/icons/hammer.js";
+import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.js";
+import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.js";
+import Gauge from "lucide-react/dist/esm/icons/gauge.js";
+import Route from "lucide-react/dist/esm/icons/route.js";
+import MessageCircle from "lucide-react/dist/esm/icons/message-circle.js";
+import Send from "lucide-react/dist/esm/icons/send.js";
+import FileDown from "lucide-react/dist/esm/icons/file-down.js";
+import FileUp from "lucide-react/dist/esm/icons/file-up.js";
+import Eraser from "lucide-react/dist/esm/icons/eraser.js";
+import Sparkles from "lucide-react/dist/esm/icons/sparkles.js";
+import ArrowDownRight from "lucide-react/dist/esm/icons/arrow-down-right.js";
+import Pause from "lucide-react/dist/esm/icons/pause.js";
+import Play from "lucide-react/dist/esm/icons/play.js";
 import { CATALOG } from "./catalog.js";
 import { completedPlayerMilestone } from "./progression.js";
-import HealthCheck from "./health-check.jsx";
 import "./style.css";
+const HealthCheck = lazy(() => import("./health-check.jsx"));
 const resourceIcons = { wood: Trees, stone: Mountain, food: Croissant, wheat: Wheat, wine: Wine };
+// The palette is rendered again whenever the simulation emits a snapshot. Keep
+// its immutable catalog work outside App so those frequent renders only check
+// live resource affordability.
+const CATALOG_ENTRIES = Object.entries(CATALOG).map(([type, catalog]) => {
+  const costs = Object.entries(catalog.cost);
+  return {
+    type,
+    catalog,
+    costs,
+    costSummary:
+      costs.map(([resource, amount]) => `${amount} ${resource}`).join(" · ") +
+      (catalog.tileTool || type === "road" ? " per tile" : ""),
+  };
+});
+const CATALOG_TYPES = CATALOG_ENTRIES.map(({ type }) => type);
+const insideBuildingStatus = {
+  farm: "Cutting grain in the field",
+  bakery: "Processing wheat inside Bakery",
+  windmill: "Processing food inside Windmill",
+  vineyard: "Pressing grapes at Vineyard",
+};
+const workerPhaseStatus = {
+  travel: "On the way",
+  chop: "Chopping a tree",
+  lumber_delivery: "Taking logs to Lumberyard",
+  process: "Sawing wooden planks",
+  material_pickup: "Collecting materials",
+  material_delivery: "Delivering materials",
+  construct: "Building",
+  work: "Working",
+  harvest: "Cutting grain in the field",
+  deliver: "Delivering",
+  visit: "At the well",
+};
 const formatCount = (value) =>
   Math.floor(Number(value) || 0).toLocaleString("en-US");
-const workerTypeOrder = ["Builder", "Woodcutter", "Miner", "Farmer", "Baker"];
+const workerTypeOrder = [
+  "Builder",
+  "Woodcutter",
+  "Miner",
+  "Farmer",
+  "Baker",
+  "Carrier",
+];
 function timeOfDay(seconds = 0) {
   const cycle = ((seconds % 120) / 120 + 0.22) % 1;
   if (cycle < 0.18) return "Dawn";
@@ -63,25 +104,10 @@ function workerStatus(worker) {
   if (worker.waitingForSpace) return "Waiting for space";
   if (worker.deliveryRetry) return "Waiting for route";
   if (worker.insideBuilding) {
-    return {
-      farm: "Cutting grain in the field",
-      bakery: "Processing wheat inside Bakery",
-      windmill: "Processing wheat inside Windmill",
-    }[worker.buildingType] || "Working inside building";
+    return insideBuildingStatus[worker.buildingType] || "Working inside building";
   }
-  return {
-    travel: "On the way",
-    chop: "Chopping a tree",
-    lumber_delivery: "Taking logs to Lumberyard",
-    process: "Sawing wooden planks",
-    material_pickup: "Collecting materials",
-    material_delivery: "Delivering materials",
-    construct: "Building",
-    work: "Working",
-    harvest: "Cutting grain in the field",
-    deliver: "Delivering",
-    visit: "At the well",
-  }[worker.phase] || (worker.hungry ? "Hungry — waiting for bread" : "Idle");
+  return workerPhaseStatus[worker.phase] ||
+    (worker.hungry ? "Hungry — waiting for bread" : "Idle");
 }
 function AdvisorContent({ content }) {
   const parts = String(content || "").split(/(\*\*[^*]+\*\*)/g);
@@ -136,6 +162,105 @@ const Resource = React.memo(function Resource({ type, value, trend = 0, storage 
     </div>
   );
 });
+const paletteResourceKeys = ["wood", "stone", "food", "wheat", "wine"];
+const BuildPalette = React.memo(function BuildPalette({
+  resources,
+  thumbs,
+  selected,
+  paletteOpen,
+  loaded,
+  error,
+  onChoose,
+  onHover,
+}) {
+  return (
+    <nav
+      id="building-palette"
+      className={`build-palette parchment ${paletteOpen ? "is-open" : "is-collapsed"}`}
+      aria-hidden={!paletteOpen}
+      inert={!paletteOpen}
+      aria-label="Village building and path tools. On small screens, scroll horizontally to see every tool."
+    >
+      <span className="palette-scroll-hint" aria-hidden="true">
+        Swipe for more <ArrowDownRight size={10} />
+      </span>
+      {CATALOG_ENTRIES.map(({ type, catalog: c, costs, costSummary }) => {
+        const missing = costs
+          .filter(([resource, amount]) => (resources[resource] || 0) < amount)
+          .map(
+            ([resource, amount]) =>
+              `${amount - Math.floor(resources[resource] || 0)} ${resource}`,
+          )
+          .join(", ");
+        const affordable = !missing;
+        const availability = affordable ? "Resources ready" : `Needs ${missing}`;
+        return (
+          <button
+            type="button"
+            key={type}
+            data-build-type={type}
+            aria-label={`Build ${c.name}. Costs ${costSummary}. ${availability}`}
+            aria-pressed={selected === type}
+            title={`${c.name}: ${costSummary}. ${availability}`}
+            className={`build-card ${selected === type ? "selected" : ""} ${affordable ? "" : "low-resources"}`}
+            onClick={(event) => onChoose(type, event.currentTarget)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.currentTarget.focus();
+            }}
+            onMouseEnter={() => onHover(type)}
+            onMouseLeave={() => onHover(null)}
+            onFocus={() => onHover(type)}
+            onBlur={() => onHover(null)}
+            disabled={!loaded || !!error}
+          >
+            {!affordable && (
+              <span className="build-card-warning" aria-hidden="true">
+                !
+              </span>
+            )}
+            {thumbs[type] ? <img src={thumbs[type]} alt="" /> : <House size={28} />}
+            <span className="building-name">{c.name}</span>
+            {selected === type && <i />}
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        className={`build-card utility-card ${selected === "road-remove" ? "selected" : ""}`}
+        data-build-type="road-remove"
+        aria-label="Remove player-laid paths. Returns one stone per tile."
+        aria-pressed={selected === "road-remove"}
+        title="Remove paths: 1 stone returned per tile"
+        onClick={(event) => onChoose("road-remove", event.currentTarget)}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.focus();
+        }}
+        onMouseEnter={() => onHover("road-remove")}
+        onMouseLeave={() => onHover(null)}
+        onFocus={() => onHover("road-remove")}
+        onBlur={() => onHover(null)}
+        disabled={!loaded || !!error}
+      >
+        <Eraser size={27} />
+        <span className="building-name">Remove paths</span>
+        {selected === "road-remove" && <i />}
+      </button>
+    </nav>
+  );
+}, (previous, next) =>
+  previous.thumbs === next.thumbs &&
+  previous.selected === next.selected &&
+  previous.paletteOpen === next.paletteOpen &&
+  previous.loaded === next.loaded &&
+  previous.error === next.error &&
+  previous.onChoose === next.onChoose &&
+  previous.onHover === next.onHover &&
+  paletteResourceKeys.every(
+    (key) => previous.resources?.[key] === next.resources?.[key],
+  )
+);
 function App() {
   const worldRef = useRef(),
     game = useRef(),
@@ -168,6 +293,7 @@ function App() {
     saveAvailable: true,
     hasSaved: false,
     saveConflict: false,
+    healthCheck: false,
     delivered: { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 },
     trends: { wood: 0, stone: 0, food: 0, wheat: 0, wine: 0 },
     inTransit: 0,
@@ -215,14 +341,15 @@ function App() {
     [importPreview, setImportPreview] = useState(null);
   const toastTimer = useRef();
   const goalSnapshot = useRef({ ready: false, complete: false });
+  const goalsOpenRef = useRef(false);
   const modalReturnRef = useRef();
   const placementFocusReturn = useRef(null);
   const inspectorFocusReturn = useRef(null);
-  const notify = (message) => {
+  const notify = useCallback((message) => {
     setToast(message);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 4200);
-  };
+  }, []);
   const openModal = (setter, returnTarget) => {
     modalReturnRef.current = returnTarget || document.activeElement;
     setAdvisorOpen(false);
@@ -239,6 +366,11 @@ function App() {
     closeMenu();
     requestAnimationFrame(() => goalsButtonRef.current?.focus());
   };
+  useEffect(() => {
+    if (!goals && goalsOpenRef.current)
+      window.setTimeout(() => document.querySelector(".menu-button")?.focus(), 0);
+    goalsOpenRef.current = goals;
+  }, [goals]);
   const closeDetail = (restoreFocus = false) => {
     const returnTarget = inspectorFocusReturn.current;
     inspectorFocusReturn.current = null;
@@ -362,7 +494,7 @@ function App() {
       clearTimeout(toastTimer.current);
     };
   }, []);
-  const choose = (type, focusReturn = null) => {
+  const choose = useCallback((type, focusReturn = null) => {
     if (!loaded || error) return;
     if (game.current?.storageConflict) {
       notify("This village changed in another tab. Reload to continue.");
@@ -391,7 +523,7 @@ function App() {
     game.current.select(next);
     game.current.emit();
     setGrid(!!next);
-  };
+  }, [error, loaded, notify, selected]);
   useEffect(() => {
     if (!selected) return;
     const frame = requestAnimationFrame(() => {
@@ -399,6 +531,16 @@ function App() {
     });
     return () => cancelAnimationFrame(frame);
   }, [selected]);
+  useEffect(() => {
+    if (!selected || !paletteOpen) return;
+    const frame = requestAnimationFrame(() => {
+      const card = [...document.querySelectorAll("[data-build-type]")].find(
+        (element) => element.dataset.buildType === selected,
+      );
+      card?.scrollIntoView({ block: "nearest", inline: "center" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selected, paletteOpen]);
   const endPlacement = (preserveHighlight = false) => {
     setSelected(null);
     setBuildDetailsOpen(false);
@@ -429,7 +571,6 @@ function App() {
           const returnTarget =
             placementFocusReturn.current ||
             document.querySelector(".goal-next button");
-          returnTarget?.focus();
           cancel();
           requestAnimationFrame(() => returnTarget?.focus());
           return;
@@ -449,6 +590,11 @@ function App() {
         }
         if (menu) {
           closeMenu(true);
+          return;
+        }
+        if (goals) {
+          setGoals(false);
+          window.setTimeout(() => document.querySelector(".menu-button")?.focus(), 0);
           return;
         }
         if (document.querySelector(".inspector")) closeDetail(true);
@@ -497,9 +643,9 @@ function App() {
       if (
         Number.isInteger(buildNumber) &&
         buildNumber >= 1 &&
-        buildNumber <= Object.keys(CATALOG).length
+        buildNumber <= CATALOG_TYPES.length
       )
-        choose(Object.keys(CATALOG)[buildNumber - 1]);
+        choose(CATALOG_TYPES[buildNumber - 1]);
       const panKeys = {
         ArrowUp: [0, -1],
         ArrowDown: [0, 1],
@@ -521,7 +667,7 @@ function App() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [selected, loaded, detail, help, reset, rename, overview, menu, advisorOpen, importOpen]);
+  }, [selected, loaded, detail, help, reset, rename, overview, menu, goals, advisorOpen, importOpen]);
   const menuKeyDown = (event) => {
     const items = menuRef.current?.querySelectorAll('[role="menuitem"]');
     if (!items?.length) return;
@@ -620,10 +766,7 @@ function App() {
       : null;
   const inspectedNextDelivery =
     detail?.type !== "worker" ? inspected?.nextDelivery : null;
-  const movingId = selected?.startsWith("move:") ? selected.slice(5) : null;
-  const activeType = movingId
-    ? state.buildings.find((building) => building.id === movingId)?.type
-    : selected || hover;
+  const activeType = selected || hover;
   const active =
     activeType === "road-remove"
       ? {
@@ -633,7 +776,6 @@ function App() {
           seconds: 0,
         }
       : CATALOG[activeType];
-  const moving = selected?.startsWith("move:");
   const pathPlacement = selected === "road";
   const grainPlacement = selected === "grainfield";
   const pathRemoval = selected === "road-remove" || activeType === "road-remove";
@@ -646,12 +788,9 @@ function App() {
         ? "Click or drag beside a farmhouse to plant grain · Esc to cancel"
       : pathRemoval
         ? "Choose one of your path tiles to remove · Esc to cancel"
-        : moving
-          ? "Choose a clear site to move this building · Esc to cancel"
-          : "Choose a clear patch of land to build");
-  const activeEffect = moving
-    ? "Choose a clear site · workers reroute automatically"
-    : activeType === "house"
+        : "Choose a clear patch of land to build");
+  const activeEffect =
+    activeType === "house"
       ? `+2 housing capacity · houses ${Math.min(2, Math.max(0, 24 - state.population))} workers (simulation limit 24)`
       : active?.effect;
   const builtHouse = completedPlayerMilestone(
@@ -737,35 +876,66 @@ function App() {
     };
   }, [advisorOpen, buildDetailsOpen, detail, menu, modalOpen, selected]);
   const housingFull = state.population >= state.capacity;
+  const availableFood = Math.max(
+    0,
+    Number.isFinite(Number(state.resources.food))
+      ? Number(state.resources.food)
+      : 0,
+  );
   // Wine only earns a header slot once the village presses some, so villages
   // without a vineyard keep the original four-resource layout.
   const showWine =
     (state.resources.wine || 0) > 0 ||
     state.buildings.some((building) => building.type === "vineyard");
-  const completedBuildings = state.buildings.filter(
-    (building) => building.progress === 1 && building.type !== "grainfield",
-  ).length;
-  const activeJobs = state.buildings.filter(
-    (building) => building.progress < 1 || building.workers > 0,
-  ).length;
-  const deliveries = state.buildings.reduce(
-    (total, building) => total + (building.cycles || 0),
-    0,
-  );
-  const workerTypeCounts = state.workers.reduce((counts, worker) => {
-    const label = worker.workerTypeLabel || "Builder";
-    counts[label] = (counts[label] || 0) + 1;
-    return counts;
-  }, {});
-  const savedPathCount = Number(state.created?.road);
-  const pathCount = Number.isFinite(savedPathCount)
-    ? Math.max(0, Math.floor(savedPathCount))
-    : 0;
+  const overviewStats = useMemo(() => {
+    if (!overview) return null;
+    let completedBuildings = 0;
+    let activeJobs = 0;
+    let deliveries = 0;
+    const activeWorksites = [];
+    for (const building of state.buildings) {
+      if (building.progress === 1 && building.type !== "grainfield")
+        completedBuildings += 1;
+      if (building.progress < 1 || building.workers > 0) activeJobs += 1;
+      deliveries += building.cycles || 0;
+      if (
+        activeWorksites.length < 6 &&
+        (building.progress < 1 || CATALOG[building.type]?.resource)
+      )
+        activeWorksites.push(building);
+    }
+    const workerTypeCounts = state.workers.reduce((counts, worker) => {
+      const label = worker.workerTypeLabel || "Builder";
+      counts[label] = (counts[label] || 0) + 1;
+      return counts;
+    }, {});
+    const savedPathCount = Number(state.created?.road);
+    const pathCount = Number.isFinite(savedPathCount)
+      ? Math.max(0, Math.floor(savedPathCount))
+      : 0;
+    return {
+      completedBuildings,
+      activeJobs,
+      deliveries,
+      workerTypeCounts,
+      pathCount,
+      activeWorksites,
+    };
+  }, [overview, state.buildings, state.created, state.workers]);
+  const completedBuildings = overviewStats?.completedBuildings || 0;
+  const activeJobs = overviewStats?.activeJobs || 0;
+  const deliveries = overviewStats?.deliveries || 0;
+  const workerTypeCounts = overviewStats?.workerTypeCounts || {};
+  const pathCount = overviewStats?.pathCount || 0;
+  const activeWorksites = overviewStats?.activeWorksites || [];
   const recentActivity = Array.isArray(state.activityLog)
     ? state.activityLog.slice(0, 4)
     : [];
   const period = timeOfDay(state.time);
-  const advisorContext = {
+  // The advisor is optional and closed most of the time. Build its complete
+  // snapshot only when a question is submitted instead of mapping every
+  // building during each simulation-driven React render.
+  const createAdvisorContext = () => ({
     village: state.name,
     day: state.day,
     period,
@@ -792,7 +962,7 @@ function App() {
       timber: state.gathered >= 100,
     },
     activity: recentActivity,
-  };
+  });
   const completedGoals = [builtHouse, builtFarm, state.gathered >= 100].filter(
     Boolean,
   ).length;
@@ -803,14 +973,22 @@ function App() {
       3) *
       100,
   );
-  const saveLabel = state.saveConflict
+  const saveLabel = state.healthCheck
+    ? "Performance sample"
+    : !loaded
+    ? "Loading village"
+    : state.saveConflict
     ? "Reload to sync"
     : !state.saveAvailable
     ? "Save unavailable"
     : state.hasSaved
       ? "Saved locally"
       : "Autosave ready";
-  const saveTitle = state.saveConflict
+  const saveTitle = state.healthCheck
+    ? "This embedded performance sample uses an in-memory village and never changes your saved village."
+    : !loaded
+    ? "The village is still loading; save and export actions will be available in a moment."
+    : state.saveConflict
     ? "Another browser tab changed this village. Reload to use the latest save."
     : state.saveAvailable
     ? "This village saves automatically in this browser."
@@ -844,6 +1022,11 @@ function App() {
     notify(`${savedName} is ready for a new chapter.`);
   };
   const saveVillage = () => {
+    if (!loaded || !game.current) {
+      notify("The village is still loading. Try saving again in a moment.");
+      closeMenu(true);
+      return;
+    }
     const saved = game.current?.save();
     if (saved) notify("Your village has been saved.");
     else if (game.current?.storageConflict || state.saveConflict)
@@ -852,9 +1035,19 @@ function App() {
     closeMenu(true);
   };
   const downloadVillage = () => {
+    if (!loaded || !game.current) {
+      notify("The village is still loading. Try exporting again in a moment.");
+      closeMenu(true);
+      return;
+    }
     const serialized = game.current?.exportSave();
     if (!serialized) {
-      notify("Save the village before exporting it.");
+      if (game.current?.storageConflict || state.saveConflict)
+        notify("This tab is out of date. Reload to use the latest village save.");
+      else if (!state.saveAvailable)
+        notify("Browser storage is unavailable. This village cannot be exported.");
+      else notify("Save the village before exporting it.");
+      closeMenu(true);
       return;
     }
     const blob = new Blob([serialized], { type: "application/json" });
@@ -923,7 +1116,7 @@ function App() {
       const response = await fetch("/api/advisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, context: advisorContext }),
+        body: JSON.stringify({ messages: nextMessages, context: createAdvisorContext() }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -934,6 +1127,9 @@ function App() {
         [...current, { role: "assistant", content: data.message }].slice(-12),
       );
     } catch (requestError) {
+      // Keep an unavailable advisor easy to retry without making the player
+      // reconstruct the question they just submitted.
+      setAdvisorInput(content);
       setAdvisorError(requestError.message || "The advisor is unavailable right now.");
     } finally {
       setAdvisorLoading(false);
@@ -965,7 +1161,9 @@ function App() {
     if (!advisorOpen || !advisorMessagesRef.current) return;
     advisorMessagesRef.current.scrollTo({
       top: advisorMessagesRef.current.scrollHeight,
-      behavior: "smooth",
+      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+        ? "auto"
+        : "smooth",
     });
   }, [advisorMessages, advisorLoading, advisorOpen]);
   const DayIcon = period === "Night" ? Moon : Sun;
@@ -977,7 +1175,7 @@ function App() {
       <div
         ref={worldRef}
         className={`world ${selected ? "is-building" : ""}`}
-        aria-label="Interactive 3D village. Drag to pan, scroll to zoom, right-drag to orbit."
+        aria-label="Interactive 3D village. Drag to pan, scroll or pinch to zoom, and use right-drag or two fingers to orbit."
       />
       <header className="topbar">
         <div className="brand">
@@ -1032,6 +1230,7 @@ function App() {
           </div>
         </div>
         <button
+          type="button"
           ref={menuButtonRef}
           className={`icon-button menu-button ${menu ? "open" : ""}`}
           aria-label={menu ? "Close village menu" : "Open village menu"}
@@ -1058,6 +1257,7 @@ function App() {
         {goals && (
           <div className={`objectives parchment ${allGoals ? "complete" : ""}`}>
             <button
+              type="button"
               ref={goalsButtonRef}
               className="objective-heading"
               aria-controls="settlement-goals"
@@ -1145,27 +1345,53 @@ function App() {
         )}
       </section>
       <div className="top-right">
-        <div className="time-controls parchment">
+        <div
+          className="time-controls parchment"
+          role="group"
+          aria-label="Simulation speed controls"
+        >
           <button
+            type="button"
+            className={`pause-button ${state.speed === 0 ? "active" : ""}`}
+            aria-label={state.speed === 0 ? "Resume simulation" : "Pause simulation"}
+            aria-keyshortcuts="Space"
+            aria-pressed={state.speed === 0}
+            title={state.speed === 0 ? "Resume simulation" : "Pause simulation"}
+            onClick={() => speed(state.speed === 0 ? previousSpeed.current : 0)}
+            onKeyDown={(event) => {
+              if (event.code !== "Space") return;
+              event.preventDefault();
+              speed(state.speed === 0 ? previousSpeed.current : 0);
+            }}
+          >
+            {state.speed === 0 ? <Play size={13} /> : <Pause size={13} />}
+          </button>
+          <button
+            type="button"
             className={state.speed === 1 ? "active" : ""}
             aria-label="Set simulation speed to 1x"
             aria-pressed={state.speed === 1}
+            title="Set simulation speed to 1×"
             onClick={() => speed(1)}
           >
             1×
           </button>
           <button
+            type="button"
             className={state.speed === 2 ? "active" : ""}
             aria-label="Set simulation speed to 2x"
             aria-pressed={state.speed === 2}
+            title="Set simulation speed to 2×"
             onClick={() => speed(2)}
           >
             2×
           </button>
           <button
+            type="button"
             className={state.speed === 4 ? "active" : ""}
             aria-label="Set simulation speed to 4x"
             aria-pressed={state.speed === 4}
+            title="Set simulation speed to 4×"
             onClick={() => speed(4)}
           >
             4×
@@ -1181,6 +1407,7 @@ function App() {
           </div>
         )}
         <button
+          type="button"
           ref={advisorButtonRef}
           className={`advisor-launch parchment ${advisorOpen ? "active" : ""}`}
           aria-label={advisorOpen ? "Close village advisor" : "Open village advisor"}
@@ -1209,6 +1436,7 @@ function App() {
               <h2>A second pair of eyes.</h2>
             </div>
             <button
+              type="button"
               className="bare"
               onClick={closeAdvisor}
               aria-label="Close village advisor"
@@ -1295,6 +1523,7 @@ function App() {
           <div className="inspector-top">
             <span>IN YOUR VILLAGE</span>
             <button
+              type="button"
               ref={inspectorCloseRef}
               className="bare"
               onClick={() => closeDetail(true)}
@@ -1559,6 +1788,7 @@ function App() {
                     : option.reason;
                   return (
                     <button
+                      type="button"
                       key={option.type}
                       className="training-option"
                       disabled={busy || !option.canTrain}
@@ -1583,8 +1813,52 @@ function App() {
           )}
           {detail.type !== "worker" && inspected && (
             <div className="inspector-actions" aria-label="Building controls">
+              {detail.type !== "townhall" &&
+                detail.type !== "grainfield" &&
+                (inspected.progress < 1 || CATALOG[detail.type]?.resource) && (
+                  <button
+                    type="button"
+                    className={`inspector-control priority ${
+                      inspected.priority === "priority" ? "active" : ""
+                    }`}
+                    aria-pressed={inspected.priority === "priority"}
+                    aria-label={
+                      inspected.priority === "priority"
+                        ? `Use normal priority for ${CATALOG[detail.type]?.name || "building"}`
+                        : `Prioritize ${CATALOG[detail.type]?.name || "building"}`
+                    }
+                    title={
+                      inspected.priority === "priority"
+                        ? "Return this building to normal worker priority."
+                        : "Give this building priority when workers choose their next job."
+                    }
+                    onClick={() =>
+                      game.current?.setPriority(
+                        inspected.id,
+                        inspected.priority === "priority" ? "normal" : "priority",
+                      )
+                    }
+                  >
+                    <ArrowUp size={14} />
+                    {inspected.priority === "priority"
+                      ? "Use normal priority"
+                      : "Prioritize building"}
+                  </button>
+                )}
+              {detail.type !== "townhall" && detail.type !== "grainfield" && (
+                <button
+                  type="button"
+                  className="inspector-control"
+                  onClick={() => game.current?.setPaused(inspected.id, !inspected.paused)}
+                  aria-label={`${inspected.paused ? "Resume" : "Pause"} ${CATALOG[detail.type]?.name || "building"}`}
+                >
+                  {inspected.paused ? <Play size={14} /> : <Pause size={14} />}
+                  {inspected.paused ? "Resume building" : "Pause building"}
+                </button>
+              )}
               {inspected.progress < 1 && (
                 <button
+                  type="button"
                   className="inspector-control danger"
                   onClick={() => {
                     if (game.current?.removeBuilding(inspected.id)) closeDetail();
@@ -1593,21 +1867,9 @@ function App() {
                   <X size={14} /> Cancel construction
                 </button>
               )}
-              {inspected.progress === 1 && detail.type !== "townhall" && detail.type !== "grainfield" && (
-                <button
-                  className="inspector-control"
-                  onClick={() => {
-                    if (!game.current?.beginMove(inspected.id)) return;
-                    closeDetail();
-                    setSelected(`move:${inspected.id}`);
-                    setGrid(true);
-                  }}
-                >
-                  <Move size={14} /> Relocate building
-                </button>
-              )}
               {detail.type === "grainfield" && (
                 <button
+                  type="button"
                   className="inspector-control danger"
                   onClick={() => {
                     if (game.current?.removeBuilding(inspected.id)) closeDetail();
@@ -1618,6 +1880,7 @@ function App() {
               )}
               {inspected.progress === 1 && CATALOG[detail.type]?.upgrade && !inspected.upgrade && (
                 <button
+                  type="button"
                   className="inspector-control upgrade"
                   title={`Upgrade ${CATALOG[detail.type].name} with ${CATALOG[detail.type].upgrade.name}. Costs ${Object.entries(CATALOG[detail.type].upgrade.cost).map(([resource, amount]) => `${amount} ${resource}`).join(" · ")}.`}
                   aria-label={`Upgrade ${CATALOG[detail.type].name} with ${CATALOG[detail.type].upgrade.name}. Costs ${Object.entries(CATALOG[detail.type].upgrade.cost).map(([resource, amount]) => `${amount} ${resource}`).join(" and ")}`}
@@ -1639,6 +1902,7 @@ function App() {
       )}
       <div className="bottom-left">
         <button
+          type="button"
           className="compass"
           onClick={() => game.current?.home()}
           title="Return to village center"
@@ -1659,9 +1923,7 @@ function App() {
                 {pathRemoval
                   ? "REVISE YOUR LAYOUT"
                   : selected
-                    ? moving
-                      ? "RELOCATE A BUILDING"
-                      : "PLAN YOUR NEXT BUILDING"
+                    ? "PLAN YOUR NEXT BUILDING"
                     : "GROW YOUR VILLAGE"}
               </span>
               <h3>{active.name}</h3>
@@ -1674,14 +1936,8 @@ function App() {
               {pathRemoval ? (
                 <>
                   <span>RECOVERED</span>
-                  <strong className="relocation-note">1 stone per path tile</strong>
+                  <strong className="recovery-note">1 stone per path tile</strong>
                   <small>Click a player-laid path to clear it.</small>
-                </>
-              ) : moving ? (
-                <>
-                  <span>RELOCATION</span>
-                  <strong className="relocation-note">No resources spent</strong>
-                  <small>Workers will find a new route.</small>
                 </>
               ) : (
                 <>
@@ -1738,8 +1994,9 @@ function App() {
               <span>{buildDetailsOpen ? "Hide details" : "Details"}</span>
             </button>
             {!tileMode && (
-              <button
-                aria-label="Rotate building"
+            <button
+              type="button"
+              aria-label="Rotate building"
                 onClick={() => game.current?.rotate()}
                 title="Rotate building (R)"
               >
@@ -1749,18 +2006,20 @@ function App() {
             )}
             {!tileMode && (
               <button
+                type="button"
                 className="placement-confirm"
-                aria-label={moving ? "Confirm building relocation" : "Confirm placement"}
+                aria-label="Confirm placement"
                 onClick={() => {
                   if (game.current?.confirmPlacement()) {
                     cancel();
                   }
                 }}
               >
-                <Check size={14} /> <span>{moving ? "Move" : "Place"}</span> <kbd>ENTER</kbd>
+                <Check size={14} /> <span>Place</span> <kbd>ENTER</kbd>
               </button>
             )}
             <button
+              type="button"
               aria-label={tileMode ? "Cancel tile tool" : "Cancel building placement"}
               onClick={cancel}
             >
@@ -1787,108 +2046,30 @@ function App() {
             <span />
           </div>
         )}
-        <nav
-          id="building-palette"
-          className={`build-palette parchment ${paletteOpen ? "is-open" : "is-collapsed"}`}
-          aria-hidden={!paletteOpen}
-          inert={!paletteOpen}
-          aria-label="Village building and path tools. On small screens, scroll horizontally to see every tool."
-        >
-          <span className="palette-scroll-hint" aria-hidden="true">
-            Swipe for more <ArrowDownRight size={10} />
-          </span>
-          {Object.entries(CATALOG).map(([type, c]) => {
-              const missing = Object.entries(c.cost)
-                .filter(
-                  ([resource, amount]) =>
-                    (state.resources[resource] || 0) < amount,
-                )
-                .map(
-                  ([resource, amount]) =>
-                    `${amount - Math.floor(state.resources[resource] || 0)} ${resource}`,
-                )
-                .join(", ");
-              const affordable = !missing;
-              const availability = affordable
-                ? "Resources ready"
-                : `Needs ${missing}`;
-              const costSummary = Object.entries(c.cost)
-                .map(([resource, amount]) => `${amount} ${resource}`)
-                .join(" · ") + (c.tileTool || type === "road" ? " per tile" : "");
-              return (
-                <button
-                  key={type}
-                  aria-label={`Build ${c.name}. Costs ${costSummary}. ${availability}`}
-                  aria-pressed={selected === type}
-                  title={`${c.name}: ${costSummary}. ${availability}`}
-                  className={`build-card ${
-                    selected === type ? "selected" : ""
-                  } ${affordable ? "" : "low-resources"}`}
-                  onClick={(event) => {
-                    choose(type, event.currentTarget);
-                    window.setTimeout(() => {
-                      document.querySelector(".placement-confirm")?.focus();
-                    }, 50);
-                  }}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.currentTarget.focus();
-                  }}
-                  onMouseEnter={() => setHover(type)}
-                  onMouseLeave={() => setHover(null)}
-                  onFocus={() => setHover(type)}
-                  onBlur={() => setHover(null)}
-                  disabled={!loaded || !!error}
-                >
-                  {!affordable && (
-                    <span className="build-card-warning" aria-hidden="true">
-                      !
-                    </span>
-                  )}
-                  {thumbs[type] ? (
-                    <img src={thumbs[type]} alt="" />
-                  ) : (
-                    <House size={28} />
-                  )}
-                  <span className="building-name">{c.name}</span>
-                  {selected === type && <i />}
-                </button>
-              );
-          })}
-          <button
-            className={`build-card utility-card ${selected === "road-remove" ? "selected" : ""}`}
-            aria-label="Remove player-laid paths. Returns one stone per tile."
-            aria-pressed={selected === "road-remove"}
-            title="Remove paths: 1 stone returned per tile"
-            onClick={(event) => {
-              choose("road-remove", event.currentTarget);
-              window.setTimeout(() => {
-                document.querySelector(".placement-confirm")?.focus();
-              }, 50);
-            }}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.currentTarget.focus();
-            }}
-            onMouseEnter={() => setHover("road-remove")}
-            onMouseLeave={() => setHover(null)}
-            onFocus={() => setHover("road-remove")}
-            onBlur={() => setHover(null)}
-            disabled={!loaded || !!error}
-          >
-            <Eraser size={27} />
-            <span className="building-name">Remove paths</span>
-            {selected === "road-remove" && <i />}
-          </button>
-        </nav>
+        <BuildPalette
+          resources={state.resources}
+          thumbs={thumbs}
+          selected={selected}
+          paletteOpen={paletteOpen}
+          loaded={loaded}
+          error={error}
+          onChoose={choose}
+          onHover={setHover}
+        />
         <div className="bottom-caption">
           <span>
             <MousePointer2 size={11} /> Drag to explore
           </span>
           <i>·</i>
-          <span>Scroll to zoom</span>
+          <span>
+            <span className="mouse-hint">Scroll to zoom</span>
+            <span className="touch-hint">Pinch to zoom</span>
+          </span>
           <i>·</i>
-          <span>Right-drag to orbit</span>
+          <span>
+            <span className="mouse-hint">Right-drag to orbit</span>
+            <span className="touch-hint">Two-finger orbit</span>
+          </span>
           {state.saveConflict ? (
             <button
               type="button"
@@ -1901,7 +2082,7 @@ function App() {
             </button>
           ) : (
             <span
-              className={`autosave ${state.saveAvailable ? "" : "unavailable"}`}
+              className={`autosave ${state.saveAvailable || state.healthCheck ? "" : "unavailable"}`}
               title={saveTitle}
             >
               <span className="live-dot" /> {saveLabel}
@@ -1911,6 +2092,7 @@ function App() {
       </div>
       <div className="bottom-right">
         <button
+          type="button"
           className={`icon-button parchment ${grid ? "active" : ""}`}
           aria-keyshortcuts="G"
           aria-pressed={grid}
@@ -1926,6 +2108,7 @@ function App() {
         </button>
         <div className="zoom-controls parchment">
           <button
+            type="button"
             aria-label="Zoom in"
             title="Zoom in"
             onClick={() => game.current?.zoom(0.15)}
@@ -1934,6 +2117,7 @@ function App() {
           </button>
           <span />
           <button
+            type="button"
             aria-label="Zoom out"
             title="Zoom out"
             onClick={() => game.current?.zoom(-0.15)}
@@ -1962,17 +2146,19 @@ function App() {
           }}
         >
           <button
+            type="button"
             role="menuitem"
             onClick={saveVillage}
           >
             <Save size={16} />
             Save village
           </button>
-          <button role="menuitem" onClick={downloadVillage}>
+          <button type="button" role="menuitem" onClick={downloadVillage}>
             <FileDown size={16} />
             Export village backup
           </button>
           <button
+            type="button"
             role="menuitem"
             onClick={() => {
               importFileRef.current?.click();
@@ -1983,6 +2169,7 @@ function App() {
             Import village backup
           </button>
           <button
+            type="button"
             role="menuitem"
             onClick={() => {
               openModal(setOverview, menuButtonRef.current);
@@ -1996,11 +2183,12 @@ function App() {
             <Gauge size={16} />
             Performance health check
           </a>
-          <button role="menuitem" onClick={showGoals}>
+          <button type="button" role="menuitem" onClick={showGoals}>
             <Leaf size={16} />
             A place to call home
           </button>
           <button
+            type="button"
             role="menuitem"
             onClick={() => {
               setNameDraft(state.name);
@@ -2012,6 +2200,7 @@ function App() {
             Name your village
           </button>
           <button
+            type="button"
             role="menuitem"
             onClick={() => {
               openModal(setHelp, menuButtonRef.current);
@@ -2022,6 +2211,7 @@ function App() {
             How to play
           </button>
           <button
+            type="button"
             role="menuitem"
             onClick={() => {
               openModal(setReset, menuButtonRef.current);
@@ -2073,6 +2263,7 @@ function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <button
+              type="button"
               className="modal-close bare"
               data-modal-autofocus={overview || help ? true : undefined}
               aria-label="Close dialog"
@@ -2106,8 +2297,8 @@ function App() {
                   <p className="help-note">Choose a .json village backup to continue.</p>
                 )}
                 <div className="modal-actions">
-                  <button data-modal-autofocus onClick={() => { setImportOpen(false); setImportPreview(null); }}>Keep current</button>
-                  <button className="primary" disabled={!importPreview} onClick={applyVillageImport}>
+                  <button type="button" data-modal-autofocus onClick={() => { setImportOpen(false); setImportPreview(null); }}>Keep current</button>
+                  <button type="button" className="primary" disabled={!importPreview} onClick={applyVillageImport}>
                     <FileUp size={15} /> Replace with backup
                   </button>
                 </div>
@@ -2171,10 +2362,11 @@ function App() {
                     <p>Spend 30 food for 45 seconds of 25% faster construction.</p>
                   </div>
                   <button
+                    type="button"
                     className="primary"
-                    disabled={Boolean(state.feast) || state.resources.food < 30}
-                    title={state.feast ? "A village feast is already underway." : state.resources.food < 30 ? "Need 30 food to start a feast." : "Start a 45-second construction feast."}
-                    aria-label={state.feast ? `Village feast active, ${Math.ceil(state.feast.remaining)} seconds left` : state.resources.food < 30 ? "Village feast unavailable: need 30 food" : "Start village feast for 30 food"}
+                    disabled={Boolean(state.feast) || availableFood < 30}
+                    title={state.feast ? "A village feast is already underway." : availableFood < 30 ? "Need 30 food to start a feast." : "Start a 45-second construction feast."}
+                    aria-label={state.feast ? `Village feast active, ${Math.ceil(state.feast.remaining)} seconds left` : availableFood < 30 ? "Village feast unavailable: need 30 food" : "Start village feast for 30 food"}
                     onClick={() => game.current?.startFeast()}
                   >
                     {state.feast ? `${Math.ceil(state.feast.remaining)}s left` : "Start · 30 food"}
@@ -2194,8 +2386,9 @@ function App() {
                 <div className="overview-sites" aria-label="Focus a building or villager">
                   <div className="overview-activity-heading"><span>Focus a worksite</span><small>KEYBOARD READY</small></div>
                   <div className="focus-list">
-                    {state.buildings.filter((building) => building.progress < 1 || CATALOG[building.type]?.resource).slice(0, 6).map((building) => (
+                    {activeWorksites.map((building) => (
                       <button
+                        type="button"
                         key={building.id}
                         aria-label={"Focus " + (CATALOG[building.type]?.name || building.type) + " worksite. Status: " + (building.status || "Complete")}
                         onClick={() => { setOverview(false); game.current?.focusBuilding(building.id); }}
@@ -2207,6 +2400,7 @@ function App() {
                   <div className="focus-list workers-list">
                     {state.workers.slice(0, 4).map((worker, index) => (
                       <button
+                        type="button"
                         key={worker.id}
                         aria-label={"Focus " + (worker.workerTypeLabel || "Builder") + " " + (index + 1) + ". Current task: " + (worker.buildingType ? CATALOG[worker.buildingType]?.name || worker.buildingType : "Builder")}
                         onClick={() => { setOverview(false); game.current?.focusWorker(worker.id); }}
@@ -2220,7 +2414,7 @@ function App() {
                   <div><span className="overview-activity-heading">Graphics</span><small>Lower detail improves battery and frame rate.</small></div>
                   <div className="segmented-actions">
                     {["low", "balanced", "high"].map((preset) => (
-                      <button key={preset} className={state.graphicsPreset === preset ? "active" : ""} aria-pressed={state.graphicsPreset === preset} onClick={() => game.current?.setGraphicsPreset(preset)}>{preset}</button>
+                      <button type="button" key={preset} className={state.graphicsPreset === preset ? "active" : ""} aria-pressed={state.graphicsPreset === preset} onClick={() => game.current?.setGraphicsPreset(preset)}>{preset}</button>
                     ))}
                   </div>
                 </div>
@@ -2267,6 +2461,7 @@ function App() {
                   )}
                 </div>
                 <button
+                  type="button"
                   className="primary full"
                   onClick={() => setOverview(false)}
                 >
@@ -2307,11 +2502,12 @@ function App() {
                   This replaces your saved village with the original settlement.
                 </p>
                 <div className="modal-actions">
-                  <button data-modal-autofocus onClick={() => setReset(false)}>
+                  <button type="button" data-modal-autofocus onClick={() => setReset(false)}>
                     Keep my village
                   </button>
-                  <button
-                    className="primary"
+                <button
+                  type="button"
+                  className="primary"
                     onClick={() => {
                       if (game.current?.storageConflict) {
                         setReset(false);
@@ -2348,8 +2544,8 @@ function App() {
                   <div>
                     <strong>Explore your village</strong>
                     <span>
-                      Drag to pan, scroll to zoom, and right-drag to orbit. The
-                      compass brings you home.
+                      Drag to pan, scroll or pinch to zoom, and use right-drag
+                      or two fingers to orbit. The compass brings you home.
                     </span>
                   </div>
                 </div>
@@ -2360,8 +2556,9 @@ function App() {
                     <span>
                       Choose a building below. A green preview means it fits.
                       Click or press Enter to place, drag to lay paths, R to
-                      rotate, and Esc to cancel. Arrow keys move the placement
-                      cursor.
+                      rotate, and Esc to cancel. Buildings are fixed once
+                      placed, so choose their site carefully. Arrow keys move
+                      the placement cursor.
                     </span>
                   </div>
                 </div>
@@ -2381,9 +2578,10 @@ function App() {
                   <div>
                     <strong>Grow a thriving settlement</strong>
                     <span>
-                      Vineyards press grapes into wine. Farms produce wheat, bakeries bake it into bread (food), lumberyards supply wood, and mines
-                      gather stone. Windmills turn 2 food into 8. Paths speed up
-                      travel.
+                      Vineyards press grapes into wine. Farms produce wheat,
+                      bakeries turn 3 wheat into 5 bread, lumberyards supply
+                      wood, and mines gather stone. Windmills turn 2 food into
+                      8 food per cycle. Paths speed up travel.
                     </span>
                   </div>
                 </div>
@@ -2393,6 +2591,7 @@ function App() {
                   automatically. Use the menu for backup export/import.
                 </div>
                 <button
+                  type="button"
                   className="primary full"
                   onClick={() => setHelp(false)}
                 >
@@ -2420,7 +2619,7 @@ function App() {
         <div className="loading-screen" role="alert" aria-atomic="true">
           <h2>The village couldn’t load.</h2>
           <p>Please reload to try loading the 3D models again.</p>
-          <button className="primary" onClick={() => location.reload()}>
+          <button type="button" className="primary" onClick={() => location.reload()}>
             Try again
           </button>
         </div>
@@ -2430,4 +2629,12 @@ function App() {
 }
 const isHealthCheck = window.location.pathname.replace(/\/$/, "") === "/health-check";
 if (isHealthCheck) document.title = "Performance health check — Hearth & Hamlet";
-createRoot(document.getElementById("root")).render(isHealthCheck ? <HealthCheck /> : <App />);
+createRoot(document.getElementById("root")).render(
+  isHealthCheck ? (
+    <Suspense fallback={<div role="status">Loading performance health check…</div>}>
+      <HealthCheck />
+    </Suspense>
+  ) : (
+    <App />
+  ),
+);

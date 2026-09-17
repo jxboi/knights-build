@@ -78,22 +78,24 @@ Simulation time is scaled by the selected speed (`0`, `1`, `2`, or `4`), while d
 
 `Village` is the authoritative aggregate for the current settlement. Its important state is:
 
-- `resources`: wood, stone, and food stock.
-- `buildings`: placed structures with `type`, grid position, rotation, construction `progress`, and completed production `cycles`.
+- `resources`: wood, stone, food, wheat, and wine stock.
+- `buildings`: placed structures with `type`, grid position, rotation, construction `progress`, completed production `cycles`, capped worksite stock, and delivery state.
 - `workers`: villagers with a phase, assigned building, route, carried goods, and work/delivery status.
 - `roads` and `baseRoads`: player-built paths versus immutable starter paths.
 - `created`, `gathered`, `elapsed`, `activityLog`, and the current settlement name.
 - camera view state, selection/placement state, storage availability, and cross-tab conflict state.
 
-The normal worker flow is:
+The normal worker flows are:
 
 ```text
 idle -> travel -> construct -> idle
-                    \-> work -> deliver -> work
-                              \-> waiting for input / waiting for route
+   \-> travel -> work -> worksite stock
+                         \-> waiting for input / full stock
+   \-> haul pickup -> haul delivery -> idle
+   \-> eat travel -> eat -> idle
 ```
 
-Construction workers travel to a site, advance its progress, and return to idle when the building completes. Production workers route to a reachable work point, perform timed cycles, carry the result to the town hall, and only credit the resource after a successful delivery. Windmills additionally require food input.
+Construction workers travel to a site, advance its progress, and return to idle when the building completes. Production workers route to a reachable work point and place each completed batch in that building's capped stock. Carrier workers collect finished goods and deliver them to the nearest valid Inn, Storehouse, or town hall; the village resource total and delivery history are credited only when the destination accepts the load. Farms return wheat to their farmhouse store, while windmills additionally require food input.
 
 Routing uses a weighted grid search. It avoids building footprints, scenery, river/boundary constraints, and blocked road tiles while preferring connected player paths. A worker retains its route target and can reroute when a newly placed structure blocks the next step.
 
@@ -126,13 +128,14 @@ Three.js owns mutable scene objects and GPU resources. GLB scenes are cloned for
 The browser save key is `hearth-v1`. A save contains:
 
 - settlement name;
-- resources, population, elapsed time, gathered total, and created counters;
+- resources, population, elapsed time, gathered total, delivered totals, and created counters;
+- chapter rewards, feast/tutorial state, graphics/audio preferences, and bounded worker needs/trades;
 - the four newest activity messages;
 - camera position, orbit target, and bounded zoom;
-- player roads;
-- building records: type, position, rotation, progress, and production cycles.
+- player roads, non-available tree state, and cleared scenery keys;
+- building records: type, position, rotation, priority, pause/upgrade state, construction materials, progress, production cycles, worksite stock, grain planting time, Inn bread stock, and School training state.
 
-Workers, generated scenery, Three.js objects, and transient visual effects are reconstructed rather than serialized.
+Worker routes, assignments, generated scenery meshes, Three.js objects, and transient visual effects are reconstructed rather than serialized; persisted worker needs and trades are reapplied after the population is rebuilt.
 
 ### Sanitization
 

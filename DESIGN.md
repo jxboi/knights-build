@@ -155,7 +155,7 @@ The game is a full-viewport composition. The Three.js world occupies the backgro
 
 ### Responsive behavior
 
-- At `max-width: 1100px`, reduce gutters and palette dimensions while keeping the eleven-action build rail intact.
+- At `max-width: 1100px`, reduce gutters and palette dimensions while keeping the full build-and-path rail intact.
 - At `max-width: 760px`, the topbar becomes a two-row grid: brand/day/menu above, resources below. Preserve `env(safe-area-inset-*)` insets.
 - Mobile keeps the world full-screen and compresses the palette, controls, objectives, and inspector rather than introducing a separate mobile page.
 - At very narrow widths (`max-width: 360px`), truncate long build labels and remove nonessential persistent status text while preserving accessible names and live state elsewhere.
@@ -213,7 +213,7 @@ The left objective card explains the early-game path and reports progress.
 
 The centered bottom palette is the primary navigation for building actions.
 
-- Keep the palette as a single readable rail with eleven equal action cards on desktop and mobile; the last three decorative actions remain palette-only.
+- Keep the palette as a single readable rail with equal action cards on desktop and mobile; the first nine cards have keyboard shortcuts and the remaining build/path tools remain directly available in the palette.
 - Show the actual model thumbnail from the GLB asset; do not replace it with a generic icon.
 - Use a transparent/default card, warm hover tint, and wood-colored selected state.
 - Selected cards use cream text and a darker wood border. Add a small animated selection pip only as a subtle confirmation.
@@ -287,7 +287,7 @@ When generating or changing Hearth & Hamlet UI:
 3. Use the existing olive, cream, timber, terracotta, stone, water, and wheat palette before inventing new colors.
 4. Prefer small-radius parchment cards, thin warm borders, and soft shadows.
 5. Keep the centered bottom build rail, left objectives, top resource strip, and right contextual controls coherent across widths.
-6. Preserve the eleven-action build palette and model thumbnails; do not substitute a generic card grid.
+6. Preserve the full build-and-path palette and model thumbnails; do not substitute a generic card grid.
 7. Make state visible through text, icon, and color together. Never rely on color alone.
 8. Add motion only for feedback or atmosphere and preserve the reduced-motion behavior.
 9. Reuse existing component classes and CSS variables before adding one-off styles.

@@ -16,7 +16,7 @@ export const CHAPTER_GOALS = [
   {
     id: "thriving-market",
     title: "A thriving market",
-    description: "Deliver 32 food to the town hall through bakeries and windmills.",
+    description: "Deliver 32 food through bakeries and windmills.",
     metric: "foodDelivered",
     target: 32,
     reward: "Market pennant",
@@ -39,7 +39,7 @@ export const chapterGoalValue = (goal, { buildings = [], created = {}, delivered
     const houses = buildings.filter(
       (building) => building?.type === "house" && building.progress === 1,
     ).length;
-    return houses >= 4 && buildings.some((building) => building?.type === "well" && building.progress === 1) ? 1 : 0;
+    return houses >= 2 && buildings.some((building) => building?.type === "well" && building.progress === 1) ? 1 : 0;
   }
   return 0;
 };

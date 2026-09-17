@@ -20,6 +20,8 @@ function cleanContext(input) {
       wood: Number.isFinite(Number(resources.wood)) ? Number(resources.wood) : 0,
       stone: Number.isFinite(Number(resources.stone)) ? Number(resources.stone) : 0,
       food: Number.isFinite(Number(resources.food)) ? Number(resources.food) : 0,
+      wheat: Number.isFinite(Number(resources.wheat)) ? Number(resources.wheat) : 0,
+      wine: Number.isFinite(Number(resources.wine)) ? Number(resources.wine) : 0,
     },
     buildings: buildings.slice(0, 32).map((building) => ({
       name: cleanText(building?.name, 80),

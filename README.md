@@ -52,19 +52,25 @@ Open `/health-check` on the deployed game (for example, `https://your-domain/hea
 
 ## Build palette
 
-The numbered cards match the keyboard shortcuts:
+The first nine cards match the keyboard shortcuts; later cards remain
+available directly from the palette:
 
 | Key | Building | Cost | Effect |
 | --- | --- | --- | --- |
 | 1 | Cottage | 30 wood · 10 stone | +2 housing capacity; houses up to 2 workers when complete |
 | 2 | Well | 15 wood · 25 stone | Village gathering place |
 | 3 | Farmhouse | 25 wood · 5 stone | Farmers harvest connected ripe fields |
-| 4 | Grain field | 1 food per tile | Grows in 30 seconds, then yields 8 food |
-| 5 | Lumberyard | 20 wood · 10 stone | Workers chop nearby trees and saw +8 wooden planks per delivery |
-| 6 | Stone mine | 35 wood · 15 stone | +6 stone per delivery |
-| 7 | Windmill | 50 wood · 35 stone | Converts 2 food into 8 food per cycle |
-| 8 | Watchtower | 45 wood · 20 stone | Expands the buildable boundary by 3 tiles |
-| 9 | Path | 1 stone per tile | Villagers move 50% faster on paths |
+| 4 | Bakery | 40 wood · 25 stone | Turns 3 wheat into 5 bread per 12-second cycle; holds 5 |
+| 5 | Inn | 55 wood · 25 stone | Holds 8 bread and serves 3 hungry villagers |
+| 6 | Storehouse | 40 wood · 60 stone | Adds 150 storage for every resource and posts 3 carriers |
+| 7 | Grain field | 1 food per tile | Grows in 30 seconds; a farmhouse harvests 8 wheat per plot |
+| 8 | Lumberyard | 20 wood · 10 stone | Workers chop nearby trees and saw +8 wooden planks per cycle |
+| 9 | Stone mine | 35 wood · 15 stone | +6 stone per cycle; holds 12 |
+| — | Windmill | 50 wood · 35 stone | Converts 2 food into 8 food per 20-second cycle |
+| — | Watchtower | 45 wood · 20 stone | Expands the buildable boundary by 3 tiles |
+| — | School | 60 wood · 45 stone | Trains builders and tradesfolk |
+| — | Vineyard | 45 wood · 30 stone | Produces +6 wine per 20-second cycle |
+| — | Path | 1 stone per tile | Villagers move 50% faster on paths |
 
 Workers are assigned automatically. Builders handle construction, while lumberyards employ up to 2 woodcutters, and farms, mines, and bakeries employ up to 1 farmer, miner, or baker respectively. Windmills use one baker slot for their existing food-processing loop. Any worker without a production job remains a builder. Each completed cottage houses 2 workers.
 
@@ -88,7 +94,7 @@ Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment ser
 
 1. **World:** grassy terrain with subtle color variation → toggleable 1-unit grid → orthographic pan/zoom/orbit camera → warm sunlight and shadows → a readable morning-to-night light cycle with dusk lanterns → animated foliage, water highlights, ambient motes, distant birds, and paths with faster movement → curved river, ripples, rocks, reeds, and a wooden landing.
 2. **Assets:** pine trees → faceted rocks → timber fences → cottages → masonry well → wheat farm → lumberyard → rocky mine → rotating windmill → watchtower. Includes a central village hall and workers.
-3. **Simulation:** workers → balanced job assignment → obstacle-aware grid routing → automatic work and construction jobs → renewable tree harvesting → Lumberyard log delivery and plank sawing → wood/stone/food storage → timed production with visible carried goods, delivery bursts, and activity feedback at the town hall. Chopped trees regrow after 90 seconds. Farms deliver wheat to storage. Bakeries turn 4 wheat into 8 bread (added to food) per 16-second work cycle and wait when wheat is unavailable. Windmills require food input. Cottages add housing and welcome two workers, up to 24 simulated villagers. Completing the three starter goals gets a one-time flourishing acknowledgement.
+3. **Simulation:** workers → balanced job assignment → obstacle-aware grid routing → automatic work and construction jobs → renewable tree harvesting → Lumberyard log delivery and plank sawing → capped worksite stock → carrier deliveries to Inns, Storehouses, and the town hall → bounded village storage → timed production with visible carried goods, delivery bursts, and activity feedback. Chopped trees regrow after 90 seconds. Farms return wheat to their farmhouse store. Bakeries turn 3 wheat into 5 bread per 12-second work cycle and wait when wheat is unavailable; carriers move bread to the Inn first. Windmills turn 2 food into 8 food per 20-second cycle and wait when food is unavailable. Cottages add housing and welcome two workers, up to 24 simulated villagers. Completing the three starter goals gets a one-time flourishing acknowledgement.
 4. **Building:** choose a building → translucent grid-snapped preview → validate land, obstacles, resources, and footprint → place and pay → a worker travels to the site → scaffolding and rising geometry show construction → the finished building joins the village simulation.
 
 ## Controls
@@ -98,7 +104,7 @@ Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment ser
 - When housing is full, the population indicator and settlement status call out that another cottage is needed.
 - Choose a palette item, then click valid terrain to build. Grain fields must start beside a completed farmhouse and may then extend from another connected plot. Drag while Grain field or Path is selected to lay a connected segment; diagonal drags choose the clearer Manhattan turn around obstacles. Grain advances from tilled soil to shoots, green-gold stalks, and ripe wheat before a farmer harvests it. Green preview = valid; red = blocked.
 - **R:** rotate preview. **Esc:** cancel. **B:** cottage. **G:** grid.
-- **1–9:** choose a building from the palette; use the palette directly for the remaining decorative actions.
+- **1–9:** choose the first nine tools from the palette; use the palette directly for the remaining building, path, and removal tools.
 - **Arrow keys:** pan the camera.
 - **?:** open the help dialog.
 - **Village advisor:** ask for context-aware advice about resources, workers, goals, and the next building to place.
@@ -129,7 +135,7 @@ Runtime UI thumbnails are rendered directly from the same GLB models. The genera
 
 ## Persistence and project layout
 
-Village state is saved to browser `localStorage` under `hearth-v1`. It includes the settlement name, resources, villagers, buildings, construction progress, deliveries, paths, milestones, activity history, and camera framing. Autosave runs during simulation, and the village menu provides manual save, rename, overview, help, and reset actions. A tab that detects a newer save freezes simulation and offers a reload action so it cannot overwrite the newer village.
+Village state is saved to browser `localStorage` under `hearth-v1`. It includes the settlement name, resources, villagers' hunger and trades, buildings, construction progress, worksite stock, training and pause state, deliveries, paths, active tree state, milestones, activity history, camera framing, and cleared scenery. Autosave runs during simulation, and the village menu provides manual save, rename, overview, help, and reset actions. A tab that detects a newer save freezes simulation and offers a reload action so it cannot overwrite the newer village.
 
 Key files:
 
