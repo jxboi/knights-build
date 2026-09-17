@@ -1124,8 +1124,8 @@ test("a farmer keeps a partial harvest until the farmhouse has room", () => {
 
 test("a baker enters the bakery before starting a production cycle", () => {
   const v = village();
-  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0, paused: false };
-  const inn = { id: "inn-1", type: "inn", progress: 1, x: 10, z: 6, cycles: 0, paused: false, breadStock: 0 };
+  const bakery = { type: "bakery", progress: 1, x: 6, z: 6, cycles: 0 };
+  const inn = { id: "inn-1", type: "inn", progress: 1, x: 10, z: 6, cycles: 0, breadStock: 0 };
   const worker = {
     id: "worker-baker",
     m: new THREE.Object3D(),
@@ -1240,12 +1240,6 @@ test("a School already training refuses a second apprentice", () => {
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), true);
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.BUILDER), false);
   assert.equal(v.workers.length, 2);
-  // A paused School suspends the countdown rather than losing it.
-  school.paused = true;
-  const remaining = school.training.remaining;
-  v.updateTraining(5);
-  assert.equal(school.training.remaining, remaining);
-  school.paused = false;
   v.updateTraining(TRAINING_SECONDS + 0.1);
   assert.equal(v.workers.length, 3);
 });
@@ -1379,9 +1373,6 @@ test("only a completed, working School trains anyone", () => {
   const v = trainingVillage(buildings, [{}]);
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), false);
   site.progress = 1;
-  site.paused = true;
-  assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), false);
-  site.paused = false;
   assert.equal(v.trainWorker("school-1", WORKER_TYPES.WOODCUTTER), true);
   assert.equal(v.trainWorker("bakery-1", WORKER_TYPES.WOODCUTTER), false);
 });
@@ -1506,9 +1497,8 @@ test("a vintner treads grapes in the open bay and delivers wine to the hall", ()
     z: 6,
     rotation: 0,
     cycles: 0,
-    paused: false,
   };
-  const hall = { type: "townhall", progress: 1, x: 0, z: 0, cycles: 0, paused: false };
+  const hall = { type: "townhall", progress: 1, x: 0, z: 0, cycles: 0 };
   const worker = {
     id: "worker-vintner",
     m: new THREE.Object3D(),
@@ -2292,30 +2282,6 @@ test("bread fills the canteen first and only then spills into a store", () => {
   assert.equal(v.resources.food, 5);
 });
 
-test("carrier destination skips a paused Inn without losing the store fallback", () => {
-  const v = village();
-  const inn = {
-    type: "inn",
-    progress: 1,
-    paused: true,
-    x: 0,
-    z: 0,
-    breadStock: 0,
-  };
-  const hall = {
-    type: "townhall",
-    progress: 1,
-    x: 6,
-    z: 0,
-  };
-  const worker = { m: new THREE.Object3D() };
-  worker.m.position.set(0, 0, 0);
-  v.buildings = [inn, hall];
-  v.resources.food = 0;
-  assert.equal(v.haulDestination(worker, "food"), hall);
-  assert.equal(v.haulDestination(worker, "stone"), hall);
-});
-
 test("a blocked carrier waits instead of crediting resources remotely", () => {
   const v = village();
   const yard = {
@@ -2449,7 +2415,7 @@ test("a Storehouse raises the ceiling every resource is measured against", () =>
 test("storage capacity calculates Inn pantry space only for food", () => {
   const v = village();
   const hall = { type: "townhall", progress: 1, x: 0, z: 0 };
-  const inn = { type: "inn", progress: 1, paused: false, x: 6, z: 0 };
+  const inn = { type: "inn", progress: 1, x: 6, z: 0 };
   v.buildings = [hall, inn];
   const capacities = v.storageCapacities();
   assert.equal(capacities.wood, TOWNHALL_STORAGE);
@@ -2458,8 +2424,6 @@ test("storage capacity calculates Inn pantry space only for food", () => {
     capacities.food,
     TOWNHALL_STORAGE + CATALOG.inn.breadCap,
   );
-  inn.paused = true;
-  assert.equal(v.storageCapacities().food, TOWNHALL_STORAGE);
 });
 
 test("storage capacity counters match the completed building set", () => {
@@ -2467,8 +2431,7 @@ test("storage capacity counters match the completed building set", () => {
   v.buildings = [
     { type: "townhall", progress: 1 },
     { type: "storehouse", progress: 1 },
-    { type: "inn", progress: 1, paused: false },
-    { type: "inn", progress: 1, paused: true },
+    { type: "inn", progress: 1 },
     { type: "storehouse", progress: 0 },
   ];
   assert.equal(
@@ -3441,7 +3404,6 @@ test("stale tabs refuse inspector and feast mutations", () => {
   });
   assert.equal(v.removeBuilding("building-1"), false);
   assert.equal(v.setPriority("building-1", "priority"), false);
-  assert.equal(v.setPaused("building-1", true), false);
   assert.equal(v.upgradeBuilding("building-1"), false);
   assert.equal(v.startFeast(), false);
   assert.equal(v.dismissTutorial(), false);
@@ -3654,7 +3616,7 @@ test("village backups are parseable and summarize safely", () => {
   });
 });
 
-test("feasts spend food and pause controls release current workers", () => {
+test("feasts spend food", () => {
   const v = village();
   Object.assign(v, {
     ready: true,
@@ -3667,52 +3629,6 @@ test("feasts spend food and pause controls release current workers", () => {
   assert.equal(v.startFeast(), true);
   assert.equal(v.resources.food, 70);
   assert.equal(v.feast.remaining, 45);
-  const building = { id: "farm-1", type: "farm", progress: 1, paused: false };
-  const worker = {
-    building,
-    phase: "work",
-    path: [],
-    timer: 2,
-    waitingForInput: true,
-    waitingForStock: true,
-    waitingForInn: true,
-    mealSeat: 1,
-    deliveryRetry: 1.5,
-    workDuration: 4,
-    routeTarget: { x: 4, z: 4 },
-    materialResource: "wood",
-    waitingForSpace: true,
-    waitingFor: "worker-2",
-    spaceWait: 2,
-    forcedYield: "worker-2",
-    avoidanceTarget: new THREE.Vector3(2, 0, 2),
-    avoidanceTime: 1,
-    deadlockLeaderTime: 1,
-    deadlockYieldTime: 1,
-    deadlockYieldTo: "worker-2",
-  };
-  v.buildings = [building];
-  v.workers = [worker];
-  assert.equal(v.setPaused("farm-1", true), true);
-  assert.equal(worker.building, null);
-  assert.equal(building.paused, true);
-  assert.equal(worker.waitingForInput, false);
-  assert.equal(worker.waitingForStock, false);
-  assert.equal(worker.waitingForInn, false);
-  assert.equal(worker.mealSeat, null);
-  assert.equal(worker.deliveryRetry, 0);
-  assert.equal(worker.workDuration, 0);
-  assert.equal(worker.routeTarget, null);
-  assert.equal(worker.materialResource, null);
-  assert.equal(worker.waitingForSpace, false);
-  assert.equal(worker.waitingFor, null);
-  assert.equal(worker.spaceWait, 0);
-  assert.equal(worker.forcedYield, null);
-  assert.equal(worker.avoidanceTarget, null);
-  assert.equal(worker.avoidanceTime, 0);
-  assert.equal(worker.deadlockLeaderTime, 0);
-  assert.equal(worker.deadlockYieldTime, 0);
-  assert.equal(worker.deadlockYieldTo, null);
 });
 
 test("clearing a grain field releases stale farmer work state", () => {
@@ -3792,7 +3708,7 @@ test("clearing a grain field releases stale farmer work state", () => {
 test("food spending keeps Inn pantry stock within the village food total", () => {
   const v = village();
   const hall = { type: "townhall", progress: 1 };
-  const inn = { type: "inn", progress: 1, paused: false, breadStock: 8 };
+  const inn = { type: "inn", progress: 1, breadStock: 8 };
   v.buildings = [hall, inn];
   v.resources.food = 31;
   v.emit = () => {};
@@ -3814,7 +3730,6 @@ test("a bakery waits for wheat, then stacks loaves up to its own limit", () => {
     x: 10,
     z: 6,
     cycles: 0,
-    paused: false,
     breadStock: 0,
   };
   const worker = {
@@ -3887,7 +3802,6 @@ test("hungry workers reserve an Inn seat, eat one bread, and return satisfied", 
     z: 6,
     rotation: 0,
     cycles: 0,
-    paused: false,
     breadStock: 3,
   };
   const worker = {
@@ -3960,7 +3874,6 @@ test("bread already served to a seated diner does not reserve the remaining pant
     x: 6,
     z: 6,
     rotation: 0,
-    paused: false,
     breadStock: 1,
   };
   const seated = {
@@ -3994,7 +3907,6 @@ test("an incoming meal at one Inn does not block another Inn", () => {
     progress: 1,
     x: 6,
     z: 6,
-    paused: false,
     breadStock: 1,
   };
   const otherInn = {
@@ -4003,7 +3915,6 @@ test("an incoming meal at one Inn does not block another Inn", () => {
     progress: 1,
     x: -6,
     z: -6,
-    paused: false,
     breadStock: 0,
   };
   const incoming = {
@@ -4038,7 +3949,6 @@ test("the real route loop carries Bakery bread to the Inn and serves a meal", ()
     x: 4,
     z: 4,
     cycles: 0,
-    paused: false,
     m: new THREE.Object3D(),
   };
   const inn = {
@@ -4049,7 +3959,6 @@ test("the real route loop carries Bakery bread to the Inn and serves a meal", ()
     z: 4,
     rotation: 0,
     cycles: 0,
-    paused: false,
     breadStock: 0,
     m: new THREE.Object3D(),
   };
@@ -4073,7 +3982,6 @@ test("the real route loop carries Bakery bread to the Inn and serves a meal", ()
     x: 0,
     z: 4,
     cycles: 0,
-    paused: false,
     m: new THREE.Object3D(),
   };
   v.resources.wheat = 40;

@@ -1596,7 +1596,6 @@ export class Village {
             progress,
             cycles,
             b.priority,
-            b.paused,
             b.upgrade,
             b.materials,
             b.plantedAt,
@@ -1990,7 +1989,6 @@ export class Village {
     progress = 1,
     cycles = 0,
     priority = "normal",
-    paused = false,
     upgrade = null,
     materials = null,
     plantedAt = null,
@@ -2013,7 +2011,6 @@ export class Village {
       sails: type === "windmill" ? m.getObjectByName?.("Sails") || null : null,
       cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
       priority: priority === "priority" ? "priority" : "normal",
-      paused: Boolean(paused),
       upgrade: upgrade ? String(upgrade) : null,
       materials: normalizedConstructionMaterials(type, materials, progress),
       plantedAt:
@@ -3481,50 +3478,6 @@ export class Village {
     this.emit();
     return true;
   }
-  setPaused(id, paused) {
-    if (this.blockedByStorageConflict()) return false;
-    const building = this.buildings.find((candidate) => candidate.id === id);
-    if (!building) return false;
-    building.paused = Boolean(paused);
-    for (const worker of this.workers) {
-      if (
-        worker.building !== building ||
-        CARRYING_PHASES.includes(worker.phase)
-      )
-        continue;
-      if (worker.field) worker.field.claimedBy = null;
-      if (worker.tree) this.releaseTree(worker.tree);
-      worker.field = null;
-      worker.tree = null;
-      worker.building = null;
-      worker.workInside = false;
-      this.setWorkerInside(worker, false);
-      worker.phase = "idle";
-      worker.waitingForInput = false;
-      worker.waitingForStock = false;
-      worker.waitingForInn = false;
-      worker.mealSeat = null;
-      worker.deliveryRetry = 0;
-      worker.timer = 0;
-      worker.workDuration = 0;
-      worker.path = [];
-      worker.routeTarget = null;
-      worker.waitingForSpace = false;
-      worker.waitingFor = null;
-      worker.spaceWait = 0;
-      worker.forcedYield = null;
-      worker.avoidanceTarget = null;
-      worker.avoidanceTime = 0;
-      worker.deadlockLeaderTime = 0;
-      worker.deadlockYieldTime = 0;
-      worker.deadlockYieldTo = null;
-      worker.materialResource = null;
-    }
-    this.announce(`${CATALOG[building.type].name} ${building.paused ? "paused" : "resuming"}.`);
-    this.save();
-    this.emit();
-    return true;
-  }
   upgradeBuilding(id) {
     if (this.blockedByStorageConflict()) return false;
     const building = this.buildings.find((candidate) => candidate.id === id);
@@ -3548,10 +3501,6 @@ export class Village {
     if (this.blockedByStorageConflict()) return false;
     const school = this.buildings.find((candidate) => candidate.id === id);
     if (!school || school.type !== "school" || school.progress < 1) return false;
-    if (school.paused) {
-      this.notify("The School is paused.");
-      return false;
-    }
     if (school.training) {
       this.notify("The School is already training someone.");
       return false;
@@ -3577,7 +3526,7 @@ export class Village {
   updateTraining(dt) {
     for (const school of this.buildings) {
       if (school.type !== "school" || !school.training) continue;
-      if (school.progress < 1 || school.paused) continue;
+      if (school.progress < 1) continue;
       const session = school.training;
       session.remaining = Math.max(0, finiteNumber(session.remaining, 0) - dt);
       if (session.remaining > 0) continue;
@@ -4826,13 +4775,13 @@ export class Village {
   completedInns() {
     return this.buildings.filter(
       (building) =>
-        building.type === "inn" && building.progress === 1 && !building.paused,
+        building.type === "inn" && building.progress === 1,
     );
   }
   completedInnCount() {
     let count = 0;
     for (const building of this.buildings)
-      if (building.type === "inn" && building.progress === 1 && !building.paused)
+      if (building.type === "inn" && building.progress === 1)
         count++;
     return count;
   }
@@ -4855,7 +4804,7 @@ export class Village {
     let best = null;
     let bestDistance = Infinity;
     for (const inn of this.buildings) {
-      if (inn.type !== "inn" || inn.progress !== 1 || inn.paused) continue;
+      if (inn.type !== "inn" || inn.progress !== 1) continue;
       let reservedSeats = 0;
       let incomingDiners = 0;
       for (const candidate of this.workers) {
@@ -5032,7 +4981,6 @@ export class Village {
         if (
           candidate.type !== "inn" ||
           candidate.progress !== 1 ||
-          candidate.paused ||
           this.innBreadSpace(candidate) <= 0
         )
           continue;
@@ -5282,7 +5230,6 @@ export class Village {
       .filter(
         (b) =>
           b.progress < 1 &&
-          !b.paused &&
           !occupiedBuildings.has(b),
       )
       .sort(compareJobs);
@@ -5292,7 +5239,6 @@ export class Village {
         CATALOG[b.type]?.resource &&
         workerTypeForBuilding(b.type) &&
         workerLoad(b) < workerCapacityForBuilding(b.type) &&
-        !b.paused &&
         // A building whose own store is full stops taking workers until a
         // carrier has cleared it.
         this.stockSpace(b) > 0 &&
@@ -5383,7 +5329,7 @@ export class Village {
     }
     const candidates = isCarrier ? construction : [...employedSites, ...construction];
     const well = this.buildings.find(
-      (building) => building.type === "well" && building.progress === 1 && !building.paused,
+      (building) => building.type === "well" && building.progress === 1,
     );
     const wellVisitors = this.workers.filter(
       (worker) =>
@@ -5821,38 +5767,6 @@ export class Village {
         )
       : this.workers;
     for (const w of movementOrder) {
-      if (
-        w.building?.paused &&
-        !CARRYING_PHASES.includes(w.phase)
-      ) {
-        if (w.field) w.field.claimedBy = null;
-        if (w.tree) this.releaseTree(w.tree);
-        w.field = null;
-        w.tree = null;
-        w.building = null;
-        w.workInside = false;
-        this.setWorkerInside(w, false);
-        w.phase = "idle";
-        w.mealSeat = null;
-        w.timer = 0;
-        w.path = [];
-        w.waitingForSpace = false;
-        w.waitingFor = null;
-        w.spaceWait = 0;
-        w.forcedYield = null;
-        w.waitingForInput = false;
-        w.waitingForStock = false;
-        w.waitingForInn = false;
-        w.deliveryRetry = 0;
-        w.workDuration = 0;
-        w.routeTarget = null;
-        w.avoidanceTarget = null;
-        w.avoidanceTime = 0;
-        w.deadlockLeaderTime = 0;
-        w.deadlockYieldTime = 0;
-        w.deadlockYieldTo = null;
-        w.materialResource = null;
-      }
       if (w.path.length) {
         this.moveWorker(w, dt);
         continue;
@@ -6465,8 +6379,7 @@ export class Village {
         building.progress === 1 &&
         CATALOG[building.type]?.resource &&
         (building.type !== "farm" || readyFieldsFor(building).length > 0) &&
-        (building.paused ||
-          this.stockSpace(building) <= 0 ||
+        (this.stockSpace(building) <= 0 ||
           building.lastRouteBlocked ||
           !assignedByBuilding.has(building)),
     ).length;
@@ -6536,8 +6449,6 @@ export class Village {
                   growing: "Growing",
                   ripe: "Ripe",
                 }[fieldStage]
-            : b.paused
-            ? "Paused"
             : b.progress < 1 &&
                 !materialsReady &&
                 assigned.some((w) => w.phase === "material_pickup")
@@ -6626,7 +6537,6 @@ export class Village {
                 : work.remaining,
           status,
           priority: b.priority,
-          paused: Boolean(b.paused),
           upgrade: b.upgrade,
           fieldStage,
           ...(b.type === "inn"
@@ -6744,7 +6654,7 @@ export class Village {
         })),
       clearedScenery: [...(this.clearedScenery || [])],
       buildings: this.buildings.map(
-        ({ type, x, z, rotation, progress, cycles, priority, paused, upgrade, materials, plantedAt, breadStock, training, stock }) => ({
+        ({ type, x, z, rotation, progress, cycles, priority, upgrade, materials, plantedAt, breadStock, training, stock }) => ({
           type,
           x,
           z,
@@ -6752,7 +6662,6 @@ export class Village {
           progress,
           cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
           priority: priority === "priority" ? "priority" : "normal",
-          paused: Boolean(paused),
           upgrade: upgrade ? String(upgrade) : null,
           materials: { ...materials },
           ...(type === "grainfield"
