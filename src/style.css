@@ -935,6 +935,8 @@ h1 span {
 }
 .bottom-right .icon-button.parchment {
   background: transparent;
+  border: none;
+  box-shadow: none;
 }
 .build-tooltip {
   position: absolute;

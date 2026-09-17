@@ -64,7 +64,7 @@ export const PAUSED_RENDER_INTERVAL = 1 / 30;
 // Keep the starter settlement's common area open enough for the buildings and
 // paths to read as one place. This only affects trees; rocks can still add a
 // little visual texture without blocking the central space.
-export const STARTER_SETTLEMENT_CLEAR_RADIUS = 8;
+export const STARTER_SETTLEMENT_CLEAR_RADIUS = 12;
 export const isInStarterSettlementClearing = (x, z, type = "tree") =>
   type !== "tree" || Math.hypot(Number(x), Number(z)) >= STARTER_SETTLEMENT_CLEAR_RADIUS;
 const drawBlock = (next, size) => {

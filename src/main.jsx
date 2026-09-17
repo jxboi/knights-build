@@ -30,7 +30,6 @@ import MessageCircle from "lucide-react/dist/esm/icons/message-circle.js";
 import Send from "lucide-react/dist/esm/icons/send.js";
 import FileDown from "lucide-react/dist/esm/icons/file-down.js";
 import FileUp from "lucide-react/dist/esm/icons/file-up.js";
-import Eraser from "lucide-react/dist/esm/icons/eraser.js";
 import Sparkles from "lucide-react/dist/esm/icons/sparkles.js";
 import ArrowDownRight from "lucide-react/dist/esm/icons/arrow-down-right.js";
 import Pause from "lucide-react/dist/esm/icons/pause.js";
@@ -219,28 +218,6 @@ const BuildPalette = React.memo(function BuildPalette({
           </button>
         );
       })}
-      <button
-        type="button"
-        className={`build-card utility-card ${selected === "road-remove" ? "selected" : ""}`}
-        data-build-type="road-remove"
-        aria-label="Remove player-laid paths. Returns one stone per tile."
-        aria-pressed={selected === "road-remove"}
-        title="Remove paths: 1 stone returned per tile"
-        onClick={(event) => onChoose("road-remove", event.currentTarget)}
-        onMouseDown={(event) => {
-          event.preventDefault();
-          event.currentTarget.focus();
-        }}
-        onMouseEnter={() => onHover("road-remove")}
-        onMouseLeave={() => onHover(null)}
-        onFocus={() => onHover("road-remove")}
-        onBlur={() => onHover(null)}
-        disabled={!loaded || !!error}
-      >
-        <Eraser size={27} />
-        <span className="building-name">Remove paths</span>
-        {selected === "road-remove" && <i />}
-      </button>
     </nav>
   );
 }, (previous, next) =>
