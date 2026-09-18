@@ -1,0 +1,52 @@
+- main [ref=f99e3]:
+  - generic "Interactive 3D village. Drag to pan, scroll or pinch to zoom, and use right-drag or two fingers to orbit." [ref=f99e4]
+  - generic [ref=f99e5]:
+    - generic [ref=f99e11]:
+      - heading "Hearth & Hamlet" [level=1] [ref=f99e12]
+      - paragraph [ref=f99e13]: A LITTLE WORLD OF YOUR OWN
+    - generic [ref=f99e21]:
+      - strong [ref=f99e22]: Day 82
+      - generic [ref=f99e23]: Dawn
+    - button "Open village menu" [ref=f99e24] [cursor=pointer]
+  - generic [ref=f99e27]:
+    - group "Simulation speed controls" [ref=f99e28]:
+      - button "Pause simulation" [ref=f99e29] [cursor=pointer]
+      - button "Set simulation speed to 1x" [pressed] [ref=f99e33] [cursor=pointer]: 1×
+      - button "Set simulation speed to 2x" [ref=f99e34] [cursor=pointer]: 2×
+      - button "Set simulation speed to 4x" [ref=f99e35] [cursor=pointer]: 4×
+    - button "Open village advisor" [ref=f99e36] [cursor=pointer]:
+      - generic [ref=f99e39]: Village advisor
+  - generic [ref=f99e41]:
+    - button "Collapse building menu" [expanded] [ref=f99e42] [cursor=pointer]
+    - navigation "Village building and path tools. On small screens, scroll horizontally to see every tool." [ref=f99e47]:
+      - button "Build Watchtower. Costs 45 wood · 20 stone. Resources ready" [ref=f99e48] [cursor=pointer]:
+        - generic [ref=f99e52]: Watchtower
+      - button "Build Cottage. Costs 30 wood · 10 stone. Resources ready" [ref=f99e53] [cursor=pointer]:
+        - generic [ref=f99e57]: Cottage
+      - button "Build Well. Costs 15 wood · 25 stone. Resources ready" [ref=f99e58] [cursor=pointer]:
+        - generic [ref=f99e62]: Well
+      - button "Build Grain field. Costs 1 food per tile. Resources ready" [ref=f99e63] [cursor=pointer]:
+        - generic [ref=f99e67]: Grain field
+      - button "Build Farmhouse. Costs 25 wood · 5 stone. Resources ready" [ref=f99e68] [cursor=pointer]:
+        - generic [ref=f99e72]: Farmhouse
+      - button "Build Bakery. Costs 40 wood · 25 stone. Resources ready" [ref=f99e73] [cursor=pointer]:
+        - generic [ref=f99e77]: Bakery
+      - button "Build Inn. Costs 55 wood · 25 stone. Resources ready" [ref=f99e78] [cursor=pointer]:
+        - generic [ref=f99e82]: Inn
+      - button "Build Storehouse. Costs 40 wood · 60 stone. Resources ready" [ref=f99e83] [cursor=pointer]:
+        - generic [ref=f99e87]: Storehouse
+      - button "Build Lumberyard. Costs 20 wood · 10 stone. Resources ready" [ref=f99e88] [cursor=pointer]:
+        - generic [ref=f99e92]: Lumberyard
+      - button "Build Stone mine. Costs 35 wood · 15 stone. Resources ready" [ref=f99e93] [cursor=pointer]:
+        - generic [ref=f99e97]: Stone mine
+      - button "Build Windmill. Costs 50 wood · 35 stone. Resources ready" [ref=f99e98] [cursor=pointer]:
+        - generic [ref=f99e102]: Windmill
+      - button "Build School. Costs 60 wood · 45 stone. Resources ready" [ref=f99e103] [cursor=pointer]:
+        - generic [ref=f99e107]: School
+      - button "Build Vineyard. Costs 45 wood · 30 stone. Resources ready" [ref=f99e108] [cursor=pointer]:
+        - generic [ref=f99e112]: Vineyard
+      - button "Build Path. Costs 1 stone per tile. Resources ready" [ref=f99e113] [cursor=pointer]:
+        - generic [ref=f99e117]: Path
+  - generic "This village saves automatically in this browser." [ref=f99e140]: Saved locally
+  - button "Toggle building grid" [ref=f99e123] [cursor=pointer]
+  - button "Choose a village backup file" [ref=f99e126]

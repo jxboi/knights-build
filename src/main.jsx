@@ -15,6 +15,7 @@ import X from "lucide-react/dist/esm/icons/x.js";
 import Check from "lucide-react/dist/esm/icons/check.js";
 import ArrowUpRight from "lucide-react/dist/esm/icons/arrow-up-right.js";
 import ArrowUp from "lucide-react/dist/esm/icons/arrow-up.js";
+import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.js";
 import RotateCw from "lucide-react/dist/esm/icons/rotate-cw.js";
 import MousePointer2 from "lucide-react/dist/esm/icons/mouse-pointer-2.js";
 import Grid2X2 from "lucide-react/dist/esm/icons/grid-2x2.js";
@@ -31,14 +32,32 @@ import Send from "lucide-react/dist/esm/icons/send.js";
 import FileDown from "lucide-react/dist/esm/icons/file-down.js";
 import FileUp from "lucide-react/dist/esm/icons/file-up.js";
 import Sparkles from "lucide-react/dist/esm/icons/sparkles.js";
+import Bookmark from "lucide-react/dist/esm/icons/bookmark.js";
+import Copy from "lucide-react/dist/esm/icons/copy.js";
+import Volume2 from "lucide-react/dist/esm/icons/volume-2.js";
 import ArrowDownRight from "lucide-react/dist/esm/icons/arrow-down-right.js";
 import Pause from "lucide-react/dist/esm/icons/pause.js";
 import Play from "lucide-react/dist/esm/icons/play.js";
+import Axe from "lucide-react/dist/esm/icons/axe.js";
+import Pickaxe from "lucide-react/dist/esm/icons/pickaxe.js";
+import Sprout from "lucide-react/dist/esm/icons/sprout.js";
+import Package from "lucide-react/dist/esm/icons/package.js";
+import Compass from "lucide-react/dist/esm/icons/compass.js";
+import History from "lucide-react/dist/esm/icons/history.js";
+import Bell from "lucide-react/dist/esm/icons/bell.js";
 import { CATALOG } from "./catalog.js";
 import { completedPlayerMilestone } from "./progression.js";
 import "./style.css";
 const HealthCheck = lazy(() => import("./health-check.jsx"));
 const resourceIcons = { wood: Trees, stone: Mountain, food: Croissant, wheat: Wheat, wine: Wine };
+const workerTypeIcons = {
+  Builder: Hammer,
+  Woodcutter: Axe,
+  Miner: Pickaxe,
+  Farmer: Sprout,
+  Baker: Croissant,
+  Carrier: Package,
+};
 // The palette is rendered again whenever the simulation emits a snapshot. Keep
 // its immutable catalog work outside App so those frequent renders only check
 // live resource affordability.
@@ -54,6 +73,202 @@ const CATALOG_ENTRIES = Object.entries(CATALOG).map(([type, catalog]) => {
   };
 });
 const CATALOG_TYPES = CATALOG_ENTRIES.map(({ type }) => type);
+const ADVISOR_RESOURCE_KEYS = ["wood", "stone", "food", "wheat", "wine"];
+const ADVISOR_RESOURCE_QUESTIONS = Object.freeze({
+  wood: "How is my wood supply doing, and what should I watch next?",
+  stone: "How is my stone supply doing, and what should I watch next?",
+  food: "How is my food supply doing, and what should I fix or protect next?",
+  wheat: "How is my wheat supply doing, and which worksite depends on it?",
+  wine: "How is my wine supply doing, and is it worth prioritizing right now?",
+});
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function advisorResourceRunway(resources = {}, trends = {}) {
+  return Object.fromEntries(
+    ADVISOR_RESOURCE_KEYS.map((resource) => {
+      const held = Math.max(0, Number(resources[resource]) || 0);
+      const trend = Number(trends[resource]) || 0;
+      return [
+        resource,
+        trend < -0.1 && held > 0
+          ? Math.max(0, Math.min(999, Math.round((held / Math.abs(trend)) * 10) / 10))
+          : null,
+      ];
+    }),
+  );
+}
+function formatAdvisorRunway(minutes) {
+  const value = Number(minutes);
+  if (!Number.isFinite(value)) return "an unknown amount of time";
+  if (value < 1) return "less than a minute";
+  if (value < 2) return "about 1 minute";
+  return `about ${Math.round(value)} minutes`;
+}
+function advisorHasNegativeAction(text, name, verbs) {
+  const escapedName = escapeRegExp(name);
+  const verbPattern = new RegExp(`\\b(?:${verbs})\\b`, "i");
+  const namePattern = new RegExp(`\\b${escapedName}\\b`, "i");
+  return String(text || "")
+    .split(/[.!?;,\n]+/)
+    .some(
+      (clause) =>
+        /\b(?:not|do not|don't|dont|never|avoid|skip|would not|wouldn't|cannot|can't|cant|unable to|not enough|no need to|not currently)\b/i.test(clause) &&
+        verbPattern.test(clause) &&
+        namePattern.test(clause),
+    );
+}
+function inferAdvisorBuildAction(content) {
+  const text = String(content || "").replace(/\*+/g, "");
+  for (const { type, catalog } of CATALOG_ENTRIES) {
+    if (type === "road") continue;
+    const name = escapeRegExp(catalog.name);
+    if (advisorHasNegativeAction(text, catalog.name, "build|place|choose|recommend")) continue;
+    const patterns = [
+      new RegExp(`\\b(?:build|place|choose|recommend)\\s+(?:a|an|the)\\s+${name}\\b`, "i"),
+      new RegExp(`\\b(?:best move|best build|next build|recommended build)\\s*[:\\-]?\\s*(?:a|an|the)?\\s*${name}\\b`, "i"),
+    ];
+    if (patterns.some((pattern) => pattern.test(text))) return type;
+  }
+  return null;
+}
+function inferAdvisorPreviewAction(content) {
+  const text = String(content || "").replace(/\*+/g, "");
+  if (!/\b(?:preview|simulate|model|what if|tradeoff|worth)\b/i.test(text)) return null;
+  for (const { type, catalog } of CATALOG_ENTRIES) {
+    if (type === "road") continue;
+    if (advisorHasNegativeAction(text, catalog.name, "preview|simulate|model")) continue;
+    const name = escapeRegExp(catalog.name);
+    if (new RegExp(`\\b${name}\\b`, "i").test(text)) return type;
+  }
+  return null;
+}
+function inferAdvisorPriorityAction(content) {
+  const text = String(content || "").replace(/\*+/g, "");
+  for (const { type, catalog } of CATALOG_ENTRIES) {
+    if (type === "road" || type === "townhall") continue;
+    const name = escapeRegExp(catalog.name);
+    if (advisorHasNegativeAction(text, catalog.name, "prioriti[sz]e|focus")) continue;
+    const patterns = [
+      new RegExp(`\\bprioriti[sz]e\\s+(?:(?:a|an|the)\\s+)?${name}\\b`, "i"),
+      new RegExp(`\\b(?:give|set)\\s+(?:a|an|the)\\s+${name}\\s+(?:top\\s+)?priority\\b`, "i"),
+      new RegExp(`\\bfocus\\s+(?:the\\s+)?workers?\\s+on\\s+(?:a|an|the)\\s+${name}\\b`, "i"),
+    ];
+    if (patterns.some((pattern) => pattern.test(text))) return type;
+  }
+  return null;
+}
+function inferAdvisorUpgradeAction(content) {
+  const text = String(content || "").replace(/\*+/g, "");
+  for (const { type, catalog } of CATALOG_ENTRIES) {
+    if (!catalog.upgrade) continue;
+    const name = escapeRegExp(catalog.name);
+    if (advisorHasNegativeAction(text, catalog.name, "upgrade|improve|enhance")) continue;
+    const patterns = [
+      new RegExp(`\\b(?:upgrade|improve|enhance)\\s+(?:(?:a|an|the)\\s+)?${name}\\b`, "i"),
+      new RegExp(`\\b(?:upgrade|choose)\\s+(?:the\\s+)?${name}\\s+(?:with\\s+)?${escapeRegExp(catalog.upgrade.name)}\\b`, "i"),
+    ];
+    if (patterns.some((pattern) => pattern.test(text))) return type;
+  }
+  return null;
+}
+function inferAdvisorFeastAction(content) {
+  const text = String(content || "").replace(/\*+/g, "");
+  if (/\b(?:do not|don't|not|never|avoid|skip|cannot|can't|unable to)\b[^.?!]{0,40}\b(?:start|hold|begin)\s+(?:a\s+)?(?:village\s+)?feast\b/i.test(text)) {
+    return null;
+  }
+  return /\b(?:start|hold|begin)\s+(?:a\s+)?(?:village\s+)?feast\b/i.test(text)
+    ? true
+    : null;
+}
+function inferAdvisorFocusAction(content) {
+  const text = String(content || "").replace(/\*+/g, "");
+  for (const { type, catalog } of CATALOG_ENTRIES) {
+    if (type === "road" || type === "townhall") continue;
+    const name = escapeRegExp(catalog.name);
+    if (advisorHasNegativeAction(text, catalog.name, "inspect|check|visit|focus")) continue;
+    const patterns = [
+      new RegExp(`\\b(?:inspect|check|visit|look\\s+at|focus\\s+on)\\s+(?:(?:a|an|the)\\s+)?${name}\\b`, "i"),
+    ];
+    if (patterns.some((pattern) => pattern.test(text))) return type;
+  }
+  return null;
+}
+function inferAdvisorWorkerFocusAction(content) {
+  const text = String(content || "").replace(/\*+/g, "");
+  for (const workerType of workerTypeOrder) {
+    const name = escapeRegExp(workerType);
+    if (advisorHasNegativeAction(text, workerType, "inspect|check|visit|focus")) continue;
+    const pattern = new RegExp(
+      `\\b(?:inspect|check|visit|look\\s+at|focus\\s+on)\\s+(?:(?:a|an|the|my)\\s+)?${name}\\b`,
+      "i",
+    );
+    if (pattern.test(text)) return workerType;
+  }
+  return null;
+}
+function inferAdvisorTrainingAction(content) {
+  const text = String(content || "").replace(/\*+/g, "");
+  if (!/\b(?:train|training|apprentice|school)\b/i.test(text)) return null;
+  for (const workerType of workerTypeOrder) {
+    const name = escapeRegExp(workerType);
+    if (advisorHasNegativeAction(text, workerType, "train|training|apprentice")) continue;
+    if (new RegExp(`\\b${name}\\b`, "i").test(text)) return workerType;
+  }
+  return null;
+}
+function missingAdvisorBuildCosts(type, resources = {}) {
+  const catalog = CATALOG[type];
+  if (!catalog || type === "road") return [];
+  return Object.entries(catalog.cost)
+    .filter(([resource, amount]) => Number(resources[resource] || 0) < amount)
+    .map(([resource, amount]) => [
+      resource,
+      Math.max(0, amount - Math.floor(Number(resources[resource] || 0))),
+    ]);
+}
+function missingAdvisorUpgradeCosts(type, resources = {}) {
+  const upgrade = CATALOG[type]?.upgrade;
+  if (!upgrade) return [];
+  return Object.entries(upgrade.cost)
+    .filter(([resource, amount]) => Number(resources[resource] || 0) < amount)
+    .map(([resource, amount]) => [
+      resource,
+      Math.max(0, amount - Math.floor(Number(resources[resource] || 0))),
+    ]);
+}
+function buildAdvisorScenario(type, resources = {}, storage = {}) {
+  const catalog = CATALOG[type];
+  if (!catalog || type === "road") return null;
+  const cost = Object.entries(catalog.cost || {}).filter(([, amount]) => Number(amount) > 0);
+  const missing = cost
+    .filter(([resource, amount]) => Number(resources[resource] || 0) < Number(amount))
+    .map(([resource, amount]) => [resource, Math.max(0, Number(amount) - Number(resources[resource] || 0))]);
+  const remaining = Object.fromEntries(
+    ADVISOR_RESOURCE_KEYS.map((resource) => [
+      resource,
+      Math.max(0, Math.floor(Number(resources[resource] || 0) - Number(catalog.cost?.[resource] || 0))),
+    ]),
+  );
+  const capacityChange = catalog.storage ? `+${catalog.storage} storage for every resource` :
+    catalog.name === "Cottage" ? "+2 housing capacity" :
+      catalog.resource ? `starts a ${catalog.resource} production chain` : "a new village function";
+  return {
+    name: catalog.name,
+    cost,
+    missing,
+    remaining,
+    capacityChange,
+    effect: catalog.effect,
+    footprint: catalog.size,
+    storage: Math.floor(Number(storage[catalog.resource] || 0)),
+  };
+}
+function advisorPriorityTarget(type, buildings = []) {
+  return buildings.find(
+    (building) =>
+      building.type === type &&
+      (Number(building.progress) < 1 || Boolean(CATALOG[type]?.resource)),
+  ) || null;
+}
 const insideBuildingStatus = {
   farm: "Cutting grain in the field",
   bakery: "Processing wheat inside Bakery",
@@ -106,14 +321,1097 @@ function workerStatus(worker) {
     (worker.hungry ? "Hungry — waiting for bread" : "Idle");
 }
 function AdvisorContent({ content }) {
-  const parts = String(content || "").split(/(\*\*[^*]+\*\*)/g);
+  const parts = String(content || "").split(/(\*\*[^*]+\*\*|(?:Best move|Why|Watch for|Start here|Compare|Preview|Prioritize|Upgrade|Inspect|Train|Training|Impact|Timing|Hold|Workforce|Resource|Forecast|Start a feast|Skip the feast|Dispatch|Pulse|Chronicle|Three-step plan|Quartermaster|Builder|Chronicler):)/gi);
   return parts.map((part, index) =>
     part.startsWith("**") && part.endsWith("**") ? (
       <strong key={index}>{part.slice(2, -2)}</strong>
+    ) : /^(?:Best move|Why|Watch for|Start here|Compare|Preview|Prioritize|Upgrade|Inspect|Train|Training|Impact|Timing|Hold|Workforce|Resource|Forecast|Start a feast|Skip the feast|Dispatch|Pulse|Chronicle|Three-step plan|Quartermaster|Builder|Chronicler):$/i.test(part) ? (
+      <strong className="advisor-label" key={index}>{part}</strong>
     ) : (
       <React.Fragment key={index}>{part}</React.Fragment>
     ),
   );
+}
+function buildAdvisorGrounding(content, context = {}) {
+  const text = String(content || "").toLowerCase();
+  const signals = [];
+  if (/(?:wood|stone|food|wheat|wine|resource|cost|afford|storage|trend|runway|shortage)/.test(text)) {
+    signals.push("Resources");
+  }
+  if (/(?:build|building|worksite|production|delivery|route|bottleneck|blocked|upgrade|inspect|prioritize)/.test(text)) {
+    signals.push("Worksites");
+  }
+  if (/(?:worker|villager|carrier|school|train|apprentice|housing|population|people)/.test(text)) {
+    signals.push("People");
+  }
+  if (/(?:goal|chapter|reward|milestone|next chapter)/.test(text)) {
+    signals.push("Goals");
+  }
+  if (/(?:since|pulse|chronicle|recent|activity|what changed)/.test(text)) {
+    signals.push("History");
+  }
+  if (!signals.length && context && (context.day || context.period)) {
+    signals.push("Live village state");
+  }
+  return [...new Set(signals)].slice(0, 4);
+}
+const DEFAULT_ADVISOR_MESSAGE = {
+  role: "assistant",
+  content:
+    "Welcome, steward. I can read the state of your settlement and suggest what to do next.",
+};
+const ADVISOR_STORAGE_PREFIX = "hearth-advisor-v1:";
+const ADVISOR_COMMANDS = Object.freeze({
+  dispatch:
+    "Write a lively daily dispatch for my village. Name the biggest opportunity, the biggest risk, and one small action I can take in the next minute. Use exact current state and keep the tone like a village chronicle.",
+  plan:
+    "Create a grounded three-step plan for my next chapter. Include one best build from buildOptions, one workforce or resource move, and one thing to watch. Explain the order and use exact current costs and counts.",
+  compare:
+    "Compare the two strongest currently affordable building choices for this village. For each, give the exact cost, the immediate benefit, the main risk, and who should build or staff it. End with one recommendation.",
+  council:
+    "Convene a tiny village council. Give three short viewpoints labeled Quartermaster, Builder, and Chronicler, then end with one shared recommendation. Keep every viewpoint grounded in the current state.",
+});
+const ADVISOR_LENSES = Object.freeze({
+  steward: {
+    label: "Steward",
+    icon: Compass,
+    instruction:
+      "Answer as a calm village steward. Put the most useful next action first, explain the tradeoff, and keep the advice practical.",
+  },
+  quartermaster: {
+    label: "Quartermaster",
+    icon: Gauge,
+    instruction:
+      "Answer as a sharp quartermaster. Think in bottlenecks, exact resources, storage, worker time, and opportunity cost. Be concise and decisive.",
+  },
+  chronicler: {
+    label: "Chronicler",
+    icon: Sparkles,
+    instruction:
+      "Answer as a playful village chronicler. Keep the advice actionable, but add a little story, character, or memorable phrase grounded in the current village.",
+  },
+});
+function buildAdvisorFollowups(latestMessage, latestUserMessage) {
+  if (!latestMessage || latestMessage.role !== "assistant" || !latestUserMessage) return [];
+  const originalQuestion = advisorReplayPrompt(latestUserMessage);
+  const forecast = /forecast|runway|last|trend|running out|shortage/.test(
+    String(latestMessage.content || "").toLowerCase(),
+  );
+  const recommendedBuild = String(latestMessage.content || "")
+    .match(/\bBest move:\s*build the ([^,.\n]+)(?:,|\.)/i)?.[1]
+    ?.trim();
+  const recommendedTraining = String(latestMessage.content || "")
+    .match(/\bTrain\s+([A-Z][A-Za-z]+)(?::|,|;|\.)/i)?.[1]
+    ?.trim();
+  const trainingImpactFollowup = recommendedTraining &&
+    /\b(?:unlock|change|benefit|help|happen|do)\b/i.test(originalQuestion);
+  const bottleneckFollowup = /hold the next build|ask which worksite is blocked|inspect the flagged worksites/i.test(String(latestMessage.content || ""));
+  return [
+    {
+      title: "Explain the tradeoff",
+      question: `Explain the main tradeoff behind your answer to: ${originalQuestion}`,
+    },
+    {
+      title: forecast
+        ? "What changes the forecast?"
+        : trainingImpactFollowup
+          ? "How will I know it worked?"
+        : bottleneckFollowup
+          ? "Find the bottleneck"
+        : recommendedTraining
+          ? "What will it unlock?"
+        : recommendedBuild
+          ? "When can I afford it?"
+          : "What should I watch?",
+      question: forecast
+        ? `What change in my village would make that resource forecast better or worse? Use the current snapshot.`
+        : trainingImpactFollowup
+          ? `How will I know the trained ${recommendedTraining} is helping? Use the current School session, open post, and worker statuses.`
+        : bottleneckFollowup
+          ? "Which worksite is blocked, and how do I get it producing again? Use the current building statuses, worker routes, and storage signals."
+        : recommendedTraining
+          ? `What will training the ${recommendedTraining} change in my village? Use the current School options and open posts.`
+        : recommendedBuild
+          ? `When can I afford the ${recommendedBuild}? Use current resources and trends.`
+          : `What should I watch over the next minute to know whether your recommendation is working? Use the current snapshot.`,
+    },
+  ];
+}
+function advisorReplayPrompt(message) {
+  if (!message) return "";
+  if (typeof message.prompt === "string" && message.prompt.trim()) return message.prompt;
+  const question = String(message.question || "").trim();
+  const impactRole = String(message.content || "").match(/\b(?:training a|Train)\s+([A-Z][A-Za-z]+)\b/i)?.[1];
+  if (impactRole && /\b(?:unlock|impact|change)\b/i.test(question)) {
+    return `What will training the ${impactRole} change in my village? Use the current School options and open posts.`;
+  }
+  return question || String(message.content || "");
+}
+function buildAdvisorRoute(content) {
+  const text = String(content || "").replace(/\*+/g, "").replace(/\s+/g, " ").trim();
+  const match = text.match(/Three-step plan:\s*1\.\s*(.*?)\s+2\.\s*(.*?)\s+3\.\s*(.*?)(?:\s+Best move:|$)/i);
+  if (!match) return null;
+  const steps = [match[1], match[2], match[3]]
+    .map((step) => step.replace(/\s+/g, " ").trim().replace(/[.]+$/, ""))
+    .filter(Boolean)
+    .slice(0, 3);
+  if (steps.length !== 3) return null;
+  return {
+    content: text.slice(0, 4000),
+    steps: steps.map((step) => ({
+      text: step,
+      done: false,
+      buildAction: inferAdvisorBuildAction(step),
+      priorityAction: inferAdvisorPriorityAction(step),
+      focusAction: inferAdvisorFocusAction(step),
+      workerFocusAction: inferAdvisorWorkerFocusAction(step),
+      trainingAction: inferAdvisorTrainingAction(step),
+    })),
+  };
+}
+function advisorRouteStorageKey(villageName) {
+  return `${advisorStorageKey(villageName)}:route`;
+}
+function readAdvisorRoute(villageName) {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(advisorRouteStorageKey(villageName)) || "null");
+    if (!saved || typeof saved !== "object" || !Array.isArray(saved.steps) || saved.steps.length !== 3) return null;
+    return {
+      content: String(saved.content || "").slice(0, 4000),
+      day: Math.max(1, Math.floor(Number(saved.day) || 1)),
+      steps: saved.steps.map((step) => ({
+        text: String(step?.text || "").slice(0, 500),
+        done: Boolean(step?.done),
+        buildAction: typeof step?.buildAction === "string" ? step.buildAction : null,
+        priorityAction: typeof step?.priorityAction === "string" ? step.priorityAction : null,
+        focusAction: typeof step?.focusAction === "string" ? step.focusAction : null,
+        workerFocusAction: typeof step?.workerFocusAction === "string" ? step.workerFocusAction : null,
+        trainingAction: typeof step?.trainingAction === "string" ? step.trainingAction : null,
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+function writeAdvisorRoute(villageName, route, day) {
+  if (typeof window === "undefined" || !route) return;
+  try {
+    window.localStorage.setItem(
+      advisorRouteStorageKey(villageName),
+      JSON.stringify({ ...route, day: Math.max(1, Math.floor(Number(day) || 1)) }),
+    );
+  } catch {
+    // A pinned route is a convenience; the village save remains authoritative.
+  }
+}
+function advisorStorageKey(villageName) {
+  const safeName = String(villageName || "Willowbrook")
+    .trim()
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .slice(0, 48) || "Willowbrook";
+  return `${ADVISOR_STORAGE_PREFIX}${safeName}`;
+}
+function advisorPulseStorageKey(villageName) {
+  return `${advisorStorageKey(villageName)}:pulse`;
+}
+function advisorPulseFromSnapshot(snapshot) {
+  return {
+    day: Math.max(1, Math.floor(Number(snapshot?.day) || 1)),
+    period: String(snapshot?.period || "Morning").slice(0, 24),
+    population: Math.max(0, Math.floor(Number(snapshot?.population) || 0)),
+    capacity: Math.max(0, Math.floor(Number(snapshot?.capacity) || 0)),
+    resources: Object.fromEntries(
+      ADVISOR_RESOURCE_KEYS.map((resource) => [
+        resource,
+        Math.max(0, Math.floor(Number(snapshot?.resources?.[resource]) || 0)),
+      ]),
+    ),
+    buildings: (snapshot?.buildings || [])
+      .map((building) => String(building.name || building.type || "").trim())
+      .filter(Boolean)
+      .slice(0, 32),
+    chapter: (snapshot?.goals?.chapter || []).slice(0, 6).map((goal) => ({
+      title: String(goal.title || "").slice(0, 80),
+      progress: Math.max(0, Math.floor(Number(goal.progress) || 0)),
+      target: Math.max(0, Math.floor(Number(goal.target) || 0)),
+    })),
+  };
+}
+function readAdvisorPulse(villageName) {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(advisorPulseStorageKey(villageName)) || "null");
+    return saved && typeof saved === "object" ? saved : null;
+  } catch {
+    return null;
+  }
+}
+function writeAdvisorPulse(villageName, snapshot) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      advisorPulseStorageKey(villageName),
+      JSON.stringify(advisorPulseFromSnapshot(snapshot)),
+    );
+  } catch {
+    // The pulse is a convenience; the village save remains authoritative.
+  }
+}
+function buildLocalAdvisorPulseReply(snapshot) {
+  const previous = snapshot?.previousPulse;
+  if (!previous || typeof previous !== "object") {
+    return "Pulse: this is the Keeper's first check-in for this village. Ask again later and I will tell you what changed.";
+  }
+  const changes = [];
+  const previousResources = previous.resources || {};
+  for (const resource of ADVISOR_RESOURCE_KEYS) {
+    const current = Math.floor(Number(snapshot.resources?.[resource]) || 0);
+    const before = Math.floor(Number(previousResources[resource]) || 0);
+    const delta = current - before;
+    if (delta) changes.push(`${resource} ${delta > 0 ? "+" : ""}${delta}`);
+  }
+  const populationDelta = Math.floor(Number(snapshot.population) || 0) - Math.floor(Number(previous.population) || 0);
+  if (populationDelta) changes.push(`population ${populationDelta > 0 ? "+" : ""}${populationDelta}`);
+  const beforeBuildings = new Set((previous.buildings || []).map((name) => String(name)));
+  const newBuildings = (snapshot.buildings || [])
+    .map((building) => String(building.name || building.type || "").trim())
+    .filter((name) => name && !beforeBuildings.has(name));
+  if (newBuildings.length) changes.push(`new ${newBuildings.slice(0, 2).join(" and ")}`);
+  const previousChapter = new Map((previous.chapter || []).map((goal) => [goal.title, goal]));
+  const chapterMoves = (snapshot.goals?.chapter || [])
+    .map((goal) => {
+      const before = previousChapter.get(goal.title);
+      const delta = Math.floor(Number(goal.progress) || 0) - Math.floor(Number(before?.progress) || 0);
+      return delta > 0 ? `${goal.title} +${delta}` : null;
+    })
+    .filter(Boolean);
+  if (chapterMoves.length) changes.push(`chapter progress: ${chapterMoves[0]}`);
+  const since = `since Day ${Math.max(1, Math.floor(Number(previous.day) || 1))} ${String(previous.period || "Morning")}`;
+  if (!changes.length) {
+    return `Pulse: ${since}, the village is holding steady. No tracked resources, people, buildings, or chapter goals changed in the last check.`;
+  }
+  return `Pulse: ${since}, ${changes.join(", ")}. Keep an eye on the newest bottleneck before making another commitment.`;
+}
+function readAdvisorLens(villageName) {
+  if (typeof window === "undefined") return "steward";
+  try {
+    const saved = window.localStorage.getItem(`${advisorStorageKey(villageName)}:lens`);
+    return Object.prototype.hasOwnProperty.call(ADVISOR_LENSES, saved)
+      ? saved
+      : "steward";
+  } catch {
+    return "steward";
+  }
+}
+function advisorWatchStorageKey(villageName) {
+  return `${advisorStorageKey(villageName)}:watch`;
+}
+function readAdvisorWatch(villageName) {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(advisorWatchStorageKey(villageName)) === "on";
+  } catch {
+    return false;
+  }
+}
+function advisorWatchEventsStorageKey(villageName) {
+  return `${advisorStorageKey(villageName)}:watch-events`;
+}
+function readAdvisorWatchEvents(villageName) {
+  if (typeof window === "undefined") return [];
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(advisorWatchEventsStorageKey(villageName)) || "[]");
+    if (!Array.isArray(saved)) return [];
+    return saved
+      .filter((event) => event && typeof event === "object" && String(event.title || "").trim())
+      .slice(0, 4)
+      .map((event) => ({
+        day: Math.max(1, Math.floor(Number(event.day) || 1)),
+        period: String(event.period || "Morning").slice(0, 24),
+        title: String(event.title).slice(0, 100),
+        detail: String(event.detail || "").slice(0, 180),
+      }));
+  } catch {
+    return [];
+  }
+}
+function writeAdvisorWatchEvents(villageName, events) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      advisorWatchEventsStorageKey(villageName),
+      JSON.stringify((Array.isArray(events) ? events : []).slice(0, 4)),
+    );
+  } catch {
+    // The watch log is a convenience; the village save remains authoritative.
+  }
+}
+function readAdvisorMessages(villageName) {
+  if (typeof window === "undefined") return [DEFAULT_ADVISOR_MESSAGE];
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(advisorStorageKey(villageName)) || "null");
+    if (!Array.isArray(saved)) return [DEFAULT_ADVISOR_MESSAGE];
+    const messages = saved
+      .filter(
+        (message) =>
+          message &&
+          (message.role === "user" || message.role === "assistant") &&
+          typeof message.content === "string" &&
+          message.content.trim(),
+      )
+      .slice(-12)
+      .map((message) => {
+        const action = message.role === "assistant"
+          ? inferAdvisorBuildAction(message.content)
+          : null;
+        const previewAction = message.role === "assistant"
+          ? inferAdvisorPreviewAction(message.content) || action
+          : null;
+        const priorityAction = message.role === "assistant"
+          ? inferAdvisorPriorityAction(message.content)
+          : null;
+        const upgradeAction = message.role === "assistant"
+          ? inferAdvisorUpgradeAction(message.content)
+          : null;
+        const feastAction = message.role === "assistant"
+          ? inferAdvisorFeastAction(message.content)
+          : null;
+        const focusAction = message.role === "assistant"
+          ? inferAdvisorFocusAction(message.content)
+          : null;
+        const workerFocusAction = message.role === "assistant"
+          ? inferAdvisorWorkerFocusAction(message.content)
+          : null;
+        const trainingAction = message.role === "assistant"
+          ? inferAdvisorTrainingAction(message.content)
+          : null;
+        const snapshot = message.snapshot && typeof message.snapshot === "object"
+          ? {
+              day: Math.max(1, Math.floor(Number(message.snapshot.day) || 1)),
+              period: typeof message.snapshot.period === "string"
+                ? message.snapshot.period.trim().slice(0, 24)
+                : "Morning",
+            }
+          : null;
+        const grounding = Array.isArray(message.grounding)
+          ? message.grounding
+              .filter((signal) => typeof signal === "string" && signal.trim())
+              .map((signal) => signal.trim().slice(0, 32))
+              .slice(0, 4)
+          : [];
+        return {
+          role: message.role,
+          content: message.content.trim().slice(0, 4000),
+          ...(typeof message.question === "string" ? { question: message.question.trim().slice(0, 240) } : {}),
+          ...(typeof message.prompt === "string" ? { prompt: message.prompt.slice(0, 4000) } : {}),
+          ...(action ? { action } : {}),
+          ...(previewAction ? { previewAction } : {}),
+          ...(priorityAction ? { priorityAction } : {}),
+          ...(upgradeAction ? { upgradeAction } : {}),
+          ...(feastAction ? { feastAction: true } : {}),
+          ...(focusAction ? { focusAction } : {}),
+          ...(workerFocusAction ? { workerFocusAction } : {}),
+          ...(trainingAction ? { trainingAction } : {}),
+          ...(snapshot ? { snapshot } : {}),
+          ...(grounding.length ? { grounding } : {}),
+          ...(message.helpful ? { helpful: true } : {}),
+          ...(message.local ? { local: true } : {}),
+        };
+      });
+    return messages.length ? messages : [DEFAULT_ADVISOR_MESSAGE];
+  } catch {
+    return [DEFAULT_ADVISOR_MESSAGE];
+  }
+}
+const advisorPromptFallbacks = Object.freeze([
+  {
+    title: "Plan the next move",
+    detail: "Choose the most useful building for this chapter.",
+    question: "What should I build next, and why is it the best choice right now?",
+    icon: Compass,
+  },
+  {
+    title: "Read the workforce",
+    detail: "Find out what is slowing your villagers down.",
+    question: "Why are my workers waiting, and what can I do about it?",
+    icon: Users,
+  },
+  {
+    title: "Balance the pantry",
+    detail: "Keep food, wheat, and storage moving together.",
+    question: "How can I improve my food supply with the buildings I have?",
+    icon: Croissant,
+  },
+]);
+function buildAdvisorBrief(snapshot, nextGoal) {
+  const resources = snapshot.resources || {};
+  const storage = snapshot.storage || {};
+  const items = [];
+  const attention = [];
+  const pushAttention = (item) => {
+    attention.push(item);
+    items.push(item);
+  };
+  if (snapshot.speed === 0) {
+    pushAttention({
+      title: "The village is paused",
+      detail: "Take a breath, choose a plan, then set the clock moving again.",
+      question: "What should I plan while the village is paused?",
+      icon: Pause,
+      tone: "pause",
+    });
+  }
+  const waitingWorkers = (snapshot.workers || []).filter(
+    (worker) =>
+      worker.waitingForInput ||
+      worker.waitingForSpace ||
+      worker.waitingForInn ||
+      worker.deliveryRetry ||
+      worker.hungry,
+  ).length;
+  const rescueSignal = waitingWorkers > 0 || Number(snapshot.blockedSites) > 0;
+  if (waitingWorkers) {
+    pushAttention({
+      title: `${waitingWorkers} villager${waitingWorkers === 1 ? " is" : "s are"} waiting`,
+      detail: "A missing ingredient, route, bed, or bit of storage may be the culprit.",
+      question: "Why are my workers waiting, and what can I do about it?",
+      icon: Users,
+      tone: "attention",
+    });
+  }
+  if (snapshot.blockedSites > 0) {
+    pushAttention({
+      title: `${snapshot.blockedSites} worksite${snapshot.blockedSites === 1 ? " needs" : "s need"} attention`,
+      detail: "Check for a full output store, a blocked route, or an unassigned worker.",
+      question: "Which worksite is blocked, and how do I get it producing again?",
+      icon: Package,
+      tone: "attention",
+    });
+  }
+  const foodCapacity = Number(storage.food) || 0;
+  const food = Number(resources.food) || 0;
+  if (foodCapacity > 0 && food <= Math.max(12, foodCapacity * 0.3)) {
+    pushAttention({
+      title: "The pantry is getting light",
+      detail: `${Math.floor(food)} food remains in ${Math.floor(foodCapacity)} storage.`,
+      question: "How can I improve my food supply with the buildings I have?",
+      icon: Croissant,
+      tone: "attention",
+    });
+  }
+  const foodTrend = Number(snapshot.trends?.food) || 0;
+  if (foodTrend < -1 && food > Math.max(12, foodCapacity * 0.3)) {
+    pushAttention({
+      title: "Food is trending down",
+      detail: `The pantry is losing about ${Math.abs(Math.floor(foodTrend))} food per minute. Check production before it becomes a shortage.`,
+      question: "Why is my food supply declining, and what should I fix first?",
+      icon: ArrowDownRight,
+      tone: "attention",
+    });
+  }
+  const decliningInput = ADVISOR_RESOURCE_KEYS
+    .filter((resource) => resource !== "food")
+    .map((resource) => ({
+      resource,
+      held: Number(resources[resource]) || 0,
+      capacity: Number(storage[resource]) || 0,
+      trend: Number(snapshot.trends?.[resource]) || 0,
+    }))
+    .find(({ held, capacity, trend }) =>
+      trend < -1 && held > Math.max(5, capacity * 0.1),
+    );
+  if (decliningInput) {
+    const resourceName = decliningInput.resource[0].toUpperCase() + decliningInput.resource.slice(1);
+    pushAttention({
+      title: `${resourceName} is trending down`,
+      detail: `The store is losing about ${Math.abs(Math.floor(decliningInput.trend))} ${decliningInput.resource} per minute. Check its input chain before the stockpile becomes a stop.`,
+      question: `Why is my ${decliningInput.resource} supply declining, and what should I fix first?`,
+      icon: ArrowDownRight,
+      tone: "attention",
+    });
+  }
+  const runway = advisorResourceRunway(snapshot.resources, snapshot.trends);
+  const criticalRunway = ADVISOR_RESOURCE_KEYS
+    .map((resource) => ({ resource, minutes: runway[resource], held: Number(resources[resource]) || 0 }))
+    .find(({ minutes, held }) => minutes != null && minutes <= 2 && held > 0);
+  if (criticalRunway && !attention.some((item) => item.title.toLowerCase().includes(criticalRunway.resource))) {
+    const runwayItem = {
+      title: `${criticalRunway.resource[0].toUpperCase()}${criticalRunway.resource.slice(1)} has a short runway`,
+      detail: `At the current pace, the village has ${formatAdvisorRunway(criticalRunway.minutes)} left.`,
+      question: `How long will my ${criticalRunway.resource} last, and what should I fix first?`,
+      icon: ArrowDownRight,
+      tone: "attention",
+    };
+    attention.push(runwayItem);
+    items.splice(Math.min(1, items.length), 0, runwayItem);
+  }
+  const fullStorage = ["wood", "stone", "food", "wheat", "wine"].find(
+    (resource) =>
+      Number(storage[resource]) > 0 &&
+      Number(resources[resource]) >= Number(storage[resource]),
+  );
+  if (fullStorage) {
+    pushAttention({
+      title: `${fullStorage[0].toUpperCase()}${fullStorage.slice(1)} storage is full`,
+      detail: "A Storehouse or a pause in production can turn a bottleneck into room to grow.",
+      question: `How should I handle my full ${fullStorage} storage?`,
+      icon: Package,
+      tone: "attention",
+    });
+  }
+  const readyUpgrade = (snapshot.buildings || []).find((building) => {
+    const upgrade = CATALOG[building.type]?.upgrade;
+    return (
+      Number(building.progress) >= 1 &&
+      upgrade &&
+      !building.upgrade &&
+      Object.entries(upgrade.cost).every(
+        ([resource, amount]) => Number(resources[resource] || 0) >= Number(amount),
+      )
+    );
+  });
+  if (readyUpgrade) {
+    const upgrade = CATALOG[readyUpgrade.type].upgrade;
+    const name = CATALOG[readyUpgrade.type].name;
+    items.splice(Math.min(2, items.length), 0, {
+      title: `${name} can improve`,
+      detail: `${upgrade.name} is affordable and will make this worksite more capable.`,
+      question: `Should I upgrade the ${name}?`,
+      icon: Sparkles,
+      tone: "goal",
+    });
+  }
+  const feastReady =
+    !snapshot.feast &&
+    food >= 30 &&
+    food > Math.max(30, foodCapacity * 0.35) &&
+    (snapshot.buildings || []).some((building) => Number(building.progress) < 1);
+  if (feastReady && !readyUpgrade) {
+    items.splice(Math.min(2, items.length), 0, {
+      title: "A feast would help the builders",
+      detail: "There is enough food for 45 seconds of 25% faster construction.",
+      question: "Should I hold a feast now?",
+      icon: Sparkles,
+      tone: "goal",
+    });
+  }
+  const openApprenticeship = (snapshot.buildings || [])
+    .filter((building) => building.type === "school" && Number(building.progress) >= 1 && !building.trainingSession)
+    .flatMap((building) => (Array.isArray(building.training) ? building.training : []))
+    .find((option) => option.canTrain);
+  const activeApprenticeship = (snapshot.buildings || []).find(
+    (building) => building.type === "school" && Number(building.progress) >= 1 && building.trainingSession,
+  )?.trainingSession;
+  if (activeApprenticeship && !readyUpgrade && !feastReady) {
+    items.splice(Math.min(2, items.length), 0, {
+      title: `A ${String(activeApprenticeship.label || "villager").toLowerCase()} apprentice is training`,
+      detail: activeApprenticeship.waiting
+        ? "The School is waiting for housing before the apprentice can graduate."
+        : `The current session has about ${Math.ceil(Number(activeApprenticeship.remaining) || 0)} seconds left.`,
+      question: "When will the School finish training, and what should I prepare?",
+      icon: GraduationCap,
+      tone: "calm",
+    });
+  } else if (openApprenticeship && !readyUpgrade && !feastReady) {
+    items.splice(Math.min(2, items.length), 0, {
+      title: `A ${openApprenticeship.label.toLowerCase()} apprenticeship is open`,
+      detail: "The School has a live post and can train this role without guessing about capacity.",
+      question: "What should I train at the School, and why is that the best opening?",
+      icon: GraduationCap,
+      tone: "goal",
+    });
+  }
+  const openChapterGoal = (snapshot.chapterGoals || []).find((goal) => !goal.completed);
+  if (openChapterGoal && !readyUpgrade && !feastReady && items.length < 3) {
+    items.push({
+      title: "A chapter challenge awaits",
+      detail: `${openChapterGoal.title} · ${openChapterGoal.progress}/${openChapterGoal.target} · ${openChapterGoal.reward}`,
+      question: "What is my next chapter challenge, and how do I earn its reward?",
+      icon: Sparkles,
+      tone: "goal",
+    });
+  }
+  if (nextGoal) {
+    const missing = Object.entries(CATALOG[nextGoal.type]?.cost || {})
+      .filter(([resource, amount]) => Number(resources[resource]) < Number(amount))
+      .map(([resource, amount]) => `${Math.max(0, Math.ceil(amount - Number(resources[resource] || 0)))} ${resource}`);
+    items.push({
+      title: nextGoal.label,
+      detail: missing.length
+        ? `Gather ${missing.join(" and ")} before placing it.`
+        : "The materials are ready. Find a clear patch and make it the next chapter.",
+      question: "How close am I to my next chapter, and what should I do first?",
+      icon: Sparkles,
+      tone: "goal",
+    });
+  } else if (!items.length) {
+    items.push({
+      title: "The hamlet is steady",
+      detail: "Workers are moving and nothing is asking for urgent rescue.",
+      question: "What would make my village stronger over the next few minutes?",
+      icon: Leaf,
+      tone: "calm",
+    });
+  }
+  const uniqueItems = items.filter(
+    (item, index, list) => list.findIndex((candidate) => candidate.title === item.title) === index,
+  );
+  return {
+    items: uniqueItems.slice(0, 3),
+    attentionCount: attention.length,
+    label: attention.length ? `${attention.length} to watch` : "All is calm",
+  };
+}
+function buildLocalAdvisorReply(question, snapshot, brief) {
+  const lowerQuestion = String(question || "").toLowerCase();
+  const resources = snapshot.resources || {};
+  const namedResource = ADVISOR_RESOURCE_KEYS.find((resource) => lowerQuestion.includes(resource));
+  const forecastQuestion = /forecast|make(?:s|\s+it)?\s+(?:better|worse)|better or worse/.test(lowerQuestion);
+  const forecastResource = namedResource || ADVISOR_RESOURCE_KEYS.find(
+    (resource) => Number(snapshot.trends?.[resource]) < -0.1 && Number(resources[resource]) > 0,
+  ) || ADVISOR_RESOURCE_KEYS.find((resource) => snapshot.runway?.[resource] != null);
+  const resourceQuestion = Boolean(
+    namedResource &&
+    /\b(?:supply|stock|storage|how much|how is|watch)\b/.test(lowerQuestion) &&
+    !/\b(?:build(?:ing|ings)?|improve|spend|upgrade|train|priorit(?:y|ize|ise)|focus)\b/.test(lowerQuestion),
+  );
+  const choices = (snapshot.buildOptions || []).filter(
+    (option) => option.type !== "road" && option.affordable,
+  );
+  const freshChoices = choices.filter(
+    (option) => option.built === 0 && option.underConstruction === 0,
+  );
+  const recommendationPool = freshChoices.length ? freshChoices : choices;
+  const goalType = snapshot.goals?.next?.type;
+  const goalChoice = choices.find((option) => option.type === goalType);
+  const requestedOption = (snapshot.buildOptions || []).find(
+    (option) => option.name && lowerQuestion.includes(option.name.toLowerCase()),
+  );
+  const foodChoice = recommendationPool.find(
+    (option) => /food|wheat|bread/i.test(`${option.name} ${option.effect}`),
+  );
+  const requestedChoice = choices.find(
+    (option) => option.name && lowerQuestion.includes(option.name.toLowerCase()),
+  );
+  const negativeBuildQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:build|place|choose|recommend)\b/.test(lowerQuestion);
+  const avoidedChoice = negativeBuildQuestion ? requestedChoice : null;
+  const choice = avoidedChoice ? null : requestedChoice || goalChoice || (lowerQuestion.includes("food") ? foodChoice : null) || recommendationPool[0];
+  const chroniclerVoice = /playful village chronicler/.test(lowerQuestion);
+  const quartermasterVoice = /sharp (?:village )?quartermaster/.test(lowerQuestion);
+  const cost = choice
+    ? Object.entries(choice.cost || {})
+        .filter(([, amount]) => Number(amount) > 0)
+        .map(([resource, amount]) => `${amount} ${resource}`)
+        .join(" and ")
+    : "the materials already in storage";
+  const remainingAfterChoice = choice
+    ? Object.entries(choice.cost || {})
+        .filter(([, amount]) => Number(amount) > 0)
+        .map(([resource, amount]) => `${Math.max(0, Math.floor(Number(resources[resource]) || 0) - Number(amount))} ${resource}`)
+        .join(" and ")
+    : "";
+  const voiceNote = chroniclerVoice
+    ? " A small chapter, but a good one."
+    : quartermasterVoice && remainingAfterChoice
+      ? ` Margin: about ${remainingAfterChoice} remain after paying.`
+      : "";
+  const attention = brief?.items?.find((item) => item.tone === "attention" || item.tone === "pause");
+  const waitingWorkers = (snapshot.workers || []).filter(
+    (worker) =>
+      worker.waitingForInput ||
+      worker.waitingForSpace ||
+      worker.waitingForInn ||
+      worker.deliveryRetry ||
+      worker.hungry,
+  ).length;
+  const focusQuestion = /inspect|look\s+at|show\s+me|where\s+is/.test(lowerQuestion);
+  const namedFocusTarget = (snapshot.buildings || []).find(
+    (building) =>
+      building.name &&
+      lowerQuestion.includes(building.name.toLowerCase()),
+  );
+  const namedFocusWorker = (snapshot.workers || []).find(
+    (worker) => worker.type && lowerQuestion.includes(worker.type.toLowerCase()),
+  );
+  const trainingQuestion = !focusQuestion && (
+    /\b(?:train|training|trained|graduate|graduates|apprentice|which villager|which worker)\b/.test(lowerQuestion) ||
+    (/\bschool\b/.test(lowerQuestion) && /\b(?:what|who|should|available|slot|opening)\b/.test(lowerQuestion))
+  );
+  const trainingImpactQuestion = trainingQuestion && /\b(?:unlock|change|benefit|help|happen|do)\b/.test(lowerQuestion);
+  const trainingOutcomeQuestion = trainingQuestion && /\b(?:know|watch|notice|tell|measure|confirm|worked|working|helping)\b/.test(lowerQuestion);
+  const school = (snapshot.buildings || []).find(
+    (building) => building.type === "school" && Number(building.progress) >= 1,
+  );
+  const trainingOptions = Array.isArray(school?.training) ? school.training : [];
+  const requestedTrainingType = workerTypeOrder.find((workerType) =>
+    lowerQuestion.includes(workerType.toLowerCase()),
+  );
+  const requestedTraining = trainingOptions.find(
+    (option) => option.label === requestedTrainingType,
+  );
+  const trainingChoice = requestedTraining?.canTrain
+    ? requestedTraining
+    : trainingOptions.find((option) => option.canTrain && option.posts != null) ||
+      trainingOptions.find((option) => option.canTrain);
+  const workforceQuestion = /\b(?:how many|count|who|workforce|workers?)\b/.test(lowerQuestion) &&
+    !trainingQuestion &&
+    !/\b(?:worksite|bottleneck|blocked)\b/.test(lowerQuestion);
+  const namedWorkerRole = workerTypeOrder.find((workerType) =>
+    lowerQuestion.includes(workerType.toLowerCase()),
+  );
+  const roleWorkers = namedWorkerRole
+    ? (snapshot.workers || []).filter((worker) => worker.type === namedWorkerRole)
+    : [];
+  const upgradeQuestion = /upgrade|improve|enhance/.test(lowerQuestion);
+  const namedUpgradeBuilding = (snapshot.buildings || []).find(
+    (building) => building.name && lowerQuestion.includes(building.name.toLowerCase()),
+  );
+  const namedUpgradeTarget = (snapshot.buildings || []).find(
+    (building) =>
+      building.name &&
+      lowerQuestion.includes(building.name.toLowerCase()) &&
+      Number(building.progress) >= 1 &&
+      building.upgradeName &&
+      !building.upgrade,
+  );
+  const affordableUpgradeTarget = (snapshot.buildings || []).find(
+    (building) =>
+      Number(building.progress) >= 1 &&
+      building.upgradeName &&
+      !building.upgrade &&
+      Object.entries(building.upgradeCost || {}).every(
+        ([resource, amount]) => Number(resources[resource] || 0) >= Number(amount),
+      ),
+  );
+  const upgradeTarget = namedUpgradeTarget || (!namedUpgradeBuilding ? affordableUpgradeTarget : null);
+  const feastQuestion = /feast|celebration|construction boost/.test(lowerQuestion);
+  const planningQuestion = /plan|three-step/.test(lowerQuestion);
+  const chapterQuestion = /chapter|challenge|reward|side goal|milestone/.test(lowerQuestion) && !planningQuestion;
+  const openChapterGoal = (snapshot.goals?.chapter || []).find((goal) => !goal.completed);
+  const negativeFeastQuestion = /\b(?:avoid|skip|not|don't|do not|never|cannot|can't|unable to)\b[^.?!]{0,40}\bfeast\b/.test(lowerQuestion);
+  const priorityQuestion = lowerQuestion.includes("priorit") || lowerQuestion.includes("focus");
+  const priorityEligible = (building) =>
+    building && !["townhall", "cottage", "well", "watchtower", "school", "grainfield"].includes(building.type);
+  const namedPriorityTarget = (snapshot.buildings || []).find(
+    (building) =>
+      priorityEligible(building) &&
+      building.name &&
+      lowerQuestion.includes(building.name.toLowerCase()) &&
+      building.priority !== "priority" &&
+      (Number(building.progress) < 1 || Number(building.workers) > 0 || !/complete/i.test(building.status || "")),
+  );
+  const suggestedPriorityTarget = namedPriorityTarget || (snapshot.buildings || []).find(
+    (building) =>
+      priorityEligible(building) &&
+      building.name &&
+      building.priority !== "priority" &&
+      (Number(building.progress) < 1 || Number(building.workers) > 0 || /waiting|working|assigned|delivery/i.test(building.status || "")),
+  );
+  const blockedWorksite = (snapshot.buildings || []).find(
+    (building) =>
+      priorityEligible(building) &&
+      (Number(building.progress) < 1 || Number(building.workers) > 0) &&
+      /waiting|blocked|route|input|space|full|missing|delivery|ingredient/i.test(building.status || ""),
+  );
+  const watchFor = attention?.detail || "keep carriers moving so production can reach the village store.";
+  const recentChronicle = (snapshot.activity || []).filter(Boolean).slice(0, 2).join(" ") || "The hamlet is waiting for its next small turn.";
+  const bestMove = choice
+    ? `Best move: build the ${choice.name}. Why: it costs ${cost || "the available materials"} and ${choice.effect}.${voiceNote}`
+    : "Best move: keep the village moving for a minute. Why: no affordable new build is available in the current snapshot.";
+  const nextBuild = choice
+    ? `Build the ${choice.name} (${cost || "materials ready"}).`
+    : "Let resources accumulate until a useful build is affordable.";
+  const workforceMove = waitingWorkers && suggestedPriorityTarget
+    ? `Prioritize ${suggestedPriorityTarget.name}, then inspect its missing input, route, or storage.`
+    : waitingWorkers
+      ? "Inspect the waiting work and clear its missing input, route, or storage."
+      : trainingChoice
+        ? `Train ${trainingChoice.label}, then watch the new ${trainingChoice.label.toLowerCase()} reach an open post.`
+      : "Keep carriers moving and let the current production cycle finish.";
+
+  if (avoidedChoice) {
+    const avoidedCost = Object.entries(avoidedChoice.cost || {})
+      .filter(([, amount]) => Number(amount) > 0)
+      .map(([resource, amount]) => `${amount} ${resource}`)
+      .join(" and ");
+    const alternative = recommendationPool.find((option) => option.type !== avoidedChoice.type);
+    return `Hold ${avoidedChoice.name} for now: you asked not to commit it. It would use ${avoidedCost || "the available materials"} for ${avoidedChoice.effect}. ${alternative ? `Keep the materials in reserve, or compare them with ${alternative.name}.` : "Keep those materials in reserve while the village reveals its next bottleneck."}`;
+  }
+  const explicitBuildQuestion = /\b(?:build|place|choose|recommend)\b/.test(lowerQuestion);
+  const timingOrPreviewQuestion = /\b(?:when|how soon|how long|afford|preview|simulate|model|what if|tradeoff|worth)\b/.test(lowerQuestion);
+  if (requestedOption && !requestedOption.affordable && explicitBuildQuestion && !timingOrPreviewQuestion) {
+    const missing = Object.entries(requestedOption.cost || {})
+      .filter(([resource, amount]) => Number(resources[resource] || 0) < Number(amount))
+      .map(([resource, amount]) => `${Math.max(0, Number(amount) - Math.floor(Number(resources[resource] || 0)))} ${resource}`)
+      .join(" and ");
+    return `Hold ${requestedOption.name}: it is not affordable yet. Gather ${missing || "the missing materials"} before committing to it, then ask again when the resource trend is moving in the right direction.`;
+  }
+  const negativeUpgradeQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:upgrade|improve|enhance)\b/.test(lowerQuestion);
+  const negativeTrainingQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:train|training|apprentice)\b/.test(lowerQuestion);
+  const negativeFocusQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:inspect|check|visit|focus)\b/.test(lowerQuestion);
+  const negativePriorityQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:prioriti[sz]e|focus)\b/.test(lowerQuestion);
+  const namedPriorityBuilding = (snapshot.buildings || []).find(
+    (building) => building.name && lowerQuestion.includes(building.name.toLowerCase()),
+  );
+  if (negativeTrainingQuestion && trainingQuestion) {
+    return `Hold training for now: you asked not to commit the School to another apprentice. Keep the current opening available until the village's next need is clearer.`;
+  }
+  if (negativeFocusQuestion && focusQuestion && namedFocusTarget) {
+    return `Leave ${namedFocusTarget.name} alone for now: you asked not to inspect or focus it. Watch its status from the village view instead.`;
+  }
+  if (negativeUpgradeQuestion && upgradeQuestion && namedUpgradeBuilding) {
+    return `Hold ${namedUpgradeBuilding.name} at its current improvement: you asked not to upgrade it. Keep its materials available for another bottleneck.`;
+  }
+  if (negativePriorityQuestion && priorityQuestion && namedPriorityBuilding) {
+    return `Leave ${namedPriorityBuilding.name} at normal priority for now: you asked not to move it ahead of the other worksites.`;
+  }
+
+  if (resourceQuestion) {
+    const held = Math.floor(Number(resources[namedResource]) || 0);
+    const capacity = Math.floor(Number(snapshot.storage?.[namedResource]) || 0);
+    const trend = Math.round((Number(snapshot.trends?.[namedResource]) || 0) * 10) / 10;
+    const runway = advisorResourceRunway(snapshot.resources, snapshot.trends)[namedResource];
+    const storageLabel = capacity ? `${held} of ${capacity} storage` : `${held} held`;
+    if (trend < -0.1) {
+      return `Resource: ${namedResource} is at ${storageLabel}, falling about ${Math.abs(trend)} per minute${runway != null ? `, with roughly ${formatAdvisorRunway(runway)} left at this pace` : ""}. Best move: stabilize ${namedResource} before making a new commitment. Watch for a producer missing input, a full output store, or a hungry household.`;
+    }
+    if (trend > 0.1) {
+      return `Resource: ${namedResource} is at ${storageLabel}, climbing about ${trend} per minute. Let the supply build unless a current worksite is waiting on it; the next useful checkpoint is a full delivery cycle.`;
+    }
+    return `Resource: ${namedResource} is at ${storageLabel} and steady. No reliable runway or shortage is visible in this snapshot; keep an eye on the next delivery before spending it on a major commitment.`;
+  }
+
+  if (forecastQuestion && !forecastResource) {
+    return "Forecast: no single resource is moving in a meaningful direction in this snapshot, so there is no reliable better-or-worse call yet. Recheck after the next delivery cycle; a producer waiting for input, a full store, or a change in household demand will move the forecast first.";
+  }
+
+  if (forecastQuestion && forecastResource) {
+    const held = Math.floor(Number(resources[forecastResource]) || 0);
+    const trend = Math.round((Number(snapshot.trends?.[forecastResource]) || 0) * 10) / 10;
+    const runway = snapshot.runway?.[forecastResource] != null
+      ? Number(snapshot.runway[forecastResource])
+      : null;
+    const direction = trend < -0.1
+      ? `It is currently falling about ${Math.abs(trend)} per minute${runway != null ? `, with roughly ${formatAdvisorRunway(runway)} left at this pace` : ""}.`
+      : trend > 0.1
+        ? `It is currently climbing about ${trend} per minute.`
+        : "Its current trend is steady, so there is no reliable directional forecast yet.";
+    return `Forecast: ${forecastResource} is at ${held} held. ${direction} The forecast improves if its producer has input, workers have clear routes, and storage can receive the output; it worsens if a worksite waits, a store fills, or household demand rises. Check the ${forecastResource} trend again after the next delivery cycle.`;
+  }
+
+  if (/since|last check|last visit|what changed|what's new|catch me up|different/.test(lowerQuestion)) {
+    return buildLocalAdvisorPulseReply(snapshot);
+  }
+
+  if (trainingQuestion) {
+    if (!school) {
+      return "Training: the village has no completed School yet. Build one first, then I can match an apprentice to its available post.";
+    }
+    if (school.trainingSession) {
+      return `Training: the School is already training a ${school.trainingSession.label.toLowerCase()}${school.trainingSession.waiting ? " and waiting for housing" : ` for about ${Math.ceil(school.trainingSession.remaining)} more seconds`}. Let that apprentice finish before choosing another.`;
+    }
+    if (requestedTraining && !requestedTraining.canTrain) {
+      return `Training: a ${requestedTraining.label.toLowerCase()} is not available yet. ${requestedTraining.reason || "The School has no open post for that role."}`;
+    }
+    if (trainingChoice) {
+      const workplace = trainingChoice.posts == null
+        ? "a flexible pair of hands for construction"
+        : `${Math.max(1, Number(trainingChoice.posts) - Number(trainingChoice.trained || 0) - Number(trainingChoice.pending || 0))} open ${trainingChoice.label.toLowerCase()} post${Number(trainingChoice.posts) - Number(trainingChoice.trained || 0) - Number(trainingChoice.pending || 0) === 1 ? "" : "s"}`;
+      if (trainingOutcomeQuestion) {
+        return `Watch for: after you click Train ${trainingChoice.label}, the School should show an active session, then the graduate should arrive and fill one of the ${workplace}. Check that the post stops reporting an empty slot before choosing another apprentice.`;
+      }
+      if (trainingImpactQuestion) {
+        return `Impact: training a ${trainingChoice.label} would fill ${workplace}, turning the School's next cycle into a working hand for the village instead of another unassigned villager. The change begins only after you click Train ${trainingChoice.label}; watch that post for its first useful cycle.`;
+      }
+      return `Train ${trainingChoice.label}: the School can prepare ${trainingChoice.label.toLowerCase()}s for ${workplace}. This is the clearest training slot in the current snapshot; start it only if you want to commit the School for the next cycle.`;
+    }
+    return "Training: every School option is occupied or blocked. Check housing and completed work posts before training another villager.";
+  }
+
+  if (workforceQuestion && namedWorkerRole) {
+    const waiting = roleWorkers.filter(
+      (worker) => worker.waitingForInput || worker.waitingForSpace || worker.waitingForInn || worker.deliveryRetry || worker.hungry,
+    ).length;
+    const roles = roleWorkers.length === 1 ? "villager is" : "villagers are";
+    return `Workforce: ${roleWorkers.length} ${namedWorkerRole.toLowerCase()} ${roles} in the current snapshot${waiting ? `; ${waiting} ${waiting === 1 ? "is" : "are"} waiting` : " and none report a blocked state"}.`;
+  }
+  if (workforceQuestion && /waiting|idle|stuck|blocked/.test(lowerQuestion)) {
+    const waitingList = (snapshot.workers || [])
+      .filter((worker) => worker.waitingForInput || worker.waitingForSpace || worker.waitingForInn || worker.deliveryRetry || worker.hungry)
+      .slice(0, 4);
+    return waitingList.length
+      ? `Workforce: ${waitingList.map((worker) => `${worker.type} (${worker.status || "waiting"})`).join(", ")}. Inspect the first bottleneck before adding another job.`
+      : "Workforce: no villager currently reports a waiting, hungry, or blocked state.";
+  }
+
+  if (upgradeQuestion && namedUpgradeBuilding && !namedUpgradeTarget && namedUpgradeBuilding.upgrade) {
+    return `${namedUpgradeBuilding.name} is already improved with ${namedUpgradeBuilding.upgrade}. Keep it working unless another bottleneck needs the resources.`;
+  }
+  if (upgradeQuestion && upgradeTarget) {
+    const upgradeCost = Object.entries(upgradeTarget.upgradeCost || {})
+      .filter(([, amount]) => Number(amount) > 0)
+      .map(([resource, amount]) => `${amount} ${resource}`)
+      .join(" and ");
+    return `Upgrade ${upgradeTarget.name}: ${upgradeTarget.upgradeName} would ${CATALOG[upgradeTarget.type]?.upgrade?.effect || "improve this worksite"}. It costs ${upgradeCost || "the available materials"}.`;
+  }
+  if (feastQuestion) {
+    if (negativeFeastQuestion) {
+      return "Skip the feast for now: keep 30 food in reserve until a large construction cycle or a fuller pantry makes the boost worthwhile.";
+    }
+    if (snapshot.feast?.remaining > 0) {
+      return `The village feast is already underway for about ${Math.ceil(snapshot.feast.remaining)} more seconds. Let builders enjoy the faster rhythm.`;
+    }
+    const food = Math.floor(Number(resources.food) || 0);
+    if (food < 30) {
+      return `Hold the feast: the village needs ${30 - food} more food. A feast spends 30 food for 45 seconds of 25% faster construction.`;
+    }
+    return "Start a feast: spend 30 food for 45 seconds of 25% faster construction. It is worth using while a large build is receiving materials.";
+  }
+  if (chapterQuestion) {
+    if (!openChapterGoal) {
+      return "The chapter board is clear. Keep building the village you want, and let the next story emerge from your choices.";
+    }
+    return `Next chapter: ${openChapterGoal.title} is at ${openChapterGoal.progress}/${openChapterGoal.target}. Why it matters: ${openChapterGoal.description} Reward: ${openChapterGoal.reward}.`;
+  }
+  if (/\b(?:what happened|what just|recent|news|history|activity|log)\b/.test(lowerQuestion)) {
+    const activity = (snapshot.activity || []).filter(Boolean).slice(0, 3);
+    return activity.length
+      ? `Chronicle: ${activity.join(" ")} Watch for: ${watchFor}`
+      : "Chronicle: the village has no recent entries to report yet. Let one work cycle or delivery complete, then ask again.";
+  }
+  const decliningResource = Object.entries(snapshot.trends || {}).find(
+    ([, value]) => Number(value) < -1,
+  );
+  if (
+    decliningResource &&
+    !/when can|how soon|how long until|when will.*afford|can i afford/.test(lowerQuestion) &&
+    /trend|declin|running out|shortage|losing/.test(lowerQuestion)
+  ) {
+    const [resource, trend] = decliningResource;
+    return `Best move: stabilize ${resource}. Why: the current village trend is losing about ${Math.abs(Math.floor(Number(trend)))} ${resource} per minute. Watch for a producer that needs input, a full output store, or a hungry household.`;
+  }
+  const runwayQuestion = /how long|last|run out|runout|survive|runway|empty/.test(lowerQuestion);
+  const namedRunwayResource = ADVISOR_RESOURCE_KEYS.find((resource) => lowerQuestion.includes(resource));
+  const runwayResource = namedRunwayResource || Object.entries(snapshot.runway || {})
+    .find(([, minutes]) => Number.isFinite(Number(minutes)) && Number(minutes) <= 5)?.[0];
+  if (runwayQuestion && runwayResource) {
+    const minutes = snapshot.runway?.[runwayResource];
+    if (minutes != null && Number.isFinite(Number(minutes))) {
+      return `Runway: ${runwayResource} should last ${formatAdvisorRunway(minutes)} at the current pace. Best move: stabilize ${runwayResource} before spending it on another project, then watch the ${runwayResource} trend for a minute.`;
+    }
+    return `Runway: the village is not currently losing ${runwayResource}, so there is no reliable depletion timer. Watch its trend before committing the stockpile.`;
+  }
+  const deliveryQuestion = /delivery|deliver|arrive|finish|complete/.test(lowerQuestion)
+    || /when|how soon|how long/.test(lowerQuestion);
+  const namedDeliveryTarget = (snapshot.buildings || []).find(
+    (building) => building.name && lowerQuestion.includes(building.name.toLowerCase()) && Number(building.nextDelivery) > 0,
+  );
+  const nextDeliveryTarget = namedDeliveryTarget || (snapshot.buildings || [])
+    .filter((building) => Number(building.nextDelivery) > 0)
+    .sort((a, b) => Number(a.nextDelivery) - Number(b.nextDelivery))[0];
+  if (deliveryQuestion && nextDeliveryTarget) {
+    const seconds = Math.max(1, Math.ceil(Number(nextDeliveryTarget.nextDelivery)));
+    return `Timing: ${nextDeliveryTarget.name}'s next delivery or work cycle is expected in about ${seconds} seconds. Watch whether the output reaches storage before committing to another project.`;
+  }
+  const previewQuestion = /\b(?:preview|simulate|model|what if|tradeoff|worth)\b/.test(lowerQuestion);
+  const namedScenarioOption = snapshot.buildOptions.find(
+    (option) => option.name && lowerQuestion.includes(option.name.toLowerCase()),
+  );
+  if (previewQuestion && namedScenarioOption) {
+    const scenarioCost = Object.entries(namedScenarioOption.cost || {})
+      .filter(([, amount]) => Number(amount) > 0)
+      .map(([resource, amount]) => `${amount} ${resource}`)
+      .join(" and ");
+    const affordability = namedScenarioOption.affordable
+      ? "It is affordable in this snapshot."
+      : "It is not affordable yet, so this stays a plan rather than a commitment.";
+    return `Preview: ${namedScenarioOption.name}. Cost: ${scenarioCost || "materials ready"}. Result: ${namedScenarioOption.effect} ${affordability}`;
+  }
+  const timingQuestion = /when can|how soon|how long until|when will.*afford|can i afford/.test(lowerQuestion);
+  const namedBuildOption = snapshot.buildOptions.find(
+    (option) => option.name && lowerQuestion.includes(option.name.toLowerCase()),
+  );
+  if (timingQuestion && namedBuildOption) {
+    const missing = Object.entries(namedBuildOption.cost || {})
+      .filter(([resource, amount]) => Number(resources[resource] || 0) < Number(amount))
+      .map(([resource, amount]) => [
+        resource,
+        Math.max(0, Number(amount) - Number(resources[resource] || 0)),
+      ]);
+    if (!missing.length) {
+      return `Timing: the ${namedBuildOption.name} is affordable now. Best move: build the ${namedBuildOption.name}, then watch its first delivery or work cycle.`;
+    }
+    const waitTimes = missing.map(([resource, amount]) => {
+      const trend = Number(snapshot.trends?.[resource]) || 0;
+      return trend > 0.1 ? amount / trend : null;
+    });
+    const missingLabel = missing.map(([resource, amount]) => `${Math.ceil(amount)} ${resource}`).join(" and ");
+    if (waitTimes.some((minutes) => minutes == null)) {
+      return `Timing: the ${namedBuildOption.name} is missing ${missingLabel}, but there is no reliable ETA while one of those resources is not growing. Stabilize the inputs, then ask again.`;
+    }
+    return `Timing: the ${namedBuildOption.name} is missing ${missingLabel}. At the current pace it should be affordable in ${formatAdvisorRunway(Math.max(...waitTimes))}. Trends can change as workers and storage shift.`;
+  }
+
+  if (focusQuestion && namedFocusTarget) {
+    const canPrioritize = priorityEligible(namedFocusTarget) &&
+      namedFocusTarget.priority !== "priority" &&
+      (Number(namedFocusTarget.progress) < 1 || Number(namedFocusTarget.workers) > 0);
+    const upgradeHint = namedFocusTarget.upgradeName && !namedFocusTarget.upgrade
+      ? ` An available improvement is ${namedFocusTarget.upgradeName}.`
+      : "";
+    return `Inspect ${namedFocusTarget.name}: it is already in the village and its current status is ${namedFocusTarget.status || "available"}. ${namedFocusTarget.workers ? `${namedFocusTarget.workers} worker${namedFocusTarget.workers === 1 ? " is" : "s are"} assigned.` : "No worker is assigned right now."}${canPrioritize ? ` Prioritize ${namedFocusTarget.name} if you want this worksite to receive the next available hand.` : ""}${upgradeHint}`;
+  }
+  if (focusQuestion && namedFocusWorker) {
+    return `Inspect ${namedFocusWorker.type}: this villager is currently ${namedFocusWorker.status || "working in the village"}. Focus ${namedFocusWorker.type} to keep an eye on the next route or work cycle.`;
+  }
+
+  if (priorityQuestion && suggestedPriorityTarget) {
+    return `Prioritize ${suggestedPriorityTarget.name}: it is the live worksite most likely to unblock the village. Watch for: ${watchFor}`;
+  }
+
+  if (/\b(?:what now|what should i do|what should i build|what do i build|next move|next build|help me)\b/.test(lowerQuestion) && rescueSignal && suggestedPriorityTarget) {
+    return `Prioritize ${suggestedPriorityTarget.name}: it is the clearest rescue before another build. Watch for: ${watchFor}`;
+  }
+  if (/\b(?:what now|what should i do|what should i build|what do i build|next move|next build|help me)\b/.test(lowerQuestion) && rescueSignal) {
+    return `Hold the next build for a moment: ${Number(snapshot.blockedSites) || waitingWorkers} live bottleneck${(Number(snapshot.blockedSites) || waitingWorkers) === 1 ? " is" : "s are"} visible, but no single worksite is safe to name from this snapshot. Ask which worksite is blocked, then clear its route, input, or storage first.`;
+  }
+
+  if (blockedWorksite && /\b(?:blocked|stuck|waiting|bottleneck|slow|attention|which worksite)\b/.test(lowerQuestion)) {
+    return `Inspect ${blockedWorksite.name}: it reports ${blockedWorksite.status || "a blocked work state"}. Prioritize ${blockedWorksite.name} while you check its missing input, route, or storage.`;
+  }
+
+  if (lowerQuestion.includes("wait") || lowerQuestion.includes("stuck") || lowerQuestion.includes("blocked")) {
+    return `Best move: inspect the ${attention?.title?.toLowerCase() || "waiting work"}. Why: ${waitingWorkers || snapshot.blockedSites ? `${waitingWorkers || snapshot.blockedSites} live bottleneck${(waitingWorkers || snapshot.blockedSites) === 1 ? " is" : "s are"} visible in the village snapshot.` : "the workers do not currently report a blocked input or route."} Watch for: a missing ingredient, a full output store, or a route that needs help.`;
+  }
+  if (lowerQuestion.includes("dispatch")) {
+    return `Dispatch: ${recentChronicle} Opportunity: ${nextBuild} Risk: ${watchFor} Next minute: ${waitingWorkers ? "inspect the waiting worksite and clear its bottleneck" : "place the next build, then watch the first delivery arrive"}. ${bestMove}`;
+  }
+  if (lowerQuestion.includes("council")) {
+    return `Quartermaster: ${choice ? `${choice.name} is affordable at ${cost || "the current materials"}.` : "Hold resources until a useful option opens."} Builder: ${waitingWorkers ? "Clear the waiting work before adding another job." : "Give carriers a clear route to storage."} Chronicler: ${watchFor} Shared call: ${choice ? `build the ${choice.name} and watch its first cycle.` : "keep the village moving and watch the stores."} ${choice ? bestMove : ""}`.trim();
+  }
+  if (lowerQuestion.includes("compare") || lowerQuestion.includes("options")) {
+    const alternatives = choices.slice(0, 2);
+    if (alternatives.length > 1) {
+      const comparison = alternatives
+        .map((option) => {
+          const optionCost = Object.entries(option.cost || {})
+            .filter(([, amount]) => Number(amount) > 0)
+            .map(([resource, amount]) => `${amount} ${resource}`)
+            .join(" and ");
+          return `${option.name}: ${optionCost || "materials ready"}, ${option.effect}`;
+        })
+        .join(" Compare ");
+      return `Compare: ${comparison}. ${bestMove} Watch for: ${watchFor}`;
+    }
+  }
+  if (planningQuestion || lowerQuestion.includes("next chapter")) {
+    return `Three-step plan: 1. ${nextBuild} 2. ${workforceMove} 3. Watch for: ${watchFor} ${bestMove}`;
+  }
+  if (choice) {
+    return `${bestMove} Watch for: ${watchFor}`;
+  }
+  return `${bestMove} Watch for: ${attention?.detail || `resources are ${Object.entries(resources).map(([resource, amount]) => `${amount} ${resource}`).slice(0, 3).join(", ")}.`}`;
 }
 const Resource = React.memo(function Resource({ type, value, trend = 0, storage = 0 }) {
   const Icon = resourceIcons[type];
@@ -156,6 +1454,56 @@ const Resource = React.memo(function Resource({ type, value, trend = 0, storage 
         ) : null}
       </div>
     </div>
+  );
+});
+const AdvisorResourcePulse = React.memo(function AdvisorResourcePulse({
+  resources = {},
+  storage = {},
+  trends = {},
+  onAsk,
+  disabled = false,
+}) {
+  return (
+    <section className="advisor-resource-pulse" aria-label="Advisor resource pulse">
+      <div className="advisor-resource-pulse-heading">
+        <span>RESOURCE PULSE</span>
+        <em>tap a store for a reading</em>
+      </div>
+      <div className="advisor-resource-pulse-grid">
+        {ADVISOR_RESOURCE_KEYS.map((resource) => {
+          const Icon = resourceIcons[resource] || Package;
+          const held = Math.max(0, Math.floor(Number(resources[resource]) || 0));
+          const cap = Math.max(0, Math.floor(Number(storage[resource]) || 0));
+          const trend = Math.round((Number(trends[resource]) || 0) * 10) / 10;
+          const ratio = cap > 0 ? Math.min(1, held / cap) : 0;
+          const full = cap > 0 && held >= cap;
+          const low = cap > 0 && held <= Math.max(12, cap * 0.3);
+          const trendLabel = trend > 0 ? `+${trend}/m` : trend < 0 ? `${trend}/m` : "steady";
+          return (
+            <button
+              type="button"
+              className={`advisor-resource-pulse-item ${full ? "full" : ""} ${low ? "low" : ""}`}
+              key={resource}
+              onClick={() => onAsk(resource)}
+              disabled={disabled}
+              title={`Ask about ${resource} supply, storage, and trend`}
+            >
+              <span className="advisor-resource-pulse-topline">
+                <Icon size={11} aria-hidden="true" />
+                <strong>{resource}</strong>
+                <em>{trendLabel}</em>
+              </span>
+              <span className="advisor-resource-pulse-value">
+                {held}<small>{cap ? ` / ${cap}` : ""}</small>
+              </span>
+              <span className="advisor-resource-pulse-track" aria-hidden="true">
+                <i style={{ width: `${Math.round(ratio * 100)}%` }} />
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 });
 const paletteResourceKeys = ["wood", "stone", "food", "wheat", "wine"];
@@ -244,7 +1592,9 @@ function App() {
     modalRef = useRef(),
     advisorInputRef = useRef(),
     advisorMessagesRef = useRef(),
+    advisorSpeechRef = useRef(),
     importFileRef = useRef(),
+    advisorAbortRef = useRef(),
     previousSpeed = useRef(1);
   const [state, setState] = useState({
     name: "Willowbrook",
@@ -299,15 +1649,19 @@ function App() {
     [nameDraft, setNameDraft] = useState("Willowbrook"),
     [advisorOpen, setAdvisorOpen] = useState(false),
     [advisorInput, setAdvisorInput] = useState(""),
-    [advisorMessages, setAdvisorMessages] = useState([
-      {
-        role: "assistant",
-        content:
-          "Welcome, steward. I can read the state of your settlement and suggest what to do next.",
-      },
-    ]),
+    [advisorMessages, setAdvisorMessages] = useState(() => readAdvisorMessages("Willowbrook")),
+    [advisorLens, setAdvisorLens] = useState(() => readAdvisorLens("Willowbrook")),
+    [advisorPreview, setAdvisorPreview] = useState(null),
+    [advisorRoute, setAdvisorRoute] = useState(() => readAdvisorRoute("Willowbrook")),
+    [advisorWatch, setAdvisorWatch] = useState(() => readAdvisorWatch("Willowbrook")),
+    [advisorWatchEvents, setAdvisorWatchEvents] = useState(() => readAdvisorWatchEvents("Willowbrook")),
+    [advisorWatchLogOpen, setAdvisorWatchLogOpen] = useState(false),
+    [advisorSavedOpen, setAdvisorSavedOpen] = useState(false),
+    [advisorCopied, setAdvisorCopied] = useState(false),
+    [advisorSpeaking, setAdvisorSpeaking] = useState(false),
     [advisorLoading, setAdvisorLoading] = useState(false),
-    [advisorError, setAdvisorError] = useState(null);
+    [advisorError, setAdvisorError] = useState(null),
+    [advisorAtLatest, setAdvisorAtLatest] = useState(true);
   const [importOpen, setImportOpen] = useState(false),
     [importPreview, setImportPreview] = useState(null);
   const toastTimer = useRef();
@@ -316,6 +1670,8 @@ function App() {
   const modalReturnRef = useRef();
   const placementFocusReturn = useRef(null);
   const inspectorFocusReturn = useRef(null);
+  const advisorHistoryKeyRef = useRef(null);
+  const advisorWatchSignatureRef = useRef("");
   const notify = useCallback((message) => {
     setToast(message);
     clearTimeout(toastTimer.current);
@@ -802,6 +2158,148 @@ function App() {
         label: "Build a cottage",
         detail: "Make room for two more workers at the edge of town.",
       };
+  const advisorBrief = useMemo(
+    () => buildAdvisorBrief(state, nextGoal),
+    [state, nextGoal],
+  );
+  const advisorPrompts = [
+    {
+      title: "Catch me up",
+      detail: "See what changed since your last Keeper check.",
+      question: "What changed since my last Keeper check?",
+      icon: History,
+    },
+    ...(advisorBrief.items.length ? advisorBrief.items : advisorPromptFallbacks),
+  ].slice(0, 3);
+  const latestUserMessage = [...advisorMessages]
+    .reverse()
+    .find((message) => message.role === "user");
+  const latestAssistantIndex = advisorMessages.reduce(
+    (latest, message, index) => (message.role === "assistant" ? index : latest),
+    -1,
+  );
+  const advisorFollowups = buildAdvisorFollowups(
+    latestAssistantIndex >= 0 ? advisorMessages[latestAssistantIndex] : null,
+    latestUserMessage,
+  );
+  const savedAdvisorMessages = advisorMessages.filter(
+    (message) => message.role === "assistant" && message.helpful,
+  );
+  const tryAnotherAdvisorAngle = () => {
+    if (!latestUserMessage || advisorLoading) return;
+    askAdvisor(
+      `Take a genuinely different angle on this question. Keep the answer grounded in the current village state and do not repeat the previous framing. Original question: ${latestUserMessage.prompt || latestUserMessage.content}`,
+      "Try another angle.",
+    );
+  };
+  const refreshLatestAdvisor = () => {
+    if (!latestUserMessage || advisorLoading) return;
+    askAdvisor(latestUserMessage.prompt || latestUserMessage.content, latestUserMessage.content);
+  };
+  const scrollAdvisorToLatest = useCallback((behavior = "smooth") => {
+    const container = advisorMessagesRef.current;
+    if (!container) return;
+    const messages = container.querySelectorAll(".advisor-message");
+    const latestMessage = messages[messages.length - 1];
+    const messageTop = latestMessage
+      ? latestMessage.offsetTop - container.offsetTop - 5
+      : 0;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    container.scrollTo({
+      top: Math.max(0, messageTop),
+      behavior: behavior === "smooth" && reducedMotion ? "auto" : behavior,
+    });
+    setAdvisorAtLatest(true);
+  }, []);
+  const pinAdvisorRoute = (content) => {
+    const route = buildAdvisorRoute(content);
+    if (!route) {
+      notify("That Keeper note does not contain a three-step route yet.");
+      return;
+    }
+    const pinnedRoute = {
+      ...route,
+      day: Math.max(1, Math.floor(Number(state.day) || 1)),
+    };
+    setAdvisorRoute(pinnedRoute);
+    writeAdvisorRoute(state.name, pinnedRoute, state.day);
+    notify("Three-step route pinned beside the village advice.");
+  };
+  const clearAdvisorRoute = () => {
+    setAdvisorRoute(null);
+    try {
+      window.localStorage.removeItem(advisorRouteStorageKey(state.name));
+    } catch {
+      // A pinned route is a convenience; the village save remains authoritative.
+    }
+    notify("Pinned route cleared.");
+  };
+  const toggleAdvisorRouteStep = (stepIndex) => {
+    if (!advisorRoute) return;
+    const nextRoute = {
+      ...advisorRoute,
+      steps: advisorRoute.steps.map((step, index) =>
+        index === stepIndex ? { ...step, done: !step.done } : step,
+      ),
+    };
+    setAdvisorRoute(nextRoute);
+    writeAdvisorRoute(state.name, nextRoute, state.day);
+  };
+  const copyAdvisorAnswer = async (content) => {
+    const text = String(content || "").trim();
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      setAdvisorCopied(true);
+      notify("Keeper advice copied to your clipboard.");
+      window.setTimeout(() => setAdvisorCopied(false), 1800);
+    } catch {
+      notify("The browser did not allow copying this advice.");
+    }
+  };
+  const speakAdvisorAnswer = (content) => {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      notify("This browser does not offer spoken Keeper notes.");
+      return;
+    }
+    if (advisorSpeaking) {
+      window.speechSynthesis.cancel();
+      advisorSpeechRef.current = null;
+      setAdvisorSpeaking(false);
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(
+      String(content || "")
+        .replace(/\*\*/g, "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    );
+    utterance.rate = 0.96;
+    utterance.pitch = 1.02;
+    utterance.onend = () => {
+      if (advisorSpeechRef.current === utterance) {
+        advisorSpeechRef.current = null;
+        setAdvisorSpeaking(false);
+      }
+    };
+    utterance.onerror = utterance.onend;
+    advisorSpeechRef.current = utterance;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    setAdvisorSpeaking(true);
+  };
   useEffect(() => {
     const syncHiddenSurfaces = () => {
       document
@@ -915,8 +2413,13 @@ function App() {
     village: state.name,
     day: state.day,
     period,
+    paused: state.speed === 0,
+    speed: state.speed,
     population: state.population,
     capacity: state.capacity,
+    gathered: Math.floor(state.gathered || 0),
+    inTransit: Math.floor(state.inTransit || 0),
+    blockedSites: Math.floor(state.blockedSites || 0),
     resources: {
       wood: Math.floor(state.resources.wood || 0),
       stone: Math.floor(state.resources.stone || 0),
@@ -924,21 +2427,223 @@ function App() {
       wheat: Math.floor(state.resources.wheat || 0),
       wine: Math.floor(state.resources.wine || 0),
     },
+    storage: {
+      wood: Math.floor(state.storage.wood || 0),
+      stone: Math.floor(state.storage.stone || 0),
+      food: Math.floor(state.storage.food || 0),
+      wheat: Math.floor(state.storage.wheat || 0),
+      wine: Math.floor(state.storage.wine || 0),
+    },
+    trends: {
+      wood: Number(state.trends.wood || 0),
+      stone: Number(state.trends.stone || 0),
+      food: Number(state.trends.food || 0),
+      wheat: Number(state.trends.wheat || 0),
+      wine: Number(state.trends.wine || 0),
+    },
+    runway: advisorResourceRunway(state.resources, state.trends),
+    feast: state.feast ? { remaining: Math.max(0, Number(state.feast.remaining) || 0) } : null,
     buildings: state.buildings.map((building) => ({
+      id: building.id,
       name: CATALOG[building.type]?.name || building.type,
       type: building.type,
       status: building.status || (building.progress < 1 ? "Building" : "Complete"),
       progress: building.progress,
       workers: building.workers || 0,
       cycles: building.cycles || 0,
+      stock: building.stock || 0,
+      stockCap: building.stockCap || 0,
+      nextDelivery: building.nextDelivery,
+      priority: building.priority === "priority" ? "priority" : "normal",
+      upgrade: building.upgrade || null,
+      upgradeName: CATALOG[building.type]?.upgrade?.name || null,
+      upgradeCost: CATALOG[building.type]?.upgrade?.cost || null,
+      ...(building.type === "school" && building.progress >= 1
+        ? {
+            training: Array.isArray(building.training)
+              ? building.training.map((option) => ({
+                  type: option.type,
+                  label: option.label,
+                  canTrain: Boolean(option.canTrain),
+                  reason: option.reason || null,
+                  posts: option.posts,
+                  trained: option.trained,
+                  pending: option.pending,
+                }))
+              : [],
+            trainingSession: building.trainingSession || null,
+          }
+        : {}),
+    })),
+    workers: state.workers.map((worker) => ({
+      id: worker.id,
+      type: worker.workerTypeLabel || "Builder",
+      building: worker.buildingType ? CATALOG[worker.buildingType]?.name || worker.buildingType : "Unassigned",
+      status: workerStatus(worker),
+      waitingForInput: Boolean(worker.waitingForInput),
+      waitingForSpace: Boolean(worker.waitingForSpace),
+      waitingForInn: Boolean(worker.waitingForInn),
+      deliveryRetry: Boolean(worker.deliveryRetry),
+      hungry: Boolean(worker.hungry),
     })),
     goals: {
       cottage: builtHouse,
       farm: builtFarm,
       timber: state.gathered >= 100,
+      next: nextGoal
+        ? { type: nextGoal.type, label: nextGoal.label, detail: nextGoal.detail }
+        : null,
+      chapter: (state.chapterGoals || []).slice(0, 6).map((goal) => ({
+        title: goal.title,
+        description: goal.description,
+        progress: Math.max(0, Math.floor(Number(goal.progress) || 0)),
+        target: Math.max(0, Math.floor(Number(goal.target) || 0)),
+        reward: goal.reward,
+        completed: Boolean(goal.completed),
+      })),
     },
+    insights: advisorBrief.items.map(({ title, detail }) => `${title}: ${detail}`),
+      buildOptions: CATALOG_ENTRIES.map(({ type, catalog }) => {
+      const matchingBuildings = state.buildings.filter((building) => building.type === type);
+      return {
+        type,
+        name: catalog.name,
+        cost: catalog.cost,
+        effect: catalog.effect,
+        affordable: Object.entries(catalog.cost).every(
+          ([resource, amount]) => (state.resources[resource] || 0) >= amount,
+        ),
+        built: matchingBuildings.filter((building) => building.progress === 1).length,
+        underConstruction: matchingBuildings.filter((building) => building.progress < 1).length,
+      };
+      }),
+    focus: detail?.type === "worker"
+      ? {
+          type: "worker",
+          name: inspectedWorker?.workerTypeLabel || "Villager",
+          status: inspectedWorkerStatus,
+        }
+      : inspected
+        ? { type: inspected.type, name: CATALOG[inspected.type]?.name || inspected.type, status: inspected.status }
+        : null,
     activity: recentActivity,
   });
+  useEffect(() => {
+    if (!loaded) return;
+    const key = advisorStorageKey(state.name);
+    if (advisorHistoryKeyRef.current === key) return;
+    advisorHistoryKeyRef.current = key;
+    setAdvisorMessages(readAdvisorMessages(state.name));
+    setAdvisorPreview(null);
+    setAdvisorError(null);
+  }, [loaded, state.name]);
+  useEffect(() => {
+    if (!loaded) return;
+    setAdvisorLens(readAdvisorLens(state.name));
+    setAdvisorRoute(readAdvisorRoute(state.name));
+    setAdvisorWatch(readAdvisorWatch(state.name));
+    setAdvisorWatchEvents(readAdvisorWatchEvents(state.name));
+    setAdvisorWatchLogOpen(false);
+    advisorWatchSignatureRef.current = "";
+  }, [loaded, state.name]);
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      window.localStorage.setItem(`${advisorStorageKey(state.name)}:lens`, advisorLens);
+    } catch {
+      // A private browsing session may refuse this preference; the chat still works.
+    }
+  }, [advisorLens, loaded, state.name]);
+  useEffect(() => {
+    if (!loaded || !advisorHistoryKeyRef.current) return;
+    try {
+      window.localStorage.setItem(
+        advisorHistoryKeyRef.current,
+        JSON.stringify(advisorMessages.slice(-12)),
+      );
+    } catch {
+      // Advisor memory is a convenience; the village save remains authoritative.
+    }
+  }, [advisorMessages, loaded]);
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      window.localStorage.setItem(advisorWatchStorageKey(state.name), advisorWatch ? "on" : "off");
+    } catch {
+      // The watch preference is optional; the field notes still work without storage.
+    }
+  }, [advisorWatch, loaded, state.name]);
+  useEffect(() => {
+    if (!loaded) return;
+    writeAdvisorWatchEvents(state.name, advisorWatchEvents);
+  }, [advisorWatchEvents, loaded, state.name]);
+  useEffect(() => {
+    if (!loaded || !advisorWatch) return;
+    const signature = advisorBrief.items
+      .filter((item) => item.tone === "attention" || item.tone === "pause")
+      .map((item) => item.title)
+      .join("|");
+    const previous = advisorWatchSignatureRef.current;
+    advisorWatchSignatureRef.current = signature;
+    if (!previous || !signature || previous === signature) return;
+    const newest = advisorBrief.items.find(
+      (item) => (item.tone === "attention" || item.tone === "pause") && !previous.includes(item.title),
+    );
+    if (!newest) return;
+    setAdvisorWatchEvents((current) => [
+      {
+        day: state.day,
+        period,
+        title: newest.title,
+        detail: newest.detail,
+      },
+      ...current.filter((event) => event.title !== newest.title),
+    ].slice(0, 4));
+    notify(`Keeper's watch: ${newest.title}.`);
+  }, [advisorBrief, advisorWatch, loaded, notify, period, state.day]);
+  useEffect(() => {
+    if (!loaded || !advisorRoute) return;
+    const routeStepComplete = (step) => {
+      if (step.buildAction) {
+        return state.buildings.some(
+          (building) => building.type === step.buildAction && Number(building.progress) >= 1,
+        );
+      }
+      if (step.priorityAction) {
+        return state.buildings.some(
+          (building) => building.type === step.priorityAction && building.priority === "priority",
+        );
+      }
+      if (step.trainingAction) {
+        return state.buildings.some(
+          (building) =>
+            building.type === "school" &&
+            building.trainingSession?.label === step.trainingAction,
+        );
+      }
+      return false;
+    };
+    let changed = false;
+    const nextSteps = advisorRoute.steps.map((step) => {
+      if (step.done || !routeStepComplete(step)) return step;
+      changed = true;
+      return { ...step, done: true };
+    });
+    if (!changed) return;
+    const nextRoute = { ...advisorRoute, steps: nextSteps };
+    setAdvisorRoute(nextRoute);
+    writeAdvisorRoute(state.name, nextRoute, state.day);
+    if (nextSteps.every((step) => step.done)) {
+      notify("Pinned route complete. The village has carried out the Keeper's plan.");
+    }
+  }, [advisorRoute, loaded, notify, state.buildings, state.day, state.name]);
+  useEffect(
+    () => () => {
+      advisorAbortRef.current?.abort();
+      window.speechSynthesis?.cancel();
+    },
+    [],
+  );
   const completedGoals = [builtHouse, builtFarm, state.gathered >= 100].filter(
     Boolean,
   ).length;
@@ -1077,40 +2782,309 @@ function App() {
     }
     window.location.reload();
   };
-  const askAdvisor = async (question) => {
-    const content = question.trim().slice(0, 500);
-    if (!content || advisorLoading) return;
+  const askAdvisor = async (question, displayQuestion = question) => {
+    const prompt = question.trim().slice(0, 1200);
+    const content = displayQuestion.trim().slice(0, 240);
+    if (!prompt || !content || advisorLoading) return;
+    const lens = ADVISOR_LENSES[advisorLens] || ADVISOR_LENSES.steward;
+    const guidedPrompt = `${lens.instruction}\n\nUser request:\n${prompt}`.slice(0, 1800);
     const nextMessages = [
       ...advisorMessages,
-      { role: "user", content },
+      { role: "user", content, ...(guidedPrompt !== content ? { prompt: guidedPrompt } : {}) },
     ].slice(-12);
     setAdvisorMessages(nextMessages);
+    setAdvisorPreview(null);
     setAdvisorInput("");
     setAdvisorError(null);
     setAdvisorLoading(true);
+    const advisorContext = {
+      ...createAdvisorContext(),
+      previousPulse: readAdvisorPulse(state.name),
+    };
+    writeAdvisorPulse(state.name, advisorContext);
+    const controller = new AbortController();
+    advisorAbortRef.current = controller;
     try {
       const response = await fetch("/api/advisor", {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, context: createAdvisorContext() }),
+        body: JSON.stringify({
+          messages: nextMessages.map(({ role, content: messageContent, prompt: hiddenPrompt }) => ({
+            role,
+            content: hiddenPrompt || messageContent,
+            ...(role === "user" ? { displayContent: messageContent } : {}),
+          })),
+          context: advisorContext,
+        }),
       });
       const data = await response.json().catch(() => ({}));
+      if (advisorAbortRef.current !== controller) return;
       if (!response.ok) {
         throw new Error(data.error || "The advisor is unavailable right now.");
       }
       if (!data.message) throw new Error("The advisor returned an empty answer.");
+      const action = inferAdvisorBuildAction(data.message);
+      const previewAction = inferAdvisorPreviewAction(data.message) || action;
+      const priorityAction = inferAdvisorPriorityAction(data.message);
+      const upgradeAction = inferAdvisorUpgradeAction(data.message);
+      const feastAction = inferAdvisorFeastAction(data.message);
+      const focusAction = inferAdvisorFocusAction(data.message);
+      const workerFocusAction = inferAdvisorWorkerFocusAction(data.message);
+      const trainingAction = inferAdvisorTrainingAction(data.message);
+      const local = Boolean(data.local);
       setAdvisorMessages((current) =>
-        [...current, { role: "assistant", content: data.message }].slice(-12),
+        [
+          ...current,
+          {
+            role: "assistant",
+            content: data.message,
+            question: content,
+            snapshot: { day: state.day, period },
+            grounding: buildAdvisorGrounding(data.message, advisorContext),
+            ...(local ? { local: true } : {}),
+            ...(guidedPrompt !== content ? { prompt: guidedPrompt } : {}),
+            ...(action ? { action } : {}),
+            ...(previewAction ? { previewAction } : {}),
+            ...(priorityAction ? { priorityAction } : {}),
+            ...(upgradeAction ? { upgradeAction } : {}),
+            ...(feastAction ? { feastAction: true } : {}),
+            ...(focusAction ? { focusAction } : {}),
+            ...(workerFocusAction ? { workerFocusAction } : {}),
+            ...(trainingAction ? { trainingAction } : {}),
+          },
+        ].slice(-12),
       );
+      if (local) {
+        setAdvisorError(
+          data.notice ||
+            "The remote Keeper is unavailable. Showing a local field note from your current village state.",
+        );
+      }
     } catch (requestError) {
-      // Keep an unavailable advisor easy to retry without making the player
-      // reconstruct the question they just submitted.
-      setAdvisorInput(content);
-      setAdvisorError(requestError.message || "The advisor is unavailable right now.");
+      if (requestError?.name === "AbortError") return;
+      if (advisorAbortRef.current !== controller) return;
+      const fallback = buildLocalAdvisorReply(prompt, advisorContext, advisorBrief);
+      const action = inferAdvisorBuildAction(fallback);
+      const previewAction = inferAdvisorPreviewAction(fallback) || action;
+      const priorityAction = inferAdvisorPriorityAction(fallback);
+      const upgradeAction = inferAdvisorUpgradeAction(fallback);
+      const feastAction = inferAdvisorFeastAction(fallback);
+      const focusAction = inferAdvisorFocusAction(fallback);
+      const workerFocusAction = inferAdvisorWorkerFocusAction(fallback);
+      const trainingAction = inferAdvisorTrainingAction(fallback);
+      setAdvisorMessages((current) =>
+        [
+          ...current,
+          {
+            role: "assistant",
+            content: fallback,
+            question: content,
+            local: true,
+            snapshot: { day: state.day, period },
+            grounding: buildAdvisorGrounding(fallback, advisorContext),
+            ...(guidedPrompt !== content ? { prompt: guidedPrompt } : {}),
+            ...(action ? { action } : {}),
+            ...(previewAction ? { previewAction } : {}),
+            ...(priorityAction ? { priorityAction } : {}),
+            ...(upgradeAction ? { upgradeAction } : {}),
+            ...(feastAction ? { feastAction: true } : {}),
+            ...(focusAction ? { focusAction } : {}),
+            ...(workerFocusAction ? { workerFocusAction } : {}),
+            ...(trainingAction ? { trainingAction } : {}),
+          },
+        ].slice(-12),
+      );
+      setAdvisorInput("");
+      setAdvisorError("The remote Keeper is unavailable. Showing a local field note from your current village state.");
     } finally {
-      setAdvisorLoading(false);
-      requestAnimationFrame(() => advisorInputRef.current?.focus());
+      if (advisorAbortRef.current === controller) {
+        advisorAbortRef.current = null;
+        setAdvisorLoading(false);
+        requestAnimationFrame(() => advisorInputRef.current?.focus());
+      }
     }
+  };
+  const prepareAdvisorBuild = (type) => {
+    const entry = CATALOG_ENTRIES.find((candidate) => candidate.type === type);
+    if (!entry || type === "road") return;
+    const missing = missingAdvisorBuildCosts(type, state.resources)
+      .map(([resource, amount]) => `${amount} ${resource}`);
+    if (missing.length) {
+      notify(`The Keeper suggested ${entry.catalog.name}, but you still need ${missing.join(" and ")}.`);
+      return;
+    }
+    choose(type);
+    notify(`${entry.catalog.name} is ready. Choose a clear patch to begin placement.`);
+  };
+  const showAdvisorPreview = (type) => {
+    const scenario = buildAdvisorScenario(type, state.resources, state.storage);
+    if (!scenario) return;
+    setAdvisorPreview({ type, ...scenario });
+  };
+  const prepareAdvisorPriority = (type) => {
+    const target = advisorPriorityTarget(type, state.buildings);
+    const name = CATALOG[type]?.name || type;
+    if (!target) {
+      notify(`There is no active ${name} worksite to prioritize right now.`);
+      return;
+    }
+    if (target.priority === "priority") {
+      notify(`${name} already has priority. Workers will favor it when choosing their next job.`);
+      return;
+    }
+    if (game.current?.setPriority(target.id, "priority")) {
+      notify(`${name} is now first in line for available workers.`);
+    }
+  };
+  const prepareAdvisorUpgrade = (type) => {
+    const target = state.buildings.find(
+      (building) =>
+        building.type === type &&
+        Number(building.progress) >= 1 &&
+        CATALOG[type]?.upgrade &&
+        !building.upgrade,
+    );
+    const name = CATALOG[type]?.name || type;
+    const upgrade = CATALOG[type]?.upgrade;
+    if (!target || !upgrade) {
+      notify(`${name} has no available upgrade right now.`);
+      return;
+    }
+    const missing = missingAdvisorUpgradeCosts(type, state.resources)
+      .map(([resource, amount]) => `${amount} ${resource}`);
+    if (missing.length) {
+      notify(`${upgrade.name} needs ${missing.join(" and ")} before it can improve ${name}.`);
+      return;
+    }
+    if (game.current?.upgradeBuilding(target.id)) {
+      notify(`${name} upgraded: ${upgrade.name}.`);
+    }
+  };
+  const prepareAdvisorFeast = () => {
+    const food = Math.floor(Number(state.resources.food) || 0);
+    if (state.feast?.remaining > 0) {
+      notify("The village is already enjoying a feast.");
+      return;
+    }
+    if (food < 30) {
+      notify(`The feast needs ${30 - food} more food before it can begin.`);
+      return;
+    }
+    if (game.current?.startFeast()) {
+      notify("Village feast started: construction is 25% faster for 45 seconds.");
+    }
+  };
+  const focusAdvisorBuilding = (type) => {
+    const target = state.buildings.find((building) => building.type === type);
+    const name = CATALOG[type]?.name || type;
+    if (!target || !game.current?.focusBuilding(target.id)) {
+      notify(`${name} is not in the village yet.`);
+      return;
+    }
+    setAdvisorOpen(false);
+    notify(`Showing ${name}.`);
+  };
+  const focusAdvisorWorker = (workerType) => {
+    const target = state.workers.find((worker) => worker.workerTypeLabel === workerType);
+    if (!target || !game.current?.focusWorker(target.id)) {
+      notify(`There is no ${workerType.toLowerCase()} in the village right now.`);
+      return;
+    }
+    setAdvisorOpen(false);
+    notify(`Showing your ${workerType.toLowerCase()}.`);
+  };
+  const prepareAdvisorTraining = (workerTypeLabel) => {
+    const school = state.buildings.find(
+      (building) => building.type === "school" && Number(building.progress) >= 1,
+    );
+    const option = school?.training?.find((candidate) => candidate.label === workerTypeLabel);
+    if (!school || !option) {
+      notify("The village has no completed School training slot for that role.");
+      return;
+    }
+    if (school.trainingSession) {
+      notify("The School is already training an apprentice.");
+      return;
+    }
+    if (!option.canTrain) {
+      notify(option.reason || `${workerTypeLabel} training is not available yet.`);
+      return;
+    }
+    if (game.current?.trainWorker(school.id, option.type)) {
+      notify(`${workerTypeLabel} training started at the School.`);
+    }
+  };
+  const cancelAdvisorRequest = () => {
+    const controller = advisorAbortRef.current;
+    if (!controller) return;
+    controller.abort();
+    advisorAbortRef.current = null;
+    setAdvisorLoading(false);
+    setAdvisorInput(latestUserMessage?.content || "");
+    setAdvisorError("Request stopped. Edit the question or send it again when you are ready.");
+    requestAnimationFrame(() => advisorInputRef.current?.focus());
+  };
+  const askKeeperAboutFocus = () => {
+    const subject = detail?.type === "worker"
+      ? `${inspectedWorker?.workerTypeLabel || "villager"} currently ${inspectedWorkerStatus.toLowerCase()}`
+      : inspected
+        ? `${CATALOG[inspected.type]?.name || inspected.type} currently ${inspected.status || "complete"}`
+        : "this part of my village";
+    const question = detail?.type === "worker"
+      ? `Inspect this ${subject}. Explain what this villager needs next, then give me one helpful action and one thing to watch.`
+      : `Inspect this ${subject}. Explain its role, then tell me whether I should prioritize, support, upgrade, or leave it alone right now.`;
+    setAdvisorOpen(true);
+    closeMenu();
+    askAdvisor(question, `Tell me about ${subject}.`);
+    closeDetail();
+  };
+  const startFreshAdvisor = () => {
+    advisorAbortRef.current?.abort();
+    advisorAbortRef.current = null;
+    setAdvisorMessages([DEFAULT_ADVISOR_MESSAGE]);
+    setAdvisorPreview(null);
+    setAdvisorInput("");
+    setAdvisorError(null);
+    setAdvisorLoading(false);
+    setAdvisorSavedOpen(false);
+    try {
+      if (advisorHistoryKeyRef.current)
+        window.localStorage.removeItem(advisorHistoryKeyRef.current);
+    } catch {
+      // A private browsing session may refuse local storage; the chat still resets.
+    }
+    requestAnimationFrame(() => advisorInputRef.current?.focus());
+  };
+  const toggleAdvisorWatch = () => {
+    const next = !advisorWatch;
+    setAdvisorWatch(next);
+    if (!next) advisorWatchSignatureRef.current = "";
+    notify(next ? "Keeper's watch is on." : "Keeper's watch is quiet.");
+  };
+  const clearAdvisorWatchEvents = () => {
+    setAdvisorWatchLogOpen(false);
+    setAdvisorWatchEvents([]);
+    writeAdvisorWatchEvents(state.name, []);
+    notify("Keeper's watch log cleared.");
+  };
+  const toggleAdvisorWatchLog = () => {
+    const next = !advisorWatchLogOpen;
+    setAdvisorWatchLogOpen(next);
+    requestAnimationFrame(() => {
+      const panel = document.querySelector(".advisor-panel");
+      if (!panel) return;
+      const maxScroll = Math.max(0, panel.scrollHeight - panel.clientHeight);
+      panel.scrollTo({
+        top: next ? Math.min(30, maxScroll) : 0,
+        behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth",
+      });
+    });
+  };
+  const dismissAdvisorWatchEvent = (eventIndex) => {
+    setAdvisorWatchLogOpen(false);
+    setAdvisorWatchEvents((current) => current.filter((_, index) => index !== eventIndex));
+    notify("Watch entry dismissed.");
   };
   const closeAdvisor = () => {
     setAdvisorOpen(false);
@@ -1135,13 +3109,38 @@ function App() {
   }, [advisorOpen]);
   useEffect(() => {
     if (!advisorOpen || !advisorMessagesRef.current) return;
-    advisorMessagesRef.current.scrollTo({
-      top: advisorMessagesRef.current.scrollHeight,
-      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
-        ? "auto"
-        : "smooth",
+    scrollAdvisorToLatest();
+    const resizeObserver = window.ResizeObserver
+      ? new ResizeObserver(() => scrollAdvisorToLatest("auto"))
+      : null;
+    resizeObserver?.observe(advisorMessagesRef.current);
+    const handleResize = () => scrollAdvisorToLatest("auto");
+    const handleScroll = (event) => {
+      const container = event.currentTarget;
+      const messages = container.querySelectorAll(".advisor-message");
+      const latestMessage = messages[messages.length - 1];
+      const latestTop = latestMessage
+        ? latestMessage.offsetTop - container.offsetTop - 5
+        : Math.max(0, container.scrollHeight - container.clientHeight);
+      setAdvisorAtLatest(Math.abs(container.scrollTop - latestTop) < 24);
+    };
+    advisorMessagesRef.current.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleResize);
+    return () => {
+      resizeObserver?.disconnect();
+      advisorMessagesRef.current?.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [advisorMessages, advisorLoading, advisorOpen, advisorPreview, scrollAdvisorToLatest]);
+  useEffect(() => {
+    if (!advisorOpen || !advisorPreview) return;
+    requestAnimationFrame(() => {
+      document.querySelector(".advisor-scenario")?.scrollIntoView({
+        block: "nearest",
+        behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth",
+      });
     });
-  }, [advisorMessages, advisorLoading, advisorOpen]);
+  }, [advisorOpen, advisorPreview]);
   const DayIcon = period === "Night" ? Moon : Sun;
   return (
     <main
@@ -1352,19 +3351,28 @@ function App() {
           ref={advisorButtonRef}
           className={`advisor-launch parchment ${advisorOpen ? "active" : ""}`}
           aria-label={advisorOpen ? "Close village advisor" : "Open village advisor"}
-          title={advisorOpen ? "Close village advisor" : "Open village advisor"}
           aria-controls={advisorOpen ? "village-advisor" : undefined}
           aria-expanded={advisorOpen}
+          title={
+            advisorOpen
+              ? "Close village advisor"
+              : advisorBrief.attentionCount
+                ? `${advisorBrief.attentionCount} Keeper note${advisorBrief.attentionCount === 1 ? "" : "s"} need attention`
+                : "Open village advisor"
+          }
           onClick={toggleAdvisor}
         >
           <MessageCircle size={15} />
           <span>Village advisor</span>
+          {!advisorOpen && advisorBrief.attentionCount > 0 && (
+            <i className="advisor-alert" aria-hidden="true" />
+          )}
         </button>
       </div>
       {advisorOpen && (
         <aside
           id="village-advisor"
-          className="advisor-panel parchment"
+          className={`advisor-panel parchment ${advisorMessages.length > 1 ? "has-history" : ""} ${advisorPreview ? "has-preview" : ""}`}
           role="dialog"
           aria-modal="false"
           aria-label="Village advisor"
@@ -1385,9 +3393,378 @@ function App() {
               <X size={17} />
             </button>
           </div>
+          <div className="advisor-toolbar" aria-label="Advisor tools">
+            {advisorLoading && (
+              <button
+                type="button"
+                className="advisor-cancel"
+                onClick={cancelAdvisorRequest}
+                aria-label="Stop advisor request"
+              >
+                <X size={12} aria-hidden="true" /> Stop
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => askAdvisor(ADVISOR_COMMANDS.dispatch, "Read today's village dispatch.")}
+              disabled={advisorLoading}
+              title="Ask the Keeper for a lively read of the current village state."
+            >
+              <Sparkles size={12} aria-hidden="true" /> Dispatch
+            </button>
+            <button
+              type="button"
+              onClick={() => askAdvisor(ADVISOR_COMMANDS.plan, "Make me a three-step plan.")}
+              disabled={advisorLoading}
+              title="Ask the Keeper for a grounded three-step plan."
+            >
+              <Route size={12} aria-hidden="true" /> Make a plan
+            </button>
+            <button
+              type="button"
+              onClick={() => askAdvisor(ADVISOR_COMMANDS.compare, "Compare my best options.")}
+              disabled={advisorLoading}
+              title="Ask the Keeper to compare the strongest affordable choices."
+            >
+              <BarChart3 size={12} aria-hidden="true" /> Compare
+            </button>
+            <button
+              type="button"
+              onClick={() => askAdvisor(ADVISOR_COMMANDS.council, "Convene the village council.")}
+              disabled={advisorLoading}
+              title="Ask three village voices for a shared recommendation."
+            >
+              <Users size={12} aria-hidden="true" /> Council
+            </button>
+            <button
+              type="button"
+              className={advisorWatch ? "active advisor-watch" : "advisor-watch"}
+              onClick={toggleAdvisorWatch}
+              aria-pressed={advisorWatch}
+              title={advisorWatch ? "Quiet Keeper's watch when a new bottleneck appears" : "Ask the Keeper to watch for new bottlenecks"}
+            >
+              <Bell size={12} aria-hidden="true" /> {advisorWatch ? "Watching" : "Watch"}
+            </button>
+            <button
+              type="button"
+              className={advisorSavedOpen ? "active" : ""}
+              onClick={() => setAdvisorSavedOpen((open) => !open)}
+              aria-pressed={advisorSavedOpen}
+              title="Show advice you saved for later"
+            >
+              <Bookmark size={12} aria-hidden="true" /> Saved {savedAdvisorMessages.length}
+            </button>
+            <button
+              type="button"
+              className="advisor-new"
+              onClick={startFreshAdvisor}
+              title="Start a new advisor conversation"
+              aria-label="Start a new advisor conversation"
+            >
+              <RotateCw size={12} aria-hidden="true" />
+            </button>
+          </div>
           <p className="advisor-intro">
-            Ask about your resources, workers, goals, or what to build next.
+            Ask about the village, or let the Keeper turn its current mood into a plan.
           </p>
+          <div className="advisor-status-strip" aria-label="Current village status">
+            <span>
+              <Users size={11} aria-hidden="true" />
+              <strong>{Math.floor(state.population || 0)}/{Math.floor(state.capacity || 0)}</strong>
+              <em>people</em>
+            </span>
+            <span>
+              <Package size={11} aria-hidden="true" />
+              <strong>{Math.floor(state.inTransit || 0)}</strong>
+              <em>in transit</em>
+            </span>
+            <span>
+              <Gauge size={11} aria-hidden="true" />
+              <strong>{state.speed === 0 ? "Paused" : `${state.speed}×`}</strong>
+              <em>clock</em>
+            </span>
+          </div>
+          <AdvisorResourcePulse
+            resources={state.resources}
+            storage={state.storage}
+            trends={state.trends}
+            disabled={advisorLoading}
+            onAsk={(resource) => askAdvisor(ADVISOR_RESOURCE_QUESTIONS[resource])}
+          />
+          {advisorRoute && (
+            <section className="advisor-route" aria-label="Pinned advisor route">
+              <div className="advisor-route-heading">
+                <span><Route size={11} aria-hidden="true" /> PINNED ROUTE <em>{advisorRoute.steps.filter((step) => step.done).length}/3 DONE{advisorRoute.steps.every((step) => step.done) ? " · COMPLETE" : ` · DAY ${advisorRoute.day}`}</em></span>
+                <button type="button" onClick={clearAdvisorRoute} aria-label="Clear pinned route" title="Clear pinned route">
+                  <X size={11} aria-hidden="true" />
+                </button>
+              </div>
+              <ol id="advisor-watch-events">
+                {advisorRoute.steps.map((step, stepIndex) => {
+                  const build = step.buildAction && CATALOG[step.buildAction];
+                  const priority = step.priorityAction && CATALOG[step.priorityAction];
+                  const focus = step.focusAction && CATALOG[step.focusAction];
+                  const worker = step.workerFocusAction;
+                  const trainee = step.trainingAction;
+                  const buildComplete = Boolean(
+                    build && state.buildings.some(
+                      (building) => building.type === step.buildAction && Number(building.progress) >= 1,
+                    ),
+                  );
+                  const priorityTarget = priority && state.buildings.find(
+                    (building) => building.type === step.priorityAction,
+                  );
+                  const priorityDone = Boolean(priorityTarget?.priority === "priority");
+                  const trainingActive = Boolean(
+                    trainee && state.buildings.some(
+                      (building) => building.type === "school" && building.trainingSession?.label === trainee,
+                    ),
+                  );
+                  return (
+                    <li className={step.done ? "done" : ""} key={`${step.text}-${stepIndex}`}>
+                      <button
+                        type="button"
+                        className="advisor-route-check"
+                        aria-label={step.done ? `Mark route step ${stepIndex + 1} incomplete` : `Mark route step ${stepIndex + 1} complete`}
+                        aria-pressed={step.done}
+                        onClick={() => toggleAdvisorRouteStep(stepIndex)}
+                        title={step.done ? "Mark this route step incomplete" : "Mark this route step complete"}
+                      >
+                        {step.done && <Check size={9} aria-hidden="true" />}
+                      </button>
+                      <span>{step.text}</span>
+                      {build && (
+                        <button
+                          type="button"
+                          onClick={() => prepareAdvisorBuild(step.buildAction)}
+                          disabled={step.done || buildComplete}
+                          title={step.done || buildComplete ? `${build.name} is already complete.` : `Prepare ${build.name} for placement.`}
+                        >
+                          <Hammer size={10} aria-hidden="true" /> {step.done || buildComplete ? `${build.name} complete` : `Prepare ${build.name}`}
+                        </button>
+                      )}
+                      {priority && (
+                        <button
+                          type="button"
+                          onClick={() => prepareAdvisorPriority(step.priorityAction)}
+                          disabled={step.done || priorityDone}
+                          title={step.done || priorityDone ? `${priority.name} already has priority.` : `Prioritize ${priority.name}.`}
+                        >
+                          <Gauge size={10} aria-hidden="true" /> {step.done || priorityDone ? `${priority.name} already priority` : `Prioritize ${priority.name}`}
+                        </button>
+                      )}
+                      {focus && (
+                        <button type="button" onClick={() => focusAdvisorBuilding(step.focusAction)} disabled={step.done}>
+                          <Compass size={10} aria-hidden="true" /> Focus {focus.name}
+                        </button>
+                      )}
+                      {worker && (
+                        <button type="button" onClick={() => focusAdvisorWorker(worker)} disabled={step.done}>
+                          <Compass size={10} aria-hidden="true" /> Focus {worker}
+                        </button>
+                      )}
+                      {trainee && (
+                        <button
+                          type="button"
+                          onClick={() => prepareAdvisorTraining(trainee)}
+                          disabled={step.done || trainingActive}
+                          title={step.done || trainingActive ? "The School is already training this apprentice." : `Train ${trainee}.`}
+                        >
+                          <GraduationCap size={10} aria-hidden="true" /> {step.done || trainingActive ? "School already training" : `Train ${trainee}`}
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          )}
+          <div className="advisor-lenses" role="group" aria-label="Advisor voice">
+            <span>ASK AS</span>
+            {Object.entries(ADVISOR_LENSES).map(([key, lens]) => {
+              const LensIcon = lens.icon;
+              return (
+                <button
+                  type="button"
+                  key={key}
+                  className={advisorLens === key ? "active" : ""}
+                  aria-pressed={advisorLens === key}
+                  onClick={() => setAdvisorLens(key)}
+                  disabled={advisorLoading}
+                  title={`Use the ${lens.label.toLowerCase()} voice`}
+                >
+                  <LensIcon size={11} aria-hidden="true" /> {lens.label}
+                </button>
+              );
+            })}
+          </div>
+          {advisorWatch && advisorWatchEvents.length > 0 && (
+            <section
+              className={`advisor-watch-log ${advisorWatchLogOpen ? "is-expanded" : "is-collapsed"}`}
+              aria-label="Keeper's watch log"
+              aria-live="polite"
+            >
+              <div className="advisor-watch-log-heading">
+                <span><Bell size={11} aria-hidden="true" /> WATCH LOG</span>
+                <div className="advisor-watch-log-actions">
+                  <button
+                    type="button"
+                    className="advisor-watch-toggle"
+                    onClick={toggleAdvisorWatchLog}
+                    aria-expanded={advisorWatchLogOpen}
+                    aria-controls="advisor-watch-events"
+                    aria-label={advisorWatchLogOpen ? "Collapse Keeper's watch log" : "Expand Keeper's watch log"}
+                    title={advisorWatchLogOpen ? "Collapse Keeper's watch log" : "Expand Keeper's watch log"}
+                  >
+                    <ChevronDown size={11} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAdvisorWatchEvents}
+                    aria-label="Clear Keeper's watch log"
+                    title="Clear Keeper's watch log"
+                  >
+                    <X size={11} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              <ol>
+                {advisorWatchEvents.map((event, index) => (
+                  <li key={`${event.title}-${event.day}-${index}`}>
+                    <button
+                      type="button"
+                      className="advisor-watch-event"
+                      onClick={() =>
+                        askAdvisor(
+                          `What should I do about ${event.title}? Use the current village state and explain the safest next step.`,
+                          `Follow up: ${event.title}`,
+                        )
+                      }
+                      disabled={advisorLoading}
+                      title="Ask the Keeper about this missed signal using the current village state"
+                    >
+                      <span><strong>{event.title}</strong><em>{event.detail}</em></span>
+                      <small>Day {event.day} · {event.period}</small>
+                    </button>
+                    <button
+                      type="button"
+                      className="advisor-watch-dismiss"
+                      onClick={() => dismissAdvisorWatchEvent(index)}
+                      aria-label={`Dismiss watch entry: ${event.title}`}
+                      title="Dismiss this watch entry"
+                    >
+                      <X size={10} aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
+          {advisorSavedOpen && (
+            <section className="advisor-saved" aria-label="Saved advisor advice">
+              <div className="advisor-saved-heading">
+                <span><Bookmark size={12} /> SAVED ADVICE</span>
+                <button
+                  type="button"
+                  onClick={() => setAdvisorSavedOpen(false)}
+                  aria-label="Close saved advice"
+                  title="Close saved advice"
+                >
+                  <X size={12} aria-hidden="true" />
+                </button>
+              </div>
+              {savedAdvisorMessages.length ? (
+                <div className="advisor-saved-list">
+                  {[...savedAdvisorMessages].reverse().map((message, index) => (
+                    <div className="advisor-saved-item" key={`${message.content}-${index}`}>
+                      <div>
+                        {message.question && <small>Asked: {message.question}</small>}
+                        <p><AdvisorContent content={message.content} /></p>
+                      </div>
+                      <button
+                        type="button"
+                        className="advisor-saved-reask"
+                        onClick={() => {
+                          const replayPrompt = advisorReplayPrompt(message);
+                          const visibleQuestion = message.question || "Ask the Keeper again";
+                          const groundedReplay = replayPrompt === visibleQuestion && message.content
+                            ? `${replayPrompt}\n\nSaved Keeper context: ${message.content}`
+                            : replayPrompt;
+                          askAdvisor(groundedReplay, visibleQuestion);
+                        }}
+                        disabled={advisorLoading}
+                        aria-label="Ask this saved advice again"
+                        title="Ask this question again using the current village state"
+                      >
+                        <RotateCw size={11} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAdvisorMessages((current) =>
+                            current.map((item) =>
+                              item === message ? { ...item, helpful: false } : item,
+                            ),
+                          )
+                        }
+                        aria-label="Remove saved advice"
+                        title="Remove saved advice"
+                      >
+                        <X size={11} aria-hidden="true" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="advisor-saved-empty">Save a Keeper answer to keep it close.</p>
+              )}
+            </section>
+          )}
+          <section className="advisor-brief" aria-label="Keeper's field notes">
+            <div className="advisor-brief-heading">
+              <span><Sparkles size={12} /> KEEPER&apos;S FIELD NOTES</span>
+              <em className={advisorBrief.attentionCount ? "attention" : "calm"}>
+                {advisorBrief.label}
+              </em>
+            </div>
+            <div className="advisor-brief-list">
+              {advisorBrief.items.map((item) => {
+                const NoteIcon = item.icon || Info;
+                return (
+                  <button
+                    type="button"
+                    className={`advisor-brief-item ${item.tone || "calm"}`}
+                    key={item.title}
+                    onClick={() => askAdvisor(item.question)}
+                    disabled={advisorLoading}
+                  >
+                    <NoteIcon size={14} aria-hidden="true" />
+                    <span>
+                      <strong>{item.title}</strong>
+                      <em>{item.detail}</em>
+                    </span>
+                    <ArrowUpRight size={13} aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+          <div
+            className="advisor-conversation-heading"
+            aria-live="polite"
+          >
+            <span>CONVERSATION</span>
+            {advisorMessages.length > 1 && !advisorAtLatest && (
+              <button
+                type="button"
+                onClick={() => scrollAdvisorToLatest()}
+                aria-label="Jump to the newest Keeper answer"
+                title="Jump to the newest Keeper answer"
+              >
+                <ArrowDown size={11} aria-hidden="true" /> Latest
+              </button>
+            )}
+          </div>
           <div
             ref={advisorMessagesRef}
             className="advisor-messages"
@@ -1395,13 +3772,347 @@ function App() {
             aria-label="Advisor conversation"
           >
             {advisorMessages.map((message, index) => (
-              <div
-                className={`advisor-message ${message.role}`}
-                key={`${message.role}-${index}`}
-              >
-                <span>{message.role === "assistant" ? "KEEPER" : "YOU"}</span>
-                <p><AdvisorContent content={message.content} /></p>
-              </div>
+              <React.Fragment key={`${message.role}-${index}`}>
+                <div className={`advisor-message ${message.role}`}>
+                  <div className="advisor-message-head">
+                    <span>{message.role === "assistant" ? (message.local ? "LOCAL FIELD NOTE" : "KEEPER") : "YOU"}</span>
+                    {message.role === "assistant" && message.snapshot && (
+                      <em
+                        className={
+                          message.snapshot.day !== state.day || message.snapshot.period !== period
+                            ? "stale"
+                            : ""
+                        }
+                        title={
+                          message.snapshot.day !== state.day || message.snapshot.period !== period
+                            ? "The village has moved on since this answer was grounded. Ask again for a fresh recommendation."
+                            : "The village snapshot used to ground this answer"
+                        }
+                      >
+                        {message.snapshot.day !== state.day || message.snapshot.period !== period
+                          ? "STALE"
+                          : message.local
+                            ? "LOCAL"
+                            : "LIVE"} · DAY {message.snapshot.day} · {message.snapshot.period}
+                      </em>
+                    )}
+                  </div>
+                  <p><AdvisorContent content={message.content} /></p>
+                  {message.role === "assistant" &&
+                    index === latestAssistantIndex &&
+                    message.grounding?.length > 0 && (
+                    <div className="advisor-grounding" aria-label="Signals used for this answer">
+                      <span>GROUNDED IN</span>
+                      {message.grounding.map((signal) => (
+                        <em key={signal}>{signal}</em>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {message.role === "assistant" &&
+                  index === latestAssistantIndex &&
+                  message.action && (
+                    (() => {
+                      const missing = missingAdvisorBuildCosts(message.action, state.resources);
+                      const missingLabel = missing.map(([resource, amount]) => `${amount} ${resource}`).join(" · ");
+                      return (
+                        <button
+                          type="button"
+                          className={`advisor-build-action ${missing.length ? "needs-materials" : ""}`}
+                          onClick={() => prepareAdvisorBuild(message.action)}
+                          disabled={advisorLoading || missing.length > 0}
+                          title={missing.length ? `Gather ${missingLabel} before placing this.` : undefined}
+                        >
+                          {missing.length ? <Package size={12} aria-hidden="true" /> : <Hammer size={12} aria-hidden="true" />}
+                          {missing.length ? `Need ${missingLabel}` : `Prepare ${CATALOG[message.action]?.name || message.action}`}
+                        </button>
+                      );
+                    })()
+                  )}
+                {message.role === "assistant" &&
+                  index === latestAssistantIndex &&
+                  message.previewAction && (
+                    <>
+                      <button
+                        type="button"
+                        className="advisor-preview-action"
+                        onClick={() => showAdvisorPreview(message.previewAction)}
+                        disabled={advisorLoading}
+                        title="Preview the cost and outcome without changing the village."
+                      >
+                        <BarChart3 size={12} aria-hidden="true" />
+                        {advisorPreview?.type === message.previewAction ? "Hide preview" : `Preview ${CATALOG[message.previewAction]?.name || message.previewAction}`}
+                      </button>
+                      {advisorPreview?.type === message.previewAction && (
+                        <div className="advisor-scenario" aria-label={`What-if preview for ${advisorPreview.name}`}>
+                          <div className="advisor-scenario-head">
+                            <span><BarChart3 size={11} aria-hidden="true" /> WHAT-IF PREVIEW</span>
+                            <button type="button" onClick={() => setAdvisorPreview(null)} aria-label="Close preview" title="Close preview">
+                              <X size={11} aria-hidden="true" />
+                            </button>
+                          </div>
+                          <strong>{advisorPreview.name}</strong>
+                          <div className="advisor-scenario-grid">
+                            <span><em>Cost</em><b>{advisorPreview.cost.length ? advisorPreview.cost.map(([resource, amount]) => `${amount} ${resource}`).join(" · ") : "Materials ready"}</b></span>
+                            <span><em>After paying</em><b>{advisorPreview.cost.length ? advisorPreview.cost.map(([resource]) => `${Math.floor(advisorPreview.remaining[resource])} ${resource}`).join(" · ") : "No stock changes"}</b></span>
+                            <span><em>Footprint</em><b>{advisorPreview.footprint} tiles</b></span>
+                            <span><em>Capacity signal</em><b>{advisorPreview.capacityChange}</b></span>
+                          </div>
+                          <p>{advisorPreview.effect}</p>
+                          <small>
+                            {advisorPreview.missing.length
+                              ? `Still needed: ${advisorPreview.missing.map(([resource, amount]) => `${amount} ${resource}`).join(" · ")}. `
+                              : "Ready in this snapshot. "}
+                            This is only a preview; the village is unchanged.
+                          </small>
+                        </div>
+                      )}
+                    </>
+                  )}
+                {message.role === "assistant" &&
+                  index === latestAssistantIndex &&
+                  message.priorityAction && (
+                    (() => {
+                      const target = advisorPriorityTarget(message.priorityAction, state.buildings);
+                      const name = CATALOG[message.priorityAction]?.name || message.priorityAction;
+                      const alreadyPriority = target?.priority === "priority";
+                      return (
+                        <button
+                          type="button"
+                          className={`advisor-priority-action ${!target || alreadyPriority ? "unavailable" : ""}`}
+                          onClick={() => prepareAdvisorPriority(message.priorityAction)}
+                          disabled={advisorLoading || !target || alreadyPriority}
+                          title={
+                            !target
+                              ? `There is no active ${name.toLowerCase()} worksite to prioritize.`
+                              : alreadyPriority
+                                ? `${name} already has priority.`
+                                : `Give ${name} the next available worker.`
+                          }
+                        >
+                          <ArrowUp size={12} aria-hidden="true" />
+                          {!target ? `No active ${name}` : alreadyPriority ? `${name} already priority` : `Prioritize ${name}`}
+                        </button>
+                      );
+                    })()
+                  )}
+                {message.role === "assistant" &&
+                  index === latestAssistantIndex &&
+                  message.upgradeAction && (
+                    (() => {
+                      const target = state.buildings.find(
+                        (building) =>
+                          building.type === message.upgradeAction &&
+                          Number(building.progress) >= 1 &&
+                          CATALOG[message.upgradeAction]?.upgrade &&
+                          !building.upgrade,
+                      );
+                      const name = CATALOG[message.upgradeAction]?.name || message.upgradeAction;
+                      const upgrade = CATALOG[message.upgradeAction]?.upgrade;
+                      const missing = missingAdvisorUpgradeCosts(message.upgradeAction, state.resources);
+                      const missingLabel = missing.map(([resource, amount]) => `${amount} ${resource}`).join(" · ");
+                      return (
+                        <button
+                          type="button"
+                          className={`advisor-upgrade-action ${!target || missing.length ? "unavailable" : ""}`}
+                          onClick={() => prepareAdvisorUpgrade(message.upgradeAction)}
+                          disabled={advisorLoading || !target || missing.length > 0}
+                          title={
+                            !target
+                              ? `${name} is already upgraded or not complete.`
+                              : missing.length
+                                ? `Gather ${missingLabel} before upgrading ${name}.`
+                                : `Apply ${upgrade?.name || "the available upgrade"} to ${name}.`
+                          }
+                        >
+                          <Sparkles size={12} aria-hidden="true" />
+                          {!target
+                            ? `${name} already improved`
+                            : missing.length
+                              ? `Need ${missingLabel}`
+                              : `Upgrade ${name}`}
+                        </button>
+                      );
+                    })()
+                  )}
+                {message.role === "assistant" &&
+                  index === latestAssistantIndex &&
+                  message.feastAction && (
+                    (() => {
+                      const active = state.feast?.remaining > 0;
+                      const food = Math.floor(Number(state.resources.food) || 0);
+                      const missing = Math.max(0, 30 - food);
+                      return (
+                        <button
+                          type="button"
+                          className={`advisor-feast-action ${active || missing ? "unavailable" : ""}`}
+                          onClick={prepareAdvisorFeast}
+                          disabled={advisorLoading || active || missing > 0}
+                          title={
+                            active
+                              ? "A village feast is already underway."
+                              : missing
+                                ? `Gather ${missing} more food before starting a feast.`
+                                : "Spend 30 food for 45 seconds of 25% faster construction."
+                          }
+                        >
+                          <Sparkles size={12} aria-hidden="true" />
+                          {active ? "Feast underway" : missing ? `Need ${missing} food` : "Start feast"}
+                        </button>
+                      );
+                    })()
+                  )}
+                {message.role === "assistant" &&
+                  index === latestAssistantIndex &&
+                  message.focusAction && (
+                    (() => {
+                      const target = state.buildings.find((building) => building.type === message.focusAction);
+                      const name = CATALOG[message.focusAction]?.name || message.focusAction;
+                      return (
+                        <button
+                          type="button"
+                          className={`advisor-focus-action ${!target ? "unavailable" : ""}`}
+                          onClick={() => focusAdvisorBuilding(message.focusAction)}
+                          disabled={advisorLoading || !target}
+                          title={target ? `Frame ${name} in the village.` : `${name} is not in the village yet.`}
+                        >
+                          <Compass size={12} aria-hidden="true" />
+                          {target ? `Focus ${name}` : `${name} not built`}
+                        </button>
+                      );
+                    })()
+                  )}
+                {message.role === "assistant" &&
+                  index === latestAssistantIndex &&
+                  message.workerFocusAction && (
+                    (() => {
+                      const target = state.workers.find(
+                        (worker) => worker.workerTypeLabel === message.workerFocusAction,
+                      );
+                      const name = message.workerFocusAction;
+                      return (
+                        <button
+                          type="button"
+                          className={`advisor-focus-action ${!target ? "unavailable" : ""}`}
+                          onClick={() => focusAdvisorWorker(name)}
+                          disabled={advisorLoading || !target}
+                          title={target ? `Frame your ${name.toLowerCase()} in the village.` : `There is no ${name.toLowerCase()} in the village yet.`}
+                        >
+                          <Compass size={12} aria-hidden="true" />
+                          {target ? `Focus ${name}` : `${name} not present`}
+                        </button>
+                      );
+                    })()
+                  )}
+                {message.role === "assistant" &&
+                  index === latestAssistantIndex &&
+                  message.trainingAction && (
+                    (() => {
+                      const school = state.buildings.find(
+                        (building) => building.type === "school" && Number(building.progress) >= 1,
+                      );
+                      const option = school?.training?.find(
+                        (candidate) => candidate.label === message.trainingAction,
+                      );
+                      const active = Boolean(school?.trainingSession);
+                      const unavailable = !school || !option || active || !option.canTrain;
+                      return (
+                        <button
+                          type="button"
+                          className={`advisor-training-action ${unavailable ? "unavailable" : ""}`}
+                          onClick={() => prepareAdvisorTraining(message.trainingAction)}
+                          disabled={advisorLoading || unavailable}
+                          title={
+                            !school
+                              ? "Build a School before training a villager."
+                              : active
+                                ? "The School is already training an apprentice."
+                                : option?.canTrain
+                                  ? `Start ${message.trainingAction.toLowerCase()} training without changing any other village job.`
+                                  : option?.reason || `${message.trainingAction} training is not available yet.`
+                          }
+                        >
+                          <GraduationCap size={12} aria-hidden="true" />
+                          {!school
+                            ? "School not built"
+                            : active
+                              ? "School already training"
+                              : option?.canTrain
+                                ? `Train ${message.trainingAction}`
+                                : option?.reason || `${message.trainingAction} unavailable`}
+                        </button>
+                      );
+                    })()
+                  )}
+                {message.role === "assistant" && index === latestAssistantIndex && !advisorLoading && (
+                  <div className="advisor-message-actions">
+                    {message.snapshot &&
+                      (message.snapshot.day !== state.day || message.snapshot.period !== period) &&
+                      latestUserMessage && (
+                        <button
+                          type="button"
+                          className="advisor-refresh-action"
+                          onClick={refreshLatestAdvisor}
+                          title="Ask the Keeper again using the village's current state"
+                        >
+                          <RotateCw size={11} aria-hidden="true" /> Refresh advice
+                        </button>
+                      )}
+                    <button
+                      type="button"
+                      onClick={() => copyAdvisorAnswer(message.content)}
+                      title="Copy this Keeper answer"
+                    >
+                      <Copy size={11} aria-hidden="true" /> {advisorCopied ? "Copied" : "Copy"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => speakAdvisorAnswer(message.content)}
+                      title={advisorSpeaking ? "Stop reading this Keeper answer" : "Read this Keeper answer aloud"}
+                    >
+                      <Volume2 size={11} aria-hidden="true" /> {advisorSpeaking ? "Stop" : "Read"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAdvisorMessages((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, helpful: !item.helpful } : item,
+                          ),
+                        )
+                      }
+                    >
+                      <Bookmark size={11} aria-hidden="true" /> {message.helpful ? "Saved" : "Save"}
+                    </button>
+                    {buildAdvisorRoute(message.content) && (
+                      <button
+                        type="button"
+                        onClick={() => pinAdvisorRoute(message.content)}
+                        title="Keep this three-step route visible while you play"
+                      >
+                        <Route size={11} aria-hidden="true" /> {advisorRoute?.content === buildAdvisorRoute(message.content)?.content ? "Pinned" : "Pin route"}
+                      </button>
+                    )}
+                    <button type="button" onClick={tryAnotherAdvisorAngle}>
+                      <RotateCw size={11} aria-hidden="true" /> Try another angle
+                    </button>
+                  </div>
+                )}
+                {message.role === "assistant" && index === latestAssistantIndex && !advisorLoading && advisorFollowups.length > 0 && (
+                  <div className="advisor-followups" aria-label="Follow-up questions">
+                    <span>FOLLOW UP</span>
+                    {advisorFollowups.map((followup) => (
+                      <button
+                        type="button"
+                        key={followup.title}
+                        onClick={() => askAdvisor(followup.question, followup.title)}
+                      >
+                        {followup.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </React.Fragment>
             ))}
             {advisorLoading && (
               <div className="advisor-message assistant advisor-thinking">
@@ -1411,18 +4122,34 @@ function App() {
             )}
           </div>
           {advisorError && (
-            <div className="advisor-error" role="alert">
-              {advisorError}
+            <div
+              className={`advisor-error ${advisorMessages[latestAssistantIndex]?.local ? "local" : ""}`}
+              role={advisorMessages[latestAssistantIndex]?.local ? "status" : "alert"}
+              title={advisorError}
+            >
+              {advisorMessages[latestAssistantIndex]?.local
+                ? "Remote Keeper unavailable; local field note shown."
+                : advisorError}
             </div>
           )}
-          {advisorMessages.length === 1 && !advisorLoading && (
-            <div className="advisor-prompts" aria-label="Suggested questions">
-              <button type="button" onClick={() => askAdvisor("What should I build next?")}>
-                What should I build next?
-              </button>
-              <button type="button" onClick={() => askAdvisor("Why are my workers waiting?")}>
-                Why are workers waiting?
-              </button>
+          {!advisorLoading && (
+            <div className="advisor-prompts" aria-label="Quick questions">
+              <span className="advisor-prompts-label">QUICK QUESTIONS</span>
+              <div>
+                {advisorPrompts.slice(0, 3).map((prompt) => {
+                  const PromptIcon = prompt.icon || MessageCircle;
+                  return (
+                    <button
+                      type="button"
+                      key={prompt.question}
+                      onClick={() => askAdvisor(prompt.question)}
+                    >
+                      <PromptIcon size={12} aria-hidden="true" />
+                      {prompt.title}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
           <form
@@ -1441,17 +4168,23 @@ function App() {
               aria-label="Ask the village advisor"
               disabled={advisorLoading}
               onChange={(event) => setAdvisorInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.shiftKey || advisorLoading) return;
+                event.preventDefault();
+                if (advisorInput.trim()) askAdvisor(advisorInput);
+              }}
             />
             <button
               className="advisor-send"
               type="submit"
               disabled={advisorLoading || !advisorInput.trim()}
               aria-label="Send question"
+              title="Send question (Enter)"
             >
               <Send size={16} />
             </button>
           </form>
-          <div className="advisor-note">Powered by OpenRouter · village state stays in this browser</div>
+          <div className="advisor-note">Remote Keeper when configured · local field notes always available</div>
         </aside>
       )}
       {detail && !selected && (
@@ -1551,6 +4284,16 @@ function App() {
               />
             </div>
           )}
+          {detail.type !== "worker" || inspectedWorker ? (
+            <button
+              type="button"
+              className="inspector-advisor-action"
+              onClick={askKeeperAboutFocus}
+              title="Ask the Keeper for advice about this building or villager."
+            >
+              <Sparkles size={14} aria-hidden="true" /> Ask the Keeper about this
+            </button>
+          ) : null}
           {detail.type === "worker" && inspectedWorker && (
             <div
               className="inspector-progress hunger-progress"
@@ -1740,6 +4483,7 @@ function App() {
                   const blocked = busy
                     ? "The School is already training someone"
                     : option.reason;
+                  const RoleIcon = workerTypeIcons[option.label];
                   return (
                     <button
                       type="button"
@@ -1757,7 +4501,10 @@ function App() {
                       }
                       onClick={() => game.current?.trainWorker(inspected.id, option.type)}
                     >
-                      <span className="training-role">{option.label}</span>
+                      <span className="training-role">
+                        {RoleIcon && <RoleIcon size={13} aria-hidden="true" />}
+                        {option.label}
+                      </span>
                       <em className="training-count">{counts}</em>
                     </button>
                   );

@@ -2663,7 +2663,7 @@ test("sparse restore adds starter storage before clamping resources", () => {
   v.addBuilding = (type, x, z) =>
     v.buildings.push({ type, x, z, progress: 1 });
   v.resources = {
-    wood: TOWNHALL_STORAGE + 40,
+    wood: TOWNHALL_STORAGE + 160,
     stone: 12,
     food: 8,
     wheat: 0,
@@ -2673,7 +2673,7 @@ test("sparse restore adds starter storage before clamping resources", () => {
   assert.equal(v.ensureStarterVillage(), true);
   v.clampResourcesToStorage();
   assert.equal(v.buildings.some((building) => building.type === "townhall"), true);
-  assert.equal(v.resources.wood, TOWNHALL_STORAGE);
+  assert.equal(v.resources.wood, TOWNHALL_STORAGE + 150);
   assert.equal(v.resources.stone, 12);
   assert.equal(v.resources.food, 8);
   assert.equal(v.ensureStarterVillage(), false);

@@ -1,0 +1,185 @@
+- main [ref=f99e3]:
+  - generic "Interactive 3D village. Drag to pan, scroll or pinch to zoom, and use right-drag or two fingers to orbit." [ref=f99e4]
+  - generic [ref=f99e5]:
+    - generic [ref=f99e11]:
+      - heading "Hearth & Hamlet" [level=1] [ref=f99e12]
+      - paragraph [ref=f99e13]: A LITTLE WORLD OF YOUR OWN
+    - generic [ref=f99e21]:
+      - strong [ref=f99e22]: Day 83
+      - generic [ref=f99e23]: Morning
+    - button "Open village menu" [ref=f99e24] [cursor=pointer]
+  - generic [ref=f99e27]:
+    - group "Simulation speed controls" [ref=f99e28]:
+      - button "Pause simulation" [ref=f99e29] [cursor=pointer]
+      - button "Set simulation speed to 1x" [pressed] [ref=f99e33] [cursor=pointer]: 1×
+      - button "Set simulation speed to 2x" [ref=f99e34] [cursor=pointer]: 2×
+      - button "Set simulation speed to 4x" [ref=f99e35] [cursor=pointer]: 4×
+    - button "Close village advisor" [expanded] [ref=f99e141] [cursor=pointer]:
+      - generic [ref=f99e39]: Village advisor
+  - dialog "Village advisor" [ref=f99e142]:
+    - generic [ref=f99e143]:
+      - generic [ref=f99e144]:
+        - generic [ref=f99e145]: VILLAGE ADVISOR
+        - heading "A second pair of eyes." [level=2] [ref=f99e148]
+      - button "Close village advisor" [ref=f99e149] [cursor=pointer]
+    - generic "Advisor tools" [ref=f99e153]:
+      - button "Dispatch" [ref=f99e154] [cursor=pointer]
+      - button "Make a plan" [ref=f99e157] [cursor=pointer]
+      - button "Compare" [ref=f99e162] [cursor=pointer]
+      - button "Council" [ref=f99e165] [cursor=pointer]
+      - button "Saved 0" [ref=f99e171] [cursor=pointer]
+      - button "Start a new advisor conversation" [ref=f99e174] [cursor=pointer]
+    - paragraph [ref=f99e178]: Ask about the village, or let the Keeper turn its current mood into a plan.
+    - generic "Current village status" [ref=f99e179]:
+      - generic [ref=f99e180]:
+        - strong [ref=f99e186]: 3/6
+        - emphasis [ref=f99e187]: people
+      - generic [ref=f99e188]:
+        - strong [ref=f99e193]: "0"
+        - emphasis [ref=f99e194]: in transit
+      - generic [ref=f99e195]:
+        - strong [ref=f99e199]: 1×
+        - emphasis [ref=f99e200]: clock
+    - region "Pinned advisor route" [ref=f99e201]:
+      - generic [ref=f99e202]:
+        - generic [ref=f99e203]:
+          - text: PINNED ROUTE
+          - emphasis [ref=f99e208]: 1/3 DONE · DAY 49
+        - button "Clear pinned route" [ref=f99e209] [cursor=pointer]
+      - list [ref=f99e213]:
+        - listitem [ref=f99e214]:
+          - button "Mark route step 1 incomplete" [pressed] [ref=f99e215] [cursor=pointer]
+          - text: Build the Cottage (30 wood and 10 stone)
+          - button "Prepare Cottage" [ref=f99e218] [cursor=pointer]
+        - listitem [ref=f99e223]:
+          - button "Mark route step 2 complete" [ref=f99e224] [cursor=pointer]
+          - text: Prioritize Stone mine, then inspect its missing input, route, or storage
+          - button "Prioritize Stone mine" [ref=f99e225] [cursor=pointer]
+        - listitem [ref=f99e229]:
+          - button "Mark route step 3 complete" [ref=f99e230] [cursor=pointer]
+          - text: "Watch for: 2 villagers are waiting: A missing ingredient, route, bed, or bit of storage may be the culprit"
+    - group "Advisor voice" [ref=f99e231]:
+      - generic [ref=f99e232]: ASK AS
+      - button "Steward" [ref=f99e233] [cursor=pointer]
+      - button "Quartermaster" [pressed] [ref=f99e237] [cursor=pointer]
+      - button "Chronicler" [ref=f99e241] [cursor=pointer]
+    - region "Keeper's field notes" [ref=f99e244]:
+      - generic [ref=f99e245]:
+        - generic [ref=f99e246]: KEEPER'S FIELD NOTES
+        - emphasis [ref=f99e249]: 4 to watch
+      - generic [ref=f99e250]:
+        - button [ref=f99e251] [cursor=pointer]:
+          - generic [ref=f99e257]:
+            - strong [ref=f99e258]: 3 villagers are waiting
+            - emphasis [ref=f99e259]: A missing ingredient, route, bed, or bit of storage may be the culprit.
+        - button [ref=f99e400] [cursor=pointer]:
+          - generic [ref=f99e405]:
+            - strong [ref=f99e406]: 2 worksites need attention
+            - emphasis [ref=f99e407]: Check for a full output store, a blocked route, or an unassigned worker.
+        - button [ref=f99e274] [cursor=pointer]:
+          - generic [ref=f99e277]:
+            - strong [ref=f99e278]: Windmill can improve
+            - emphasis [ref=f99e279]: Faster sails is affordable and will make this worksite more capable.
+    - generic "Advisor conversation" [ref=f99e283]:
+      - generic [ref=f99e284]:
+        - generic [ref=f99e285]: KEEPER
+        - paragraph [ref=f99e287]: Welcome, steward. I can read the state of your settlement and suggest what to do next.
+      - generic [ref=f99e288]:
+        - generic [ref=f99e289]: YOU
+        - paragraph [ref=f99e291]: Should I build the Cottage?
+      - generic [ref=f99e292]:
+        - generic [ref=f99e293]:
+          - generic [ref=f99e294]: LOCAL FIELD NOTE
+          - emphasis [ref=f99e295]: STALE · DAY 76 · Dawn
+        - paragraph [ref=f99e296]:
+          - strong [ref=f99e297]: "Best move:"
+          - text: build the Cottage.
+          - strong [ref=f99e298]: "Why:"
+          - text: it costs 30 wood and 10 stone and +2 housing capacity. A small chapter, but a good one.
+          - strong [ref=f99e299]: "Watch for:"
+          - text: "3 villagers are waiting: A missing ingredient, route, bed, or bit of storage may be the culprit."
+      - generic [ref=f99e300]:
+        - generic [ref=f99e301]: YOU
+        - paragraph [ref=f99e303]: What should I do next?
+      - generic [ref=f99e304]:
+        - generic [ref=f99e305]:
+          - generic [ref=f99e306]: LOCAL FIELD NOTE
+          - emphasis [ref=f99e307]: STALE · DAY 78 · Night
+        - paragraph [ref=f99e308]: "Hold the next build for a moment: 2 live bottlenecks are visible, but no single worksite is safe to name from this snapshot. Ask which worksite is blocked, then clear its route, input, or storage first."
+      - generic [ref=f99e309]:
+        - generic [ref=f99e310]: YOU
+        - paragraph [ref=f99e312]: What should I build next?
+      - generic [ref=f99e313]:
+        - generic [ref=f99e314]:
+          - generic [ref=f99e315]: LOCAL FIELD NOTE
+          - emphasis [ref=f99e316]: STALE · DAY 79 · Afternoon
+        - paragraph [ref=f99e317]: "Hold the next build for a moment: 3 live bottlenecks are visible, but no single worksite is safe to name from this snapshot. Ask which worksite is blocked, then clear its route, input, or storage first."
+      - generic [ref=f99e354]:
+        - generic [ref=f99e355]: YOU
+        - paragraph [ref=f99e357]: What should I build next?
+      - generic [ref=f99e358]:
+        - generic [ref=f99e359]:
+          - generic [ref=f99e360]: LOCAL FIELD NOTE
+          - emphasis [ref=f99e361]: LOCAL · DAY 83 · Morning
+        - paragraph [ref=f99e362]: "Hold the next build for a moment: 2 live bottlenecks are visible, but no single worksite is safe to name from this snapshot. Ask which worksite is blocked, then clear its route, input, or storage first."
+      - generic [ref=f99e411]:
+        - generic [ref=f99e412]: YOU
+        - paragraph [ref=f99e414]: What should I build next?
+      - generic [ref=f99e415]:
+        - generic [ref=f99e416]:
+          - generic [ref=f99e417]: LOCAL FIELD NOTE
+          - emphasis [ref=f99e418]: LOCAL · DAY 83 · Morning
+        - paragraph [ref=f99e419]: "Hold the next build for a moment: 2 live bottlenecks are visible, but no single worksite is safe to name from this snapshot. Ask which worksite is blocked, then clear its route, input, or storage first."
+        - generic "Signals used for this answer" [ref=f99e420]:
+          - generic [ref=f99e421]: GROUNDED IN
+          - emphasis [ref=f99e422]: Resources
+          - emphasis [ref=f99e423]: Worksites
+      - generic [ref=f99e424]:
+        - button "Copy" [ref=f99e425] [cursor=pointer]
+        - button "Read" [ref=f99e429] [cursor=pointer]
+        - button "Save" [ref=f99e434] [cursor=pointer]
+        - button "Try another angle" [ref=f99e437] [cursor=pointer]
+      - generic "Follow-up questions" [ref=f99e441]:
+        - generic [ref=f99e442]: FOLLOW UP
+        - button "Explain the tradeoff" [ref=f99e443] [cursor=pointer]
+        - button "Find the bottleneck" [ref=f99e444] [cursor=pointer]
+    - status [ref=f99e445]: The remote Keeper is unavailable. Showing a local field note from your current village state.
+    - generic [ref=f99e347]:
+      - textbox "Ask the village advisor" [ref=f99e348]:
+        - /placeholder: Ask your question…
+      - button "Send question" [disabled] [ref=f99e349]
+    - generic [ref=f99e353]: Remote Keeper when configured · local field notes always available
+  - generic [ref=f99e41]:
+    - button "Collapse building menu" [expanded] [ref=f99e42] [cursor=pointer]
+    - navigation "Village building and path tools. On small screens, scroll horizontally to see every tool." [ref=f99e47]:
+      - button "Build Watchtower. Costs 45 wood · 20 stone. Resources ready" [ref=f99e48] [cursor=pointer]:
+        - generic [ref=f99e52]: Watchtower
+      - button "Build Cottage. Costs 30 wood · 10 stone. Resources ready" [ref=f99e53] [cursor=pointer]:
+        - generic [ref=f99e57]: Cottage
+      - button "Build Well. Costs 15 wood · 25 stone. Resources ready" [ref=f99e58] [cursor=pointer]:
+        - generic [ref=f99e62]: Well
+      - button "Build Grain field. Costs 1 food per tile. Resources ready" [ref=f99e63] [cursor=pointer]:
+        - generic [ref=f99e67]: Grain field
+      - button "Build Farmhouse. Costs 25 wood · 5 stone. Resources ready" [ref=f99e68] [cursor=pointer]:
+        - generic [ref=f99e72]: Farmhouse
+      - button "Build Bakery. Costs 40 wood · 25 stone. Resources ready" [ref=f99e73] [cursor=pointer]:
+        - generic [ref=f99e77]: Bakery
+      - button "Build Inn. Costs 55 wood · 25 stone. Resources ready" [ref=f99e78] [cursor=pointer]:
+        - generic [ref=f99e82]: Inn
+      - button "Build Storehouse. Costs 40 wood · 60 stone. Resources ready" [ref=f99e83] [cursor=pointer]:
+        - generic [ref=f99e87]: Storehouse
+      - button "Build Lumberyard. Costs 20 wood · 10 stone. Resources ready" [ref=f99e88] [cursor=pointer]:
+        - generic [ref=f99e92]: Lumberyard
+      - button "Build Stone mine. Costs 35 wood · 15 stone. Resources ready" [ref=f99e93] [cursor=pointer]:
+        - generic [ref=f99e97]: Stone mine
+      - button "Build Windmill. Costs 50 wood · 35 stone. Resources ready" [ref=f99e98] [cursor=pointer]:
+        - generic [ref=f99e102]: Windmill
+      - button "Build School. Costs 60 wood · 45 stone. Resources ready" [ref=f99e103] [cursor=pointer]:
+        - generic [ref=f99e107]: School
+      - button "Build Vineyard. Costs 45 wood · 30 stone. Resources ready" [ref=f99e108] [cursor=pointer]:
+        - generic [ref=f99e112]: Vineyard
+      - button "Build Path. Costs 1 stone per tile. Resources ready" [ref=f99e113] [cursor=pointer]:
+        - generic [ref=f99e117]: Path
+  - generic "This village saves automatically in this browser." [ref=f99e140]: Saved locally
+  - button "Toggle building grid" [ref=f99e123] [cursor=pointer]
+  - button "Choose a village backup file" [ref=f99e126]

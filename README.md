@@ -11,7 +11,7 @@ The game runs entirely in the browser. The core simulation does not require an a
 - Build a living low-poly settlement with cottages, farms, bakeries, inns, storehouses, lumberyards, mines, windmills, watchtowers, schools, vineyards, wells, grain fields, and paths.
 - Watch villagers route around buildings and scenery, construct new sites, harvest renewable resources, process goods, eat, train at the School, and deliver finished stock through the village logistics network.
 - Shape the settlement with grid-snapped placement, connected path segments, a day/night cycle, animated water and foliage, dusk lanterns, and adjustable graphics and audio settings.
-- Work through settlement milestones, inspect buildings and villagers, review live activity in the village overview, and ask the optional advisor what to build next.
+- Work through settlement milestones, inspect buildings and villagers, review live activity in the village overview, and ask the optional advisor for dispatches, plans, comparisons, council debates, or a safe next action.
 - Continue locally with autosaves, manual save, named villages, conflict-safe multi-tab behavior, and validated export/import backups.
 
 ## Continuing with an AI agent
@@ -48,7 +48,7 @@ The Village Advisor uses OpenRouter through a server-side route. Locally, `serve
 cp .env.example .env.local
 ```
 
-The advisor is optional: the village remains playable without a key, but advisor requests will show a configuration message. `OPENROUTER_MODEL` selects the OpenRouter model, and `OPENROUTER_SITE_URL` is optional attribution metadata.
+The advisor is optional: the village remains playable without a key, and failed remote requests fall back to a clearly labeled local field note grounded in the current village snapshot. Local mode still supports dispatches, plans, comparisons, council viewpoints, bottleneck advice, recent village chronicles, saved check-in pulses, clickable resource-pulse readings with exact stock, storage, and trend, delivery timing, resource-runway forecasts, what-if building previews, chapter challenges and rewards, upgrade and feast recommendations, and safe build, upgrade, feast, focus, or priority actions that only take effect after an explicit click. Answers expose the live signals they used, the Quartermaster lens shows exact post-purchase margins, negative recommendations never become action buttons, and Keeper's watch can quietly surface a newly appearing bottleneck while the panel is closed and retain a small log of missed signals. Pinned routes can auto-complete build, priority, and School steps as the simulation reaches them; watch entries can be followed up, dismissed individually, or cleared as a group. Conversation history keeps older notes available while a Latest control returns to the newest answer. `OPENROUTER_MODEL` selects the OpenRouter model, `OPENROUTER_FALLBACK_MODEL` provides a second provider attempt, and `OPENROUTER_SITE_URL` is optional attribution metadata.
 
 ```sh
 npm test          # simulation and placement checks
@@ -118,7 +118,7 @@ Use the deployed Vercel URL for `OPENROUTER_SITE_URL`. The Vercel deployment ser
 - **1–9:** choose the first nine tools from the palette; use the palette directly for the remaining building, path, and removal tools.
 - **Arrow keys:** pan the camera, or move the placement cursor while placing a building or path.
 - **?:** open the help dialog.
-- **Village advisor:** ask for context-aware advice about resources, workers, goals, and the next building to place.
+- **Village advisor:** ask for context-aware advice about resources, worker counts and bottlenecks, affordability timing, resource runway estimates, recent activity, check-in pulses, delivery timing, goals, chapter challenges, School apprenticeships, upgrades, feasts, the next building to place, and which active worksite deserves priority. Use the resource pulse for exact stock, storage, and trend readings, or use Dispatch, Make a plan, Compare, and Council for structured reads; pin a three-step plan into a persistent route checklist, preview a building's cost, remaining stock, footprint, and effect before preparing it, then safely prepare a build or upgrade, train an available apprentice, start a feast, focus the camera on a building or villager, or prioritize a worksite after an explicit click. Answers carry a live/local day-and-period stamp, show their grounding signals, expose contextual follow-up questions, and can be copied, read aloud, or saved for later. Keeper's watch persists per village, supports one-click follow-up and per-entry dismissal, and surfaces new attention signals without taking actions for the player. Long conversations expose a Latest jump control so history remains useful without hiding the current answer.
 - **Space:** pause/resume. Use 1×, 2×, and 4× to control simulation speed.
 - Touch: drag to pan and pinch to zoom; tap the palette and terrain to place. When Path is selected, drag across terrain to lay a segment.
 - Saves automatically in this browser, plus a manual Save village action in the top-right menu. Sparse or partially repaired saves retain recoverable progress while keeping first-build milestones tied to completed player-built structures.

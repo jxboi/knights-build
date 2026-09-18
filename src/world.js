@@ -8,12 +8,12 @@ export const STARTER_BUILDINGS = Object.freeze([
   ["townhall", 3, -3],
   ["house", -9, 3],
   ["well", 2, 3],
-  ["farm", 6, 6],
-  ["lumberyard", -8, -11],
+  ["farm", 6, 4],
+  ["lumberyard", -9, -11],
   ["mine", 3, -11],
   ["windmill", 11, -3],
   ["watchtower", 10, -10],
-  ["storehouse", 3, -16],
+  ["storehouse", -4, -13],
   ["school", 6, 14],
 ]);
 export const STARTER_ROADS = Object.freeze([
