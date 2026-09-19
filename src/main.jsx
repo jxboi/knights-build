@@ -24,7 +24,6 @@ import Info from "lucide-react/dist/esm/icons/info.js";
 import House from "lucide-react/dist/esm/icons/house.js";
 import Hammer from "lucide-react/dist/esm/icons/hammer.js";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.js";
-import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.js";
 import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.js";
 import Gauge from "lucide-react/dist/esm/icons/gauge.js";
 import Route from "lucide-react/dist/esm/icons/route.js";
@@ -1587,11 +1586,7 @@ const BuildPalette = React.memo(function BuildPalette({
         disabled={!loaded || !!error}
       >
         <span className="build-more-icon">{showAll ? "−" : "+"}</span>
-        {showAll ? (
-          <span>Starter tools</span>
-        ) : (
-          <ChevronRight size={16} aria-hidden="true" />
-        )}
+        {showAll && <span>Starter tools</span>}
       </button>
     </nav>
   );
