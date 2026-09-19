@@ -687,10 +687,15 @@ h1 span {
   order: 11;
 }
 .advisor-heading {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  background: linear-gradient(135deg, #fbf7eb, #f0e8d7);
+  box-shadow: 0 -18px 0 0 #f0e8d7;
 }
 .advisor-kicker {
   display: flex;
@@ -3994,6 +3999,25 @@ h1 span {
     width: min(340px, calc(100% - 28px));
     max-height: calc(100dvh - 180px - env(safe-area-inset-top));
     padding: 14px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: #c7b999 transparent;
+    scrollbar-width: thin;
+  }
+  .advisor-heading {
+    margin: -14px -14px 0;
+    padding: 14px 14px 0;
+    box-shadow: 0 -14px 0 0 #f0e8d7;
+  }
+  .advisor-heading .bare {
+    min-width: 40px;
+    min-height: 40px;
+    margin-top: -7px;
+    margin-right: -7px;
+    padding: 8px;
+    border: 1px solid #d7c9ae;
+    border-radius: 50%;
+    background: #f7f0e1;
   }
   .advisor-heading h2 {
     font-size: 18px;
