@@ -1086,11 +1086,9 @@ export class Village {
       this.groundPatches.push(patch);
     }
     this.grid = new THREE.GridHelper(42, 42, "#eee4b3", "#dde1b6");
-    // Roads and placement coordinates are tile centers at integer x/z values.
-    // GridHelper puts its lines on those integer values by default, which
-    // draws the grid through the middle of every tile. Offset by half a tile
-    // so the lines form the boundaries around each road/building cell.
-    this.grid.position.set(0.5, 0.025, 0.5);
+    // Placement coordinates snap to integer x/z values. Keep the visible
+    // guide on those same coordinates so the build point sits on a grid line.
+    this.grid.position.set(0, 0.025, 0);
     this.grid.material.transparent = true;
     this.grid.material.opacity = 0.24;
     this.grid.visible = false;
