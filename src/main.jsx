@@ -3541,23 +3541,6 @@ function App() {
           <p className="advisor-intro">
             Ask about the village, or ask for a plan based on what is happening now.
           </p>
-          <div className="advisor-status-strip" aria-label="Current village status">
-            <span>
-              <Users size={11} aria-hidden="true" />
-              <strong>{Math.floor(state.population || 0)}/{Math.floor(state.capacity || 0)}</strong>
-              <em>villagers</em>
-            </span>
-            <span>
-              <Package size={11} aria-hidden="true" />
-              <strong>{Math.floor(state.inTransit || 0)}</strong>
-              <em>on the way</em>
-            </span>
-            <span>
-              <Gauge size={11} aria-hidden="true" />
-              <strong>{`${state.speed}×`}</strong>
-              <em>speed</em>
-            </span>
-          </div>
           {advisorRoute && (
             <section className="advisor-route" aria-label="Pinned advisor route">
               <div className="advisor-route-heading">
@@ -4384,9 +4367,11 @@ function App() {
                 </span>
               </>
             ) : (
-              <span>
-                Assigned workers<strong>{inspected?.workers || 0}</strong>
-              </span>
+              inspected?.usesWorkers && (
+                <span>
+                  Assigned workers<strong>{inspected?.workers || 0}</strong>
+                </span>
+              )
             )}
             {detail.type !== "worker" &&
               inspected?.progress < 1 &&

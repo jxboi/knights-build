@@ -2808,6 +2808,20 @@ test("building inspector reports the worker's current phase", () => {
   assert.equal(state.buildings[0].status, "A carrier is collecting");
 });
 
+test("building snapshots flag whether a building type is staffed by workers", () => {
+  const v = village();
+  let state;
+  v.onUpdate = (next) => (state = next);
+  v.buildings = [
+    { id: "mine-1", type: "mine", progress: 1, cycles: 0 },
+    { id: "school-1", type: "school", progress: 1, cycles: 0 },
+  ];
+  v.workers = [];
+  v.emit();
+  assert.equal(state.buildings[0].usesWorkers, true);
+  assert.equal(state.buildings[1].usesWorkers, false);
+});
+
 test("building snapshots expose live production-cycle progress", () => {
   const v = village();
   let state;

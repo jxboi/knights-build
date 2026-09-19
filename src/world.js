@@ -6534,6 +6534,7 @@ export class Village {
           materialProgress: constructionMaterialProgress(b),
           materialsReady,
           workers: assigned.length,
+          usesWorkers: Boolean(workerTypeForBuilding(b.type)),
           cycles: b.cycles,
           cycleProgress:
             b.type === "grainfield"

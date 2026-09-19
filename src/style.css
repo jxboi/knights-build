@@ -1112,48 +1112,7 @@ h1 span {
   font-size: 10px;
   line-height: 1.55;
 }
-.advisor-status-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px;
-  margin-top: 10px;
-  padding: 6px 7px;
-  border-top: 1px solid #e1d5bd;
-  border-bottom: 1px solid #e1d5bd;
-}
-.advisor-status-strip span {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr);
-  column-gap: 4px;
-  align-items: center;
-}
-.advisor-status-strip span + span {
-  border-left: 1px solid #e1d5bd;
-  padding-left: 6px;
-}
-.advisor-status-strip svg {
-  grid-row: span 2;
-  color: #899665;
-}
-.advisor-status-strip strong,
-.advisor-status-strip em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.advisor-status-strip strong {
-  color: #6d6048;
-  font-size: 9px;
-  font-weight: 650;
-  line-height: 1.1;
-}
-.advisor-status-strip em {
-  color: #a1937c;
-  font-size: 7px;
-  font-style: normal;
-  line-height: 1.1;
-}
+
 .advisor-route {
   flex: 0 0 auto;
   margin-top: 10px;
