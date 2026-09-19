@@ -36,8 +36,6 @@ import Bookmark from "lucide-react/dist/esm/icons/bookmark.js";
 import Copy from "lucide-react/dist/esm/icons/copy.js";
 import Volume2 from "lucide-react/dist/esm/icons/volume-2.js";
 import ArrowDownRight from "lucide-react/dist/esm/icons/arrow-down-right.js";
-import Pause from "lucide-react/dist/esm/icons/pause.js";
-import Play from "lucide-react/dist/esm/icons/play.js";
 import Axe from "lucide-react/dist/esm/icons/axe.js";
 import Pickaxe from "lucide-react/dist/esm/icons/pickaxe.js";
 import Sprout from "lucide-react/dist/esm/icons/sprout.js";
@@ -725,15 +723,6 @@ function buildAdvisorBrief(snapshot, nextGoal) {
     attention.push(item);
     items.push(item);
   };
-  if (snapshot.speed === 0) {
-    pushAttention({
-      title: "The village is paused",
-      detail: "Take a breath, choose a plan, then set the clock moving again.",
-      question: "What should I plan while the village is paused?",
-      icon: Pause,
-      tone: "pause",
-    });
-  }
   const waitingWorkers = (snapshot.workers || []).filter(
     (worker) =>
       worker.waitingForInput ||
@@ -991,7 +980,7 @@ function buildLocalAdvisorReply(question, snapshot, brief) {
     : quartermasterVoice && remainingAfterChoice
       ? ` Margin: about ${remainingAfterChoice} remain after paying.`
       : "";
-  const attention = brief?.items?.find((item) => item.tone === "attention" || item.tone === "pause");
+  const attention = brief?.items?.find((item) => item.tone === "attention");
   const waitingWorkers = (snapshot.workers || []).filter(
     (worker) =>
       worker.waitingForInput ||
@@ -1551,7 +1540,6 @@ function App() {
     advisorSpeechRef = useRef(),
     importFileRef = useRef(),
     advisorAbortRef = useRef(),
-    previousSpeed = useRef(1),
     goalsTabRef = useRef(),
     paletteOpenRef = useRef(true),
     paletteBeforeDetailRef = useRef(true),
@@ -1911,11 +1899,11 @@ function App() {
   };
   const speed = (s) => {
     if (!game.current) return;
+    if (s <= 0) return;
     if (game.current.storageConflict) {
-      if (s > 0) notify("Reload this tab before continuing the simulation.");
+      notify("Reload this tab before continuing the simulation.");
       return;
     }
-    if (s > 0) previousSpeed.current = s;
     game.current.speed = s;
     game.current.emit();
   };
@@ -1988,10 +1976,6 @@ function App() {
         return;
       }
       if (!game.current) return;
-      if (e.code === "Space") {
-        e.preventDefault();
-        speed(game.current.speed ? 0 : previousSpeed.current);
-      }
       if (e.code === "KeyR") game.current.rotate();
       if (e.code === "KeyG") {
         game.current.grid.visible = !game.current.grid.visible;
@@ -2645,14 +2629,14 @@ function App() {
   useEffect(() => {
     if (!loaded || !advisorWatch) return;
     const signature = advisorBrief.items
-      .filter((item) => item.tone === "attention" || item.tone === "pause")
+      .filter((item) => item.tone === "attention")
       .map((item) => item.title)
       .join("|");
     const previous = advisorWatchSignatureRef.current;
     advisorWatchSignatureRef.current = signature;
     if (!previous || !signature || previous === signature) return;
     const newest = advisorBrief.items.find(
-      (item) => (item.tone === "attention" || item.tone === "pause") && !previous.includes(item.title),
+      (item) => item.tone === "attention" && !previous.includes(item.title),
     );
     if (!newest) return;
     setAdvisorWatchEvents((current) => [
@@ -3454,22 +3438,6 @@ function App() {
         >
           <button
             type="button"
-            className={`pause-button ${state.speed === 0 ? "active" : ""}`}
-            aria-label={state.speed === 0 ? "Resume simulation" : "Pause simulation"}
-            aria-keyshortcuts="Space"
-            aria-pressed={state.speed === 0}
-            title={state.speed === 0 ? "Resume simulation" : "Pause simulation"}
-            onClick={() => speed(state.speed === 0 ? previousSpeed.current : 0)}
-            onKeyDown={(event) => {
-              if (event.code !== "Space") return;
-              event.preventDefault();
-              speed(state.speed === 0 ? previousSpeed.current : 0);
-            }}
-          >
-            {state.speed === 0 ? <Play size={13} /> : <Pause size={13} />}
-          </button>
-          <button
-            type="button"
             className={state.speed === 1 ? "active" : ""}
             aria-label="Set simulation speed to 1x"
             aria-pressed={state.speed === 1}
@@ -3665,7 +3633,7 @@ function App() {
             </span>
             <span>
               <Gauge size={11} aria-hidden="true" />
-              <strong>{state.speed === 0 ? "Paused" : `${state.speed}×`}</strong>
+              <strong>{`${state.speed}×`}</strong>
               <em>speed</em>
             </span>
           </div>
@@ -5334,8 +5302,8 @@ function App() {
                   </div>
                 </div>
                 <div className="help-note">
-                  Your village saves automatically. Pause whenever you like, and
-                  use More buildings whenever you want to try additional tools.
+                  Your village saves automatically, and use More buildings whenever
+                  you want to try additional tools.
                 </div>
                 <button
                   type="button"
