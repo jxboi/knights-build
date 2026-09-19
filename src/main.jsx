@@ -10,6 +10,7 @@ import Users from "lucide-react/dist/esm/icons/users.js";
 import Sun from "lucide-react/dist/esm/icons/sun.js";
 import Moon from "lucide-react/dist/esm/icons/moon.js";
 import HelpCircle from "lucide-react/dist/esm/icons/circle-help.js";
+import AlertCircle from "lucide-react/dist/esm/icons/circle-alert.js";
 import Save from "lucide-react/dist/esm/icons/save.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import Check from "lucide-react/dist/esm/icons/check.js";
@@ -1445,7 +1446,7 @@ const Resource = React.memo(function Resource({ type, value, trend = 0, storage 
         </strong>
         {full ? (
           <span className="resource-trend negative" title={`${type} storage is full`}>
-            · storage full
+            <AlertCircle size={10} strokeWidth={2} aria-hidden="true" /> storage full
           </span>
         ) : trendValue !== 0 ? (
           <span
@@ -1581,12 +1582,13 @@ const BuildPalette = React.memo(function BuildPalette({
         type="button"
         className="build-more"
         aria-expanded={showAll}
+        aria-controls="building-palette"
         aria-label={showAll ? "Show starter building tools" : "Show more building tools"}
         onClick={() => setShowAll((open) => !open)}
         disabled={!loaded || !!error}
       >
         <span className="build-more-icon">{showAll ? "−" : "+"}</span>
-        {showAll && <span>Starter tools</span>}
+        <span>{showAll ? "Starter tools" : "More buildings"}</span>
       </button>
     </nav>
   );
@@ -1621,6 +1623,9 @@ function App() {
     goalsTabRef = useRef(),
     paletteOpenRef = useRef(true),
     paletteBeforeDetailRef = useRef(true),
+    paletteBeforePlacementRef = useRef(
+      typeof window !== "undefined" && !window.matchMedia("(max-width: 760px)").matches,
+    ),
     detailOpenRef = useRef(false);
   const [state, setState] = useState({
     name: "Willowbrook",
@@ -1668,6 +1673,10 @@ function App() {
       if (typeof window === "undefined") return true;
       return !window.matchMedia("(max-width: 760px)").matches;
     }),
+    [touchLayout, setTouchLayout] = useState(() => {
+      if (typeof window === "undefined" || !window.matchMedia) return false;
+      return window.matchMedia("(max-width: 760px)").matches;
+    }),
     [menu, setMenu] = useState(false),
     [overview, setOverview] = useState(false),
     [reset, setReset] = useState(false),
@@ -1694,6 +1703,24 @@ function App() {
   paletteOpenRef.current = paletteOpen;
   detailOpenRef.current = Boolean(detail);
   const toastTimer = useRef();
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia("(max-width: 760px)");
+    const onChange = (e) => setTouchLayout(Boolean(e.matches));
+    setTouchLayout(mediaQuery.matches);
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", onChange);
+    } else {
+      mediaQuery.addListener?.(onChange);
+    }
+    return () => {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener("change", onChange);
+      } else {
+        mediaQuery.removeListener?.(onChange);
+      }
+    };
+  }, []);
   const goalSnapshot = useRef({
     ready: false,
     complete: false,
@@ -1794,7 +1821,7 @@ function App() {
     setBuildDetailsOpen(false);
     setHover(null);
     setGrid(false);
-    setPaletteOpen(true);
+    setPaletteOpen(paletteBeforePlacementRef.current);
   };
   useEffect(() => {
     const healthCheck = new URLSearchParams(window.location.search).has("healthcheck");
@@ -1891,6 +1918,7 @@ function App() {
     }
     const next = type === selected ? null : type;
     if (next) {
+      if (!selected) paletteBeforePlacementRef.current = paletteOpenRef.current;
       // Hide the carousel once placement starts so it doesn't cover the
       // ground the player is trying to place on; it reopens when placement
       // ends (see endPlacement).
@@ -1905,6 +1933,7 @@ function App() {
           : null);
     } else {
       placementFocusReturn.current = null;
+      setPaletteOpen(paletteBeforePlacementRef.current);
     }
     setSelected(next);
     setBuildDetailsOpen(false);
@@ -1940,7 +1969,7 @@ function App() {
     if (!preserveHighlight) game.current?.clearHighlight();
     game.current?.select(null);
     setGrid(false);
-    setPaletteOpen(true);
+    setPaletteOpen(paletteBeforePlacementRef.current);
   };
   const cancel = (restoreFocus = false) => {
     const returnTarget = placementFocusReturn.current;
@@ -1987,17 +2016,15 @@ function App() {
           closeMenu(true);
           return;
         }
+        if (detail || document.querySelector(".inspector")) {
+          closeDetail(true);
+          return;
+        }
         if (goals) {
           setGoals(false);
-          try {
-            window.localStorage.setItem(goalsDismissedStorageKey(state.name), "1");
-          } catch {
-            // Keyboard dismissal still works when storage is unavailable.
-          }
           window.setTimeout(() => document.querySelector(".menu-button")?.focus(), 0);
           return;
         }
-        if (document.querySelector(".inspector")) closeDetail(true);
         return;
       }
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
@@ -2013,7 +2040,11 @@ function App() {
         if (game.current.confirmPlacement()) cancel();
         return;
       }
+      const placementConfirmFocused =
+        e.target instanceof HTMLElement && e.target.closest?.(".placement-confirm");
+      if (placementConfirmFocused && e.key === "Enter") return;
       if (
+        !placementConfirmFocused &&
         e.target.closest?.(
           'button, a, select, [contenteditable="true"], [role="button"]',
         )
@@ -2189,8 +2220,6 @@ function App() {
         : pathRemoval
           ? "Choose one of your path tiles to remove · Esc to cancel"
           : "Choose a clear patch of land to build");
-  const touchLayout =
-    typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
   const displayedPlacementHint = touchLayout
     ? placementHint
         .replace(/^Click/, "Tap")
@@ -3303,6 +3332,12 @@ function App() {
           <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} storage={state.storage.wood} />
           <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} storage={state.storage.stone} />
           <Resource type="food" value={state.resources.food} trend={state.trends.food} storage={state.storage.food} />
+          {showWheat && (
+            <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} storage={state.storage.wheat} />
+          )}
+          {showWine && (
+            <Resource type="wine" value={state.resources.wine} trend={state.trends.wine} storage={state.storage.wine} />
+          )}
           <div
             className={`resource population ${state.population >= state.capacity ? "at-capacity" : ""}`}
           title={`${formatCount(state.population)} of ${formatCount(state.capacity)} villagers${state.population >= state.capacity ? ". Build a new cottage for more room." : ""}`}
@@ -3312,7 +3347,9 @@ function App() {
               <small>villagers</small>
               <strong className="resource-value">{formatCount(state.population)}<em> / {formatCount(state.capacity)}</em></strong>
               {state.population >= state.capacity && (
-                <span className="resource-trend negative">· room full</span>
+                <span className="resource-trend negative" title="Population at housing limit — build a cottage">
+                  <AlertCircle size={10} strokeWidth={2} aria-hidden="true" /> room full
+                </span>
               )}
             </div>
           </div>
