@@ -126,6 +126,20 @@ export const grassCandidates = (count = GRASS_COUNT, seedValue = WORLD_SEED + 1)
     };
   });
 };
+export const isRiverBridgeClearance = (x, z) =>
+  Number(x) > 14 && Number(x) < 19 && Number(z) > 6 && Number(z) < 10;
+export const BANK_ROCK_SEED = WORLD_SEED + 2;
+export const bankRockCandidates = (seedValue = BANK_ROCK_SEED) => {
+  const next = createRandom(seedValue);
+  const rocks = [];
+  for (let z = -28; z < 28; z += 2.4) {
+    const x = riverX(z) - 0.3;
+    const scale = 0.3 + next() * 0.6;
+    if (isRiverBridgeClearance(x, z)) continue;
+    rocks.push({ x, z, scale });
+  }
+  return rocks;
+};
 // Paths read as one continuous cobbled surface rather than a grid of stamped
 // squares. Every tile samples a single shared texture through world-space UVs,
 // so the stones run straight across tile joins no matter how a path is drawn.
@@ -1664,7 +1678,7 @@ export class Village {
         if (this.clearedScenery.has(candidateKey)) continue;
         if (
           (x > riverX(z) - 1 && x < riverX(z) + 9) ||
-          (x > 14 && x < 19 && z > 6 && z < 10)
+          isRiverBridgeClearance(x, z)
         )
           continue;
         if (
@@ -1736,10 +1750,9 @@ export class Village {
         grass.push(blade);
       }
       this.buildGrassField(grass);
-      const bankRandom = createRandom(WORLD_SEED + 2);
-      for (let z = -28; z < 28; z += 2.4) {
-        const m = this.model("rock", riverX(z) - 0.3, z);
-        m.scale.setScalar(0.3 + bankRandom() * 0.6);
+      for (const rock of bankRockCandidates()) {
+        const m = this.model("rock", rock.x, rock.z);
+        m.scale.setScalar(rock.scale);
       }
       const population = restoredPopulation(
         this.saved?.population,

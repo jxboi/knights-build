@@ -51,6 +51,8 @@ import {
   trainingOptions,
   workerTypeForBuilding,
   workerCapacityForBuilding,
+  isRiverBridgeClearance,
+  bankRockCandidates,
   sceneryCandidates,
   grassCandidates,
   SCENERY_COUNT,
@@ -4219,6 +4221,24 @@ test("grass scatter is deterministic and distinct from the scenery stream", () =
     assert.ok(blade.radius > 0 && blade.height > 0);
     assert.ok(["#f4d587", "#728844"].includes(blade.color));
   }
+});
+
+test("riverbank rocks are deterministic and avoid the wooden landing bridge", () => {
+  const rocks = bankRockCandidates();
+  assert.equal(rocks.length, 23);
+  assert.deepEqual(bankRockCandidates(), rocks);
+  for (const rock of rocks) {
+    assert.equal(
+      isRiverBridgeClearance(rock.x, rock.z),
+      false,
+      `riverbank rock at (${rock.x.toFixed(2)}, ${rock.z.toFixed(2)}) should not overlap landing bridge`,
+    );
+    assert.ok(rock.scale >= 0.3 && rock.scale <= 0.9);
+  }
+  const upstream = rocks.find((r) => Math.abs(r.z - 5.6) < 0.001);
+  const downstream = rocks.find((r) => Math.abs(r.z - 10.4) < 0.001);
+  assert.ok(upstream, "upstream shoreline rock at z = 5.6 is present");
+  assert.ok(downstream, "downstream shoreline rock at z = 10.4 is present");
 });
 
 function lanternVillage(preset = "balanced") {
