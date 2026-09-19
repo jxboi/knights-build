@@ -138,3 +138,31 @@ export const CATALOG = {
 // The town hall is the village's first store, so a new settlement can trade
 // before it can afford a Storehouse. Storehouses add their own capacity on top.
 export const TOWNHALL_STORAGE = 200;
+
+export const isEvenBuildingType = (type) => {
+  const size =
+    type === "road" || type === "road-remove"
+      ? 1
+      : (CATALOG[type]?.size ?? 1);
+  return Number.isFinite(size) && size % 2 === 0;
+};
+
+export const buildingFootprintSize = (typeOrSize) => {
+  if (typeof typeOrSize === "number") return typeOrSize;
+  if (typeOrSize === "road" || typeOrSize === "road-remove") return 1;
+  return CATALOG[typeOrSize]?.size ?? 1;
+};
+
+export const snapPlacementCoordinate = (value, typeOrSize = 1) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  const size = buildingFootprintSize(typeOrSize);
+  return size % 2 === 0
+    ? Math.round(num - 0.5) + 0.5
+    : Math.round(num);
+};
+
+export const snapPlacement = (x, z, type) => ({
+  x: snapPlacementCoordinate(x, type),
+  z: snapPlacementCoordinate(z, type),
+});

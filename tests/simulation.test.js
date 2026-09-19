@@ -70,6 +70,9 @@ import {
   STARTER_SETTLEMENT_CLEAR_RADIUS,
   isInStarterSettlementClearing,
   Village,
+  snapPlacementCoordinate,
+  snapPlacement,
+  isEvenBuildingType,
 } from "../src/world.js";
 import {
   CHAPTER_GOALS,
@@ -271,6 +274,87 @@ test("guided placement searches for the nearest clear site", () => {
   const site = v.findOpenPlacement("house", { x: 0, z: 3 });
   assert.equal(v.valid(site.x, site.z, "house").ok, true);
   assert.notDeepEqual(site, { x: 0, z: 3 });
+});
+test("guided placement coordinates snap to grid-aligned parity coordinates", () => {
+  const v = village();
+  const farmSite = v.findOpenPlacement("farm", { x: 0.2, z: 3.8 });
+  // Even footprints (farm: size 4) snap to half-integers so edges land on half-integer grid boundaries
+  assert.equal(Math.abs(farmSite.x % 1), 0.5);
+  assert.equal(Math.abs(farmSite.z % 1), 0.5);
+  const farmEdgesX = [farmSite.x - 2, farmSite.x + 2];
+  const farmEdgesZ = [farmSite.z - 2, farmSite.z + 2];
+  assert.equal(Math.abs(farmEdgesX[0] % 1), 0.5);
+  assert.equal(Math.abs(farmEdgesX[1] % 1), 0.5);
+  assert.equal(Math.abs(farmEdgesZ[0] % 1), 0.5);
+  assert.equal(Math.abs(farmEdgesZ[1] % 1), 0.5);
+
+  const houseSite = v.findOpenPlacement("house", { x: 0.2, z: 3.8 });
+  // Odd footprints (house: size 3) snap to integers so edges land on half-integer grid boundaries
+  assert.equal(Number.isInteger(houseSite.x), true);
+  assert.equal(Number.isInteger(houseSite.z), true);
+  const houseEdgesX = [houseSite.x - 1.5, houseSite.x + 1.5];
+  const houseEdgesZ = [houseSite.z - 1.5, houseSite.z + 1.5];
+  assert.equal(Math.abs(houseEdgesX[0] % 1), 0.5);
+  assert.equal(Math.abs(houseEdgesX[1] % 1), 0.5);
+  assert.equal(Math.abs(houseEdgesZ[0] % 1), 0.5);
+  assert.equal(Math.abs(houseEdgesZ[1] % 1), 0.5);
+});
+test("placement snapping aligns footprint edges with cell boundary grid lines for even and odd sizes", () => {
+  // Odd size (size 1: road/grainfield, size 3: cottage/bakery)
+  assert.equal(isEvenBuildingType("road"), false);
+  assert.equal(isEvenBuildingType("house"), false);
+  assert.equal(snapPlacementCoordinate(1.2, "road"), 1);
+  assert.equal(snapPlacementCoordinate(2.7, "house"), 3);
+
+  // Even size (size 2: well, size 4: farm/inn/storehouse)
+  assert.equal(isEvenBuildingType("well"), true);
+  assert.equal(isEvenBuildingType("farm"), true);
+  assert.equal(snapPlacementCoordinate(1.2, "well"), 1.5);
+  assert.equal(snapPlacementCoordinate(2.1, "farm"), 2.5);
+  assert.equal(snapPlacementCoordinate(2.9, "farm"), 2.5);
+
+  const farmPlacement = snapPlacement(2.1, 4.8, "farm");
+  assert.deepEqual(farmPlacement, { x: 2.5, z: 4.5 });
+  // Size 4 extents: [2.5 - 2, 2.5 + 2] = [0.5, 4.5] (all land on half-integer grid lines)
+  assert.equal(Math.abs((farmPlacement.x - 2) % 1), 0.5);
+  assert.equal(Math.abs((farmPlacement.x + 2) % 1), 0.5);
+  assert.equal(Math.abs((farmPlacement.z - 2) % 1), 0.5);
+  assert.equal(Math.abs((farmPlacement.z + 2) % 1), 0.5);
+
+  const housePlacement = snapPlacement(2.1, 4.8, "house");
+  assert.deepEqual(housePlacement, { x: 2, z: 5 });
+  // Size 3 extents: [2 - 1.5, 2 + 1.5] = [0.5, 3.5] (all land on half-integer grid lines)
+  assert.equal(Math.abs((housePlacement.x - 1.5) % 1), 0.5);
+  assert.equal(Math.abs((housePlacement.x + 1.5) % 1), 0.5);
+  assert.equal(Math.abs((housePlacement.z - 1.5) % 1), 0.5);
+  assert.equal(Math.abs((housePlacement.z + 1.5) % 1), 0.5);
+});
+test("keyboard movement moves placement by unit increments while preserving parity", () => {
+  const v = village();
+  v.selected = "farm";
+  v.rotation = 0;
+  v.ghost = new THREE.Object3D();
+  v.footprint = { visible: false, position: { set: () => {} }, material: { color: { set: () => {} } } };
+  v.previewOutline = { visible: false, position: { set: () => {} }, rotation: { y: 0 }, material: { color: { set: () => {} } } };
+  v.emit = () => {};
+
+  // Initialize placement at (0.5, 0.5)
+  v.updatePlacement(0.5, 0.5);
+  assert.deepEqual({ x: v.placement.x, z: v.placement.z }, { x: 0.5, z: 0.5 });
+
+  // Move by (+1, 0)
+  v.movePlacement(1, 0);
+  assert.deepEqual({ x: v.placement.x, z: v.placement.z }, { x: 1.5, z: 0.5 });
+
+  // Move by (0, -1)
+  v.movePlacement(0, -1);
+  assert.deepEqual({ x: v.placement.x, z: v.placement.z }, { x: 1.5, z: -0.5 });
+
+  // Odd footprint (house)
+  v.selected = "house";
+  v.placement = null;
+  v.movePlacement(1, -1);
+  assert.deepEqual({ x: v.placement.x, z: v.placement.z }, { x: 1, z: -1 });
 });
 test("road overlap checks use the numeric tile index and retain a save-set fallback", () => {
   const v = village();

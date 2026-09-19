@@ -1,9 +1,21 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CATALOG, TOWNHALL_STORAGE } from "./catalog.js";
+import {
+  CATALOG,
+  TOWNHALL_STORAGE,
+  isEvenBuildingType,
+  snapPlacementCoordinate,
+  snapPlacement,
+} from "./catalog.js";
 import { chapterGoalState } from "./progression.js";
-export { CATALOG, TOWNHALL_STORAGE } from "./catalog.js";
+export {
+  CATALOG,
+  TOWNHALL_STORAGE,
+  isEvenBuildingType,
+  snapPlacementCoordinate,
+  snapPlacement,
+} from "./catalog.js";
 export const STARTER_BUILDINGS = Object.freeze([
   ["townhall", 3, -3],
   ["house", -9, 3],
@@ -2057,11 +2069,22 @@ export class Village {
   }
   farmTouchesGrainField(farm, x, z) {
     if (!farm || farm.type !== "farm" || farm.progress < 1) return false;
-    const half = Math.ceil((CATALOG.farm?.size || 4) / 2);
-    const edge = half + 1;
+    const farmSize = CATALOG.farm?.size || 4;
+    const half = farmSize / 2;
+    const isHalfInt = Math.abs(farm.x % 1) === 0.5 || Math.abs(farm.z % 1) === 0.5;
+    if (isHalfInt) {
+      const edge = half + 0.5;
+      const dx = Math.abs(Number(x) - farm.x);
+      const dz = Math.abs(Number(z) - farm.z);
+      return (
+        (Math.abs(dx - edge) < 0.01 && dz <= half) ||
+        (Math.abs(dz - edge) < 0.01 && dx <= half)
+      );
+    }
+    const edge = Math.ceil(half) + 1;
     const dx = Math.abs(Math.round(x) - Math.round(farm.x));
     const dz = Math.abs(Math.round(z) - Math.round(farm.z));
-    return (dx === edge && dz <= half) || (dz === edge && dx <= half);
+    return (dx === edge && dz <= Math.ceil(half)) || (dz === edge && dx <= Math.ceil(half));
   }
   grainFieldConnected(x, z, extraFields = EMPTY_GRAIN_FIELDS) {
     if (
@@ -2982,7 +3005,10 @@ export class Village {
     return this.placement;
   }
   movePlacement(dx, dz) {
-    const current = this.placement || { x: 0, z: 0 };
+    const current = this.placement || {
+      x: snapPlacementCoordinate(0, this.selected),
+      z: snapPlacementCoordinate(0, this.selected),
+    };
     this.updatePlacement(current.x + dx, current.z + dz);
   }
   removePickTarget(mesh) {
@@ -2996,8 +3022,8 @@ export class Village {
     }
   }
   findOpenPlacement(type, origin = { x: 0, z: 3 }) {
-    const startX = Math.round(Number(origin.x) || 0);
-    const startZ = Math.round(Number(origin.z) || 0);
+    const startX = snapPlacementCoordinate(Number(origin.x) || 0, type);
+    const startZ = snapPlacementCoordinate(Number(origin.z) || 0, type);
     for (let radius = 0; radius <= 18; radius += 1) {
       const candidates = [];
       for (let dx = -radius; dx <= radius; dx += 1) {
@@ -3033,8 +3059,8 @@ export class Village {
       this.ghost &&
       this.raycaster.ray.intersectPlane(this.groundPlane, this.point)
     ) {
-      const x = Math.round(this.point.x),
-        z = Math.round(this.point.z);
+      const x = snapPlacementCoordinate(this.point.x, this.selected),
+        z = snapPlacementCoordinate(this.point.z, this.selected);
       this.updatePlacement(x, z);
     } else {
       const hits = this.raycaster.intersectObjects(
