@@ -15,7 +15,6 @@ import Save from "lucide-react/dist/esm/icons/save.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import Check from "lucide-react/dist/esm/icons/check.js";
 import ArrowUpRight from "lucide-react/dist/esm/icons/arrow-up-right.js";
-import ArrowUp from "lucide-react/dist/esm/icons/arrow-up.js";
 import ArrowDown from "lucide-react/dist/esm/icons/arrow-down.js";
 import RotateCw from "lucide-react/dist/esm/icons/rotate-cw.js";
 import MousePointer2 from "lucide-react/dist/esm/icons/mouse-pointer-2.js";
@@ -80,7 +79,7 @@ const ADVISOR_RESOURCE_QUESTIONS = Object.freeze({
   stone: "How is my stone supply doing, and what should I watch next?",
   food: "How is my food supply doing, and what should I fix or protect next?",
   wheat: "How is my wheat supply doing, and which worksite depends on it?",
-  wine: "How is my wine supply doing, and is it worth prioritizing right now?",
+  wine: "How is my wine supply doing, and is it worth protecting right now?",
 });
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function advisorResourceRunway(resources = {}, trends = {}) {
@@ -139,21 +138,6 @@ function inferAdvisorPreviewAction(content) {
     if (advisorHasNegativeAction(text, catalog.name, "preview|simulate|model")) continue;
     const name = escapeRegExp(catalog.name);
     if (new RegExp(`\\b${name}\\b`, "i").test(text)) return type;
-  }
-  return null;
-}
-function inferAdvisorPriorityAction(content) {
-  const text = String(content || "").replace(/\*+/g, "");
-  for (const { type, catalog } of CATALOG_ENTRIES) {
-    if (type === "road" || type === "townhall") continue;
-    const name = escapeRegExp(catalog.name);
-    if (advisorHasNegativeAction(text, catalog.name, "prioriti[sz]e|focus")) continue;
-    const patterns = [
-      new RegExp(`\\bprioriti[sz]e\\s+(?:(?:a|an|the)\\s+)?${name}\\b`, "i"),
-      new RegExp(`\\b(?:give|set)\\s+(?:a|an|the)\\s+${name}\\s+(?:top\\s+)?priority\\b`, "i"),
-      new RegExp(`\\bfocus\\s+(?:the\\s+)?workers?\\s+on\\s+(?:a|an|the)\\s+${name}\\b`, "i"),
-    ];
-    if (patterns.some((pattern) => pattern.test(text))) return type;
   }
   return null;
 }
@@ -263,13 +247,6 @@ function buildAdvisorScenario(type, resources = {}, storage = {}) {
     storage: Math.floor(Number(storage[catalog.resource] || 0)),
   };
 }
-function advisorPriorityTarget(type, buildings = []) {
-  return buildings.find(
-    (building) =>
-      building.type === type &&
-      (Number(building.progress) < 1 || Boolean(CATALOG[type]?.resource)),
-  ) || null;
-}
 const insideBuildingStatus = {
   farm: "Cutting grain in the field",
   bakery: "Processing wheat inside Bakery",
@@ -322,11 +299,11 @@ function workerStatus(worker) {
     (worker.hungry ? "Hungry — waiting for bread" : "Idle");
 }
 function AdvisorContent({ content }) {
-  const parts = String(content || "").split(/(\*\*[^*]+\*\*|(?:Best move|Why|Watch for|Start here|Compare|Preview|Prioritize|Upgrade|Inspect|Train|Training|Impact|Timing|Hold|Workforce|Resource|Forecast|Start a feast|Skip the feast|Dispatch|Pulse|Chronicle|Three-step plan|Quartermaster|Builder|Chronicler):)/gi);
+  const parts = String(content || "").split(/(\*\*[^*]+\*\*|(?:Best move|Why|Watch for|Start here|Compare|Preview|Upgrade|Inspect|Train|Training|Impact|Timing|Hold|Workforce|Resource|Forecast|Start a feast|Skip the feast|Dispatch|Pulse|Chronicle|Three-step plan|Quartermaster|Builder|Chronicler):)/gi);
   return parts.map((part, index) =>
     part.startsWith("**") && part.endsWith("**") ? (
       <strong key={index}>{part.slice(2, -2)}</strong>
-    ) : /^(?:Best move|Why|Watch for|Start here|Compare|Preview|Prioritize|Upgrade|Inspect|Train|Training|Impact|Timing|Hold|Workforce|Resource|Forecast|Start a feast|Skip the feast|Dispatch|Pulse|Chronicle|Three-step plan|Quartermaster|Builder|Chronicler):$/i.test(part) ? (
+    ) : /^(?:Best move|Why|Watch for|Start here|Compare|Preview|Upgrade|Inspect|Train|Training|Impact|Timing|Hold|Workforce|Resource|Forecast|Start a feast|Skip the feast|Dispatch|Pulse|Chronicle|Three-step plan|Quartermaster|Builder|Chronicler):$/i.test(part) ? (
       <strong className="advisor-label" key={index}>{part}</strong>
     ) : (
       <React.Fragment key={index}>{part}</React.Fragment>
@@ -339,7 +316,7 @@ function buildAdvisorGrounding(content, context = {}) {
   if (/(?:wood|stone|food|wheat|wine|resource|cost|afford|storage|trend|runway|shortage)/.test(text)) {
     signals.push("Resources");
   }
-  if (/(?:build|building|worksite|production|delivery|route|bottleneck|blocked|upgrade|inspect|prioritize)/.test(text)) {
+  if (/(?:build|building|worksite|production|delivery|route|bottleneck|blocked|upgrade|inspect)/.test(text)) {
     signals.push("Worksites");
   }
   if (/(?:worker|villager|carrier|school|train|apprentice|housing|population|people)/.test(text)) {
@@ -463,7 +440,6 @@ function buildAdvisorRoute(content) {
       text: step,
       done: false,
       buildAction: inferAdvisorBuildAction(step),
-      priorityAction: inferAdvisorPriorityAction(step),
       focusAction: inferAdvisorFocusAction(step),
       workerFocusAction: inferAdvisorWorkerFocusAction(step),
       trainingAction: inferAdvisorTrainingAction(step),
@@ -485,7 +461,6 @@ function readAdvisorRoute(villageName) {
         text: String(step?.text || "").slice(0, 500),
         done: Boolean(step?.done),
         buildAction: typeof step?.buildAction === "string" ? step.buildAction : null,
-        priorityAction: typeof step?.priorityAction === "string" ? step.priorityAction : null,
         focusAction: typeof step?.focusAction === "string" ? step.focusAction : null,
         workerFocusAction: typeof step?.workerFocusAction === "string" ? step.workerFocusAction : null,
         trainingAction: typeof step?.trainingAction === "string" ? step.trainingAction : null,
@@ -669,9 +644,6 @@ function readAdvisorMessages(villageName) {
         const previewAction = message.role === "assistant"
           ? inferAdvisorPreviewAction(message.content) || action
           : null;
-        const priorityAction = message.role === "assistant"
-          ? inferAdvisorPriorityAction(message.content)
-          : null;
         const upgradeAction = message.role === "assistant"
           ? inferAdvisorUpgradeAction(message.content)
           : null;
@@ -708,7 +680,6 @@ function readAdvisorMessages(villageName) {
           ...(typeof message.prompt === "string" ? { prompt: message.prompt.slice(0, 4000) } : {}),
           ...(action ? { action } : {}),
           ...(previewAction ? { previewAction } : {}),
-          ...(priorityAction ? { priorityAction } : {}),
           ...(upgradeAction ? { upgradeAction } : {}),
           ...(feastAction ? { feastAction: true } : {}),
           ...(focusAction ? { focusAction } : {}),
@@ -1094,27 +1065,8 @@ function buildLocalAdvisorReply(question, snapshot, brief) {
   const chapterQuestion = /chapter|challenge|reward|side goal|milestone/.test(lowerQuestion) && !planningQuestion;
   const openChapterGoal = (snapshot.goals?.chapter || []).find((goal) => !goal.completed);
   const negativeFeastQuestion = /\b(?:avoid|skip|not|don't|do not|never|cannot|can't|unable to)\b[^.?!]{0,40}\bfeast\b/.test(lowerQuestion);
-  const priorityQuestion = lowerQuestion.includes("priorit") || lowerQuestion.includes("focus");
-  const priorityEligible = (building) =>
-    building && !["townhall", "cottage", "well", "watchtower", "school", "grainfield"].includes(building.type);
-  const namedPriorityTarget = (snapshot.buildings || []).find(
-    (building) =>
-      priorityEligible(building) &&
-      building.name &&
-      lowerQuestion.includes(building.name.toLowerCase()) &&
-      building.priority !== "priority" &&
-      (Number(building.progress) < 1 || Number(building.workers) > 0 || !/complete/i.test(building.status || "")),
-  );
-  const suggestedPriorityTarget = namedPriorityTarget || (snapshot.buildings || []).find(
-    (building) =>
-      priorityEligible(building) &&
-      building.name &&
-      building.priority !== "priority" &&
-      (Number(building.progress) < 1 || Number(building.workers) > 0 || /waiting|working|assigned|delivery/i.test(building.status || "")),
-  );
   const blockedWorksite = (snapshot.buildings || []).find(
     (building) =>
-      priorityEligible(building) &&
       (Number(building.progress) < 1 || Number(building.workers) > 0) &&
       /waiting|blocked|route|input|space|full|missing|delivery|ingredient/i.test(building.status || ""),
   );
@@ -1126,9 +1078,7 @@ function buildLocalAdvisorReply(question, snapshot, brief) {
   const nextBuild = choice
     ? `Build the ${choice.name} (${cost || "materials ready"}).`
     : "Let resources accumulate until a useful build is affordable.";
-  const workforceMove = waitingWorkers && suggestedPriorityTarget
-    ? `Prioritize ${suggestedPriorityTarget.name}, then inspect its missing input, route, or storage.`
-    : waitingWorkers
+  const workforceMove = waitingWorkers
       ? "Inspect the waiting work and clear its missing input, route, or storage."
       : trainingChoice
         ? `Train ${trainingChoice.label}, then watch the new ${trainingChoice.label.toLowerCase()} reach an open post.`
@@ -1154,10 +1104,6 @@ function buildLocalAdvisorReply(question, snapshot, brief) {
   const negativeUpgradeQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:upgrade|improve|enhance)\b/.test(lowerQuestion);
   const negativeTrainingQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:train|training|apprentice)\b/.test(lowerQuestion);
   const negativeFocusQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:inspect|check|visit|focus)\b/.test(lowerQuestion);
-  const negativePriorityQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:prioriti[sz]e|focus)\b/.test(lowerQuestion);
-  const namedPriorityBuilding = (snapshot.buildings || []).find(
-    (building) => building.name && lowerQuestion.includes(building.name.toLowerCase()),
-  );
   if (negativeTrainingQuestion && trainingQuestion) {
     return `Hold training for now: you asked not to commit the School to another apprentice. Keep the current opening available until the village's next need is clearer.`;
   }
@@ -1167,10 +1113,6 @@ function buildLocalAdvisorReply(question, snapshot, brief) {
   if (negativeUpgradeQuestion && upgradeQuestion && namedUpgradeBuilding) {
     return `Hold ${namedUpgradeBuilding.name} at its current improvement: you asked not to upgrade it. Keep its materials available for another bottleneck.`;
   }
-  if (negativePriorityQuestion && priorityQuestion && namedPriorityBuilding) {
-    return `Leave ${namedPriorityBuilding.name} at normal priority for now: you asked not to move it ahead of the other worksites.`;
-  }
-
   if (resourceQuestion) {
     const held = Math.floor(Number(resources[namedResource]) || 0);
     const capacity = Math.floor(Number(snapshot.storage?.[namedResource]) || 0);
@@ -1358,31 +1300,21 @@ function buildLocalAdvisorReply(question, snapshot, brief) {
   }
 
   if (focusQuestion && namedFocusTarget) {
-    const canPrioritize = priorityEligible(namedFocusTarget) &&
-      namedFocusTarget.priority !== "priority" &&
-      (Number(namedFocusTarget.progress) < 1 || Number(namedFocusTarget.workers) > 0);
     const upgradeHint = namedFocusTarget.upgradeName && !namedFocusTarget.upgrade
       ? ` An available improvement is ${namedFocusTarget.upgradeName}.`
       : "";
-    return `Inspect ${namedFocusTarget.name}: it is already in the village and its current status is ${namedFocusTarget.status || "available"}. ${namedFocusTarget.workers ? `${namedFocusTarget.workers} worker${namedFocusTarget.workers === 1 ? " is" : "s are"} assigned.` : "No worker is assigned right now."}${canPrioritize ? ` Prioritize ${namedFocusTarget.name} if you want this worksite to receive the next available hand.` : ""}${upgradeHint}`;
+    return `Inspect ${namedFocusTarget.name}: it is already in the village and its current status is ${namedFocusTarget.status || "available"}. ${namedFocusTarget.workers ? `${namedFocusTarget.workers} worker${namedFocusTarget.workers === 1 ? " is" : "s are"} assigned.` : "No worker is assigned right now."}${upgradeHint}`;
   }
   if (focusQuestion && namedFocusWorker) {
     return `Inspect ${namedFocusWorker.type}: this villager is currently ${namedFocusWorker.status || "working in the village"}. Focus ${namedFocusWorker.type} to keep an eye on the next route or work cycle.`;
   }
 
-  if (priorityQuestion && suggestedPriorityTarget) {
-    return `Prioritize ${suggestedPriorityTarget.name}: it is the live worksite most likely to unblock the village. Watch for: ${watchFor}`;
-  }
-
-  if (/\b(?:what now|what should i do|what should i build|what do i build|next move|next build|help me)\b/.test(lowerQuestion) && rescueSignal && suggestedPriorityTarget) {
-    return `Prioritize ${suggestedPriorityTarget.name}: it is the clearest rescue before another build. Watch for: ${watchFor}`;
-  }
   if (/\b(?:what now|what should i do|what should i build|what do i build|next move|next build|help me)\b/.test(lowerQuestion) && rescueSignal) {
     return `Hold the next build for a moment: ${Number(snapshot.blockedSites) || waitingWorkers} live bottleneck${(Number(snapshot.blockedSites) || waitingWorkers) === 1 ? " is" : "s are"} visible, but no single worksite is safe to name from this snapshot. Ask which worksite is blocked, then clear its route, input, or storage first.`;
   }
 
   if (blockedWorksite && /\b(?:blocked|stuck|waiting|bottleneck|slow|attention|which worksite)\b/.test(lowerQuestion)) {
-    return `Inspect ${blockedWorksite.name}: it reports ${blockedWorksite.status || "a blocked work state"}. Prioritize ${blockedWorksite.name} while you check its missing input, route, or storage.`;
+    return `Inspect ${blockedWorksite.name}: it reports ${blockedWorksite.status || "a blocked work state"}. Check its missing input, route, or storage before adding another task.`;
   }
 
   if (lowerQuestion.includes("wait") || lowerQuestion.includes("stuck") || lowerQuestion.includes("blocked")) {
@@ -2588,7 +2520,6 @@ function App() {
       stock: building.stock || 0,
       stockCap: building.stockCap || 0,
       nextDelivery: building.nextDelivery,
-      priority: building.priority === "priority" ? "priority" : "normal",
       upgrade: building.upgrade || null,
       upgradeName: CATALOG[building.type]?.upgrade?.name || null,
       upgradeCost: CATALOG[building.type]?.upgrade?.cost || null,
@@ -2741,11 +2672,6 @@ function App() {
       if (step.buildAction) {
         return state.buildings.some(
           (building) => building.type === step.buildAction && Number(building.progress) >= 1,
-        );
-      }
-      if (step.priorityAction) {
-        return state.buildings.some(
-          (building) => building.type === step.priorityAction && building.priority === "priority",
         );
       }
       if (step.trainingAction) {
@@ -2987,7 +2913,6 @@ function App() {
       if (!data.message) throw new Error("The advisor returned an empty answer.");
       const action = inferAdvisorBuildAction(data.message);
       const previewAction = inferAdvisorPreviewAction(data.message) || action;
-      const priorityAction = inferAdvisorPriorityAction(data.message);
       const upgradeAction = inferAdvisorUpgradeAction(data.message);
       const feastAction = inferAdvisorFeastAction(data.message);
       const focusAction = inferAdvisorFocusAction(data.message);
@@ -3007,7 +2932,6 @@ function App() {
             ...(guidedPrompt !== content ? { prompt: guidedPrompt } : {}),
             ...(action ? { action } : {}),
             ...(previewAction ? { previewAction } : {}),
-            ...(priorityAction ? { priorityAction } : {}),
             ...(upgradeAction ? { upgradeAction } : {}),
             ...(feastAction ? { feastAction: true } : {}),
             ...(focusAction ? { focusAction } : {}),
@@ -3028,7 +2952,6 @@ function App() {
       const fallback = buildLocalAdvisorReply(prompt, advisorContext, advisorBrief);
       const action = inferAdvisorBuildAction(fallback);
       const previewAction = inferAdvisorPreviewAction(fallback) || action;
-      const priorityAction = inferAdvisorPriorityAction(fallback);
       const upgradeAction = inferAdvisorUpgradeAction(fallback);
       const feastAction = inferAdvisorFeastAction(fallback);
       const focusAction = inferAdvisorFocusAction(fallback);
@@ -3047,7 +2970,6 @@ function App() {
             ...(guidedPrompt !== content ? { prompt: guidedPrompt } : {}),
             ...(action ? { action } : {}),
             ...(previewAction ? { previewAction } : {}),
-            ...(priorityAction ? { priorityAction } : {}),
             ...(upgradeAction ? { upgradeAction } : {}),
             ...(feastAction ? { feastAction: true } : {}),
             ...(focusAction ? { focusAction } : {}),
@@ -3082,21 +3004,6 @@ function App() {
     const scenario = buildAdvisorScenario(type, state.resources, state.storage);
     if (!scenario) return;
     setAdvisorPreview({ type, ...scenario });
-  };
-  const prepareAdvisorPriority = (type) => {
-    const target = advisorPriorityTarget(type, state.buildings);
-    const name = CATALOG[type]?.name || type;
-    if (!target) {
-      notify(`There is no active ${name} worksite to prioritize right now.`);
-      return;
-    }
-    if (target.priority === "priority") {
-      notify(`${name} already has priority. Workers will favor it when choosing their next job.`);
-      return;
-    }
-    if (game.current?.setPriority(target.id, "priority")) {
-      notify(`${name} is now first in line for available workers.`);
-    }
   };
   const prepareAdvisorUpgrade = (type) => {
     const target = state.buildings.find(
@@ -3196,7 +3103,7 @@ function App() {
         : "this part of my village";
     const question = detail?.type === "worker"
       ? `Inspect this ${subject}. Explain what this villager needs next, then give me one helpful action and one thing to watch.`
-      : `Inspect this ${subject}. Explain its role, then tell me whether I should prioritize, support, upgrade, or leave it alone right now.`;
+      : `Inspect this ${subject}. Explain its role, then tell me whether I should support, upgrade, or leave it alone right now.`;
     setAdvisorOpen(true);
     closeMenu();
     askAdvisor(question, `Tell me about ${subject}.`);
@@ -3781,7 +3688,6 @@ function App() {
               <ol id="advisor-watch-events">
                 {advisorRoute.steps.map((step, stepIndex) => {
                   const build = step.buildAction && CATALOG[step.buildAction];
-                  const priority = step.priorityAction && CATALOG[step.priorityAction];
                   const focus = step.focusAction && CATALOG[step.focusAction];
                   const worker = step.workerFocusAction;
                   const trainee = step.trainingAction;
@@ -3790,10 +3696,6 @@ function App() {
                       (building) => building.type === step.buildAction && Number(building.progress) >= 1,
                     ),
                   );
-                  const priorityTarget = priority && state.buildings.find(
-                    (building) => building.type === step.priorityAction,
-                  );
-                  const priorityDone = Boolean(priorityTarget?.priority === "priority");
                   const trainingActive = Boolean(
                     trainee && state.buildings.some(
                       (building) => building.type === "school" && building.trainingSession?.label === trainee,
@@ -3820,16 +3722,6 @@ function App() {
                           title={step.done || buildComplete ? `${build.name} is already complete.` : `Prepare ${build.name} for placement.`}
                         >
                           <Hammer size={10} aria-hidden="true" /> {step.done || buildComplete ? `${build.name} complete` : `Prepare ${build.name}`}
-                        </button>
-                      )}
-                      {priority && (
-                        <button
-                          type="button"
-                          onClick={() => prepareAdvisorPriority(step.priorityAction)}
-                          disabled={step.done || priorityDone}
-                          title={step.done || priorityDone ? `${priority.name} already has priority.` : `Prioritize ${priority.name}.`}
-                        >
-                          <Gauge size={10} aria-hidden="true" /> {step.done || priorityDone ? `${priority.name} already priority` : `Prioritize ${priority.name}`}
                         </button>
                       )}
                       {focus && (
@@ -4149,33 +4041,6 @@ function App() {
                         </div>
                       )}
                     </>
-                  )}
-                {message.role === "assistant" &&
-                  index === latestAssistantIndex &&
-                  message.priorityAction && (
-                    (() => {
-                      const target = advisorPriorityTarget(message.priorityAction, state.buildings);
-                      const name = CATALOG[message.priorityAction]?.name || message.priorityAction;
-                      const alreadyPriority = target?.priority === "priority";
-                      return (
-                        <button
-                          type="button"
-                          className={`advisor-priority-action ${!target || alreadyPriority ? "unavailable" : ""}`}
-                          onClick={() => prepareAdvisorPriority(message.priorityAction)}
-                          disabled={advisorLoading || !target || alreadyPriority}
-                          title={
-                            !target
-                              ? `There is no active ${name.toLowerCase()} worksite to prioritize.`
-                              : alreadyPriority
-                                ? `${name} already has priority.`
-                                : `Give ${name} the next available worker.`
-                          }
-                        >
-                          <ArrowUp size={12} aria-hidden="true" />
-                          {!target ? `No active ${name}` : alreadyPriority ? `${name} already priority` : `Prioritize ${name}`}
-                        </button>
-                      );
-                    })()
                   )}
                 {message.role === "assistant" &&
                   index === latestAssistantIndex &&
@@ -4797,38 +4662,6 @@ function App() {
           )}
           {detail.type !== "worker" && inspected && (
             <div className="inspector-actions" aria-label="Building controls">
-              {detail.type !== "townhall" &&
-                detail.type !== "grainfield" &&
-                (inspected.progress < 1 || CATALOG[detail.type]?.resource) && (
-                  <button
-                    type="button"
-                    className={`inspector-control priority ${
-                      inspected.priority === "priority" ? "active" : ""
-                    }`}
-                    aria-pressed={inspected.priority === "priority"}
-                    aria-label={
-                      inspected.priority === "priority"
-                        ? `Use normal priority for ${CATALOG[detail.type]?.name || "building"}`
-                        : `Prioritize ${CATALOG[detail.type]?.name || "building"}`
-                    }
-                    title={
-                      inspected.priority === "priority"
-                        ? "Return this building to normal worker priority."
-                        : "Give this building priority when workers choose their next job."
-                    }
-                    onClick={() =>
-                      game.current?.setPriority(
-                        inspected.id,
-                        inspected.priority === "priority" ? "normal" : "priority",
-                      )
-                    }
-                  >
-                    <ArrowUp size={14} />
-                    {inspected.priority === "priority"
-                      ? "Use normal priority"
-                      : "Prioritize building"}
-                  </button>
-                )}
               {inspected.progress < 1 && (
                 <button
                   type="button"

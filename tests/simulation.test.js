@@ -1951,7 +1951,6 @@ test("construction assignments collect each material from its producer", () => {
     materials: { wood: 0, stone: 0 },
     x: 8,
     z: 8,
-    priority: "normal",
   };
   const lumberyard = {
     type: "lumberyard",
@@ -3403,36 +3402,10 @@ test("stale tabs refuse inspector and feast mutations", () => {
     },
   });
   assert.equal(v.removeBuilding("building-1"), false);
-  assert.equal(v.setPriority("building-1", "priority"), false);
   assert.equal(v.upgradeBuilding("building-1"), false);
   assert.equal(v.startFeast(), false);
   assert.equal(v.dismissTutorial(), false);
   assert.match(notice, /changed in another tab/);
-});
-
-test("building priority can be toggled for construction and production sites", () => {
-  const v = village();
-  let announced = "";
-  Object.assign(v, {
-    storageConflict: false,
-    buildings: [
-      { id: "farm-1", type: "farm", progress: 0.4, priority: "normal" },
-      { id: "mine-1", type: "mine", progress: 1, priority: "normal" },
-      { id: "hall-1", type: "townhall", progress: 1, priority: "normal" },
-    ],
-    announce(message) {
-      announced = message;
-    },
-    emit() {},
-  });
-  assert.equal(v.setPriority("farm-1", "priority"), true);
-  assert.equal(v.buildings[0].priority, "priority");
-  assert.match(announced, /priority/);
-  assert.equal(v.setPriority("mine-1", "priority"), true);
-  assert.equal(v.buildings[1].priority, "priority");
-  assert.equal(v.setPriority("mine-1", "normal"), true);
-  assert.equal(v.buildings[1].priority, "normal");
-  assert.equal(v.setPriority("hall-1", "priority"), false);
 });
 
 test("embedded health samples cannot mutate the player's save", () => {

@@ -1786,32 +1786,6 @@ h1 span {
   font-size: 7px;
   line-height: 1.4;
 }
-.advisor-priority-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin: 4px 0 0 33px;
-  padding: 6px 8px;
-  border: 1px solid #d5bb82;
-  border-radius: 4px;
-  color: #8b6732;
-  background: #f6edcf;
-  font-size: 8px;
-  line-height: 1.2;
-}
-.advisor-priority-action:hover:not(:disabled),
-.advisor-priority-action:focus-visible {
-  border-color: #bd9852;
-  color: #714d24;
-  background: #f1e1b8;
-}
-.advisor-priority-action.unavailable,
-.advisor-priority-action.unavailable:disabled {
-  border-color: #d9c7a9;
-  color: #987f5c;
-  background: #f3ead8;
-  cursor: not-allowed;
-}
 .advisor-upgrade-action {
   display: inline-flex;
   align-items: center;
@@ -2603,16 +2577,6 @@ h1 span {
 .inspector-control.upgrade {
   background: #eadcb5;
   color: #806431;
-}
-.inspector-control.priority {
-  background: #edf0cf;
-  border-color: #c5ce9e;
-  color: #657345;
-}
-.inspector-control.priority.active {
-  background: #dfe7b6;
-  border-color: #9eae6e;
-  color: #4e6034;
 }
 .upgrade-note {
   display: flex;

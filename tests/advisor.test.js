@@ -88,7 +88,6 @@ test("advisor context includes bounded planning and workforce signals", async ()
     assert.match(requestBody.messages[0].content, /"name": "Bakery"/);
     assert.match(requestBody.messages[0].content, /"affordable": true/);
     assert.match(requestBody.messages[0].content, /"underConstruction": 1/);
-    assert.match(requestBody.messages[0].content, /"priority": "priority"/);
     assert.match(requestBody.messages[0].content, /"insights": \[/);
     assert.match(
       requestBody.messages.find((message) => message.role === "system").content,
@@ -100,7 +99,7 @@ test("advisor context includes bounded planning and workforce signals", async ()
     );
     assert.match(
       requestBody.messages.find((message) => message.role === "system").content,
-      /Respect explicit do-not or hold intent for upgrades, training, priorities, feasts, and inspection too/,
+      /Respect explicit do-not or hold intent for upgrades, training, feasts, and inspection too/,
     );
     assert.match(
       requestBody.messages.find((message) => message.role === "system").content,
@@ -108,7 +107,7 @@ test("advisor context includes bounded planning and workforce signals", async ()
     );
     assert.match(
       requestBody.messages.find((message) => message.role === "system").content,
-      /Prioritize <exact building name>/,
+      /manual worker-order action/,
     );
     assert.match(
       requestBody.messages.find((message) => message.role === "system").content,
@@ -328,7 +327,7 @@ test("local advisor keeps toolbar commands useful without a remote model", async
   assert.match(result.body.message, /build the Cottage/);
 });
 
-test("local advisor can turn a bottleneck question into a priority action", async () => {
+test("local advisor explains that workers handle assignment automatically", async () => {
   const result = await createAdvisorReply({
     messages: [{ role: "user", content: "What should I prioritize in the village?" }],
     context: {
@@ -348,7 +347,7 @@ test("local advisor can turn a bottleneck question into a priority action", asyn
 
   assert.equal(result.status, 200);
   assert.equal(result.body.local, true);
-  assert.match(result.body.message, /Prioritize Lumberyard/);
+  assert.doesNotMatch(result.body.message, /Prioritize Lumberyard/);
 });
 
 test("local advisor rescues a broad next-move question before recommending a new build", async () => {
@@ -389,7 +388,7 @@ test("local advisor rescues a broad next-move question before recommending a new
   });
 
   assert.equal(result.status, 200);
-  assert.match(result.body.message, /Prioritize Lumberyard/);
+  assert.doesNotMatch(result.body.message, /Prioritize Lumberyard/);
   assert.doesNotMatch(result.body.message, /build the Cottage/);
 });
 
@@ -424,7 +423,7 @@ test("local advisor resolves a stalled worksite before a build-next question", a
   });
 
   assert.equal(result.status, 200);
-  assert.match(result.body.message, /Prioritize Stone mine/);
+  assert.doesNotMatch(result.body.message, /Prioritize Stone mine/);
   assert.doesNotMatch(result.body.message, /build the Cottage/);
 });
 
@@ -501,7 +500,7 @@ test("local advisor names the exact worksite behind a bottleneck question", asyn
 
   assert.equal(result.status, 200);
   assert.match(result.body.message, /Inspect Stone mine/);
-  assert.match(result.body.message, /Prioritize Stone mine/);
+  assert.match(result.body.message, /Check its missing input, route, or storage/);
 });
 
 test("local advisor respects an explicit affordable building question", async () => {
@@ -688,7 +687,7 @@ test("local advisor respects negative upgrade and focus intent", async () => {
   assert.doesNotMatch(focus.body.message, /Inspect Farmhouse:/);
 });
 
-test("local advisor respects negative training and priority intent", async () => {
+test("local advisor respects negative training intent without a building-order action", async () => {
   const context = {
     resources: { wood: 100, stone: 100 },
     buildings: [
@@ -716,15 +715,9 @@ test("local advisor respects negative training and priority intent", async () =>
     messages: [{ role: "user", content: "Should I not train a Woodcutter?" }],
     context,
   });
-  const priority = await createAdvisorReply({
-    messages: [{ role: "user", content: "Should I not prioritize the Lumberyard?" }],
-    context,
-  });
 
   assert.match(training.body.message, /Hold training/);
   assert.doesNotMatch(training.body.message, /Train Woodcutter:/);
-  assert.match(priority.body.message, /Leave Lumberyard/);
-  assert.doesNotMatch(priority.body.message, /Prioritize Lumberyard:/);
 });
 
 test("local advisor can turn recent activity into a village chronicle", async () => {
@@ -777,7 +770,7 @@ test("local advisor can point to an existing worksite", async () => {
 
   assert.equal(result.status, 200);
   assert.match(result.body.message, /Inspect Lumberyard/);
-  assert.match(result.body.message, /Prioritize Lumberyard/);
+  assert.doesNotMatch(result.body.message, /Prioritize Lumberyard/);
 });
 
 test("inspector-shaped worksite prompts do not become history questions", async () => {

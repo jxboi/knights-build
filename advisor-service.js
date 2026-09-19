@@ -96,7 +96,6 @@ function cleanContext(input) {
       stock: Math.max(0, Math.floor(cleanNumber(building?.stock))),
       stockCap: Math.max(0, Math.floor(cleanNumber(building?.stockCap))),
       nextDelivery: Math.max(0, Math.min(9999, cleanNumber(building?.nextDelivery))),
-      priority: building?.priority === "priority" ? "priority" : "normal",
       upgrade: cleanText(building?.upgrade, 80) || null,
       upgradeName: cleanText(building?.upgradeName, 80) || null,
       upgradeCost: cleanResourceRecord(building?.upgradeCost),
@@ -341,33 +340,12 @@ function buildLocalAdvisorReply(context, question = "") {
   const planningQuestion = /plan|three-step/.test(lowerQuestion);
   const chapterQuestion = /chapter|challenge|reward|side goal|milestone/.test(lowerQuestion) && !planningQuestion;
   const openChapterGoal = context.goals.chapter.find((goal) => !goal.completed);
-  const priorityQuestion = lowerQuestion.includes("priorit") || lowerQuestion.includes("focus");
-  const priorityEligible = (building) =>
-    building && !["townhall", "cottage", "well", "watchtower", "school", "grainfield"].includes(building.type);
-  const namedPriorityTarget = context.buildings.find(
-    (building) =>
-      priorityEligible(building) &&
-      building.name &&
-      lowerQuestion.includes(building.name.toLowerCase()) &&
-      building.priority !== "priority" &&
-      (building.progress < 1 || building.workers > 0 || !/complete/i.test(building.status)),
-  );
-  const suggestedPriorityTarget = namedPriorityTarget || context.buildings.find(
-    (building) =>
-      priorityEligible(building) &&
-      building.name &&
-      building.priority !== "priority" &&
-      (building.progress < 1 || building.workers > 0 || /waiting|working|assigned|delivery/i.test(building.status)),
-  );
   const blockedWorksite = context.buildings.find(
     (building) =>
-      priorityEligible(building) &&
       (building.progress < 1 || building.workers > 0) &&
       /waiting|blocked|route|input|space|full|missing|delivery|ingredient/i.test(building.status),
   );
-  const workforceMove = waiting && suggestedPriorityTarget
-    ? `Prioritize ${suggestedPriorityTarget.name}, then inspect its missing input, route, or storage.`
-    : waiting
+  const workforceMove = waiting
       ? "Inspect the waiting work and clear its missing input, route, or storage."
       : trainingChoice
         ? `Train ${trainingChoice.label}, then watch the new ${trainingChoice.label.toLowerCase()} reach an open post.`
@@ -393,10 +371,6 @@ function buildLocalAdvisorReply(context, question = "") {
   const negativeUpgradeQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:upgrade|improve|enhance)\b/.test(lowerQuestion);
   const negativeTrainingQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:train|training|apprentice)\b/.test(lowerQuestion);
   const negativeFocusQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:inspect|check|visit|focus)\b/.test(lowerQuestion);
-  const negativePriorityQuestion = /\b(?:avoid|skip|don't|do not|never|not|cannot|can't)\b[^.?!]{0,55}\b(?:prioriti[sz]e|focus)\b/.test(lowerQuestion);
-  const namedPriorityBuilding = context.buildings.find(
-    (building) => building.name && lowerQuestion.includes(building.name.toLowerCase()),
-  );
   if (negativeTrainingQuestion && trainingQuestion) {
     return "Hold training for now: you asked not to commit the School to another apprentice. Keep the current opening available until the village's next need is clearer.";
   }
@@ -406,10 +380,6 @@ function buildLocalAdvisorReply(context, question = "") {
   if (negativeUpgradeQuestion && upgradeQuestion && namedUpgradeBuilding) {
     return `Hold ${namedUpgradeBuilding.name} at its current improvement: you asked not to upgrade it. Keep its materials available for another bottleneck.`;
   }
-  if (negativePriorityQuestion && priorityQuestion && namedPriorityBuilding) {
-    return `Leave ${namedPriorityBuilding.name} at normal priority for now: you asked not to move it ahead of the other worksites.`;
-  }
-
   if (resourceQuestion) {
     const held = Math.floor(Number(resources[namedResource]) || 0);
     const capacity = Math.floor(Number(context.storage?.[namedResource]) || 0);
@@ -602,32 +572,22 @@ function buildLocalAdvisorReply(context, question = "") {
   }
 
   if (focusQuestion && namedFocusTarget) {
-    const canPrioritize = priorityEligible(namedFocusTarget) &&
-      namedFocusTarget.priority !== "priority" &&
-      (Number(namedFocusTarget.progress) < 1 || Number(namedFocusTarget.workers) > 0);
     const upgradeHint = namedFocusTarget.upgradeName && !namedFocusTarget.upgrade
       ? ` An available improvement is ${namedFocusTarget.upgradeName}.`
       : "";
-    return `Inspect ${namedFocusTarget.name}: it is already in the village and its current status is ${namedFocusTarget.status || "available"}. ${namedFocusTarget.workers ? `${namedFocusTarget.workers} worker${namedFocusTarget.workers === 1 ? " is" : "s are"} assigned.` : "No worker is assigned right now."}${canPrioritize ? ` Prioritize ${namedFocusTarget.name} if you want this worksite to receive the next available hand.` : ""}${upgradeHint}`;
+    return `Inspect ${namedFocusTarget.name}: it is already in the village and its current status is ${namedFocusTarget.status || "available"}. ${namedFocusTarget.workers ? `${namedFocusTarget.workers} worker${namedFocusTarget.workers === 1 ? " is" : "s are"} assigned.` : "No worker is assigned right now."}${upgradeHint}`;
   }
   if (focusQuestion && namedFocusWorker) {
     return `Inspect ${namedFocusWorker.type}: this villager is currently ${namedFocusWorker.status || "working in the village"}. Focus ${namedFocusWorker.type} to keep an eye on the next route or work cycle.`;
   }
 
-  if (priorityQuestion && suggestedPriorityTarget) {
-    return `Prioritize ${suggestedPriorityTarget.name}: it is the live worksite most likely to unblock the village. Watch for: ${attention}`;
-  }
-
-  if (/\b(?:what now|what should i do|what should i build|what do i build|next move|next build|help me)\b/.test(lowerQuestion) && rescueSignal && suggestedPriorityTarget) {
-    return `Prioritize ${suggestedPriorityTarget.name}: it is the clearest rescue before another build. Watch for: ${attention}`;
-  }
   if (/\b(?:what now|what should i do|what should i build|what do i build|next move|next build|help me)\b/.test(lowerQuestion) && rescueSignal) {
     const bottlenecks = Number(context.blockedSites) || waiting;
     return `Hold the next build for a moment: ${bottlenecks} live bottleneck${bottlenecks === 1 ? " is" : "s are"} visible, but no single worksite is safe to name from this snapshot. Ask which worksite is blocked, then clear its route, input, or storage first.`;
   }
 
   if (blockedWorksite && /\b(?:blocked|stuck|waiting|bottleneck|slow|attention|which worksite)\b/.test(lowerQuestion)) {
-    return `Inspect ${blockedWorksite.name}: it reports ${blockedWorksite.status || "a blocked work state"}. Prioritize ${blockedWorksite.name} while you check its missing input, route, or storage.`;
+    return `Inspect ${blockedWorksite.name}: it reports ${blockedWorksite.status || "a blocked work state"}. Check its missing input, route, or storage before adding another task.`;
   }
   if (lowerQuestion.includes("wait") || lowerQuestion.includes("stuck") || lowerQuestion.includes("blocked")) {
     return `Best move: inspect the flagged worksites. Why: ${attention} ${waiting || context.blockedSites ? `${waiting || context.blockedSites} live bottleneck${(waiting || context.blockedSites) === 1 ? " is" : "s are"} visible in the village snapshot.` : "the workers do not currently report a blocked input or route."} Watch for: a missing ingredient, a full output store, or a route that needs help.`;
@@ -701,7 +661,7 @@ export async function createAdvisorReply(body, options = {}) {
     "Only recommend a build from buildOptions. Do not invent buildings, resources, mechanics, or numbers that are not in the state.",
     "Treat buildOptions.affordable as authoritative when comparing choices; never call an unavailable option affordable.",
     "If the player asks whether to avoid, skip, or hold a named building, respect that intent: explain the missing materials or tradeoff and never present that building as the best move or an action.",
-    "Respect explicit do-not or hold intent for upgrades, training, priorities, feasts, and inspection too; explain the consequence without offering the rejected action.",
+    "Respect explicit do-not or hold intent for upgrades, training, feasts, and inspection too; explain the consequence without offering the rejected action.",
     "Use buildOptions.built and buildOptions.underConstruction to avoid repetitive recommendations. Prefer an unbuilt option unless another copy clearly helps housing, storage, production, or grain-field chains.",
     "When goals.next.type matches an affordable build option, treat that next chapter as the player's current intent and explain it before offering a different option.",
     "Use goals.chapter for longer-horizon challenge questions. Prefer an incomplete chapter goal, quote its exact progress and reward, and do not claim it is complete unless its completed flag is true.",
@@ -714,7 +674,7 @@ export async function createAdvisorReply(body, options = {}) {
     "When asked when a named building will be affordable, use its exact cost, current resources, and positive trends for a cautious estimate. Say when it is already affordable or when no reliable ETA exists; never promise a future stockpile.",
     "When asked when a worksite will deliver or finish, use its nextDelivery estimate in seconds when present. Call it an estimate and mention that the output still needs to reach storage; never promise delivery if the field is absent.",
     "When asked what-if, preview, simulate, or tradeoff questions about a named building, explain its exact cost and effect from buildOptions, state whether it is affordable now, and begin with: Preview: <exact building name>. Never imply that a preview spends resources or changes the village.",
-    "When a live construction or production building is the bottleneck, you may recommend prioritizing it. Use the exact building name and the phrase Prioritize <exact building name>; only suggest buildings present in the current buildings list.",
+    "When a live construction or production building is the bottleneck, recommend inspecting it and clearing its missing input, route, or storage; do not offer a manual worker-order action.",
     "When the player should look at an existing worksite, use the exact building name and the phrase Inspect <exact building name>; only point to buildings present in the current buildings list.",
     "When an inspector question names the selected worksite, stay on that worksite: state its current status, give one safe action, and name one thing to watch before mentioning any new build.",
     "When the player should look at a villager, use the exact worker role and the phrase Inspect <exact worker role>; only point to worker roles present in the current workers list.",

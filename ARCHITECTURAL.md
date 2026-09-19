@@ -133,7 +133,7 @@ The browser save key is `hearth-v1`. A save contains:
 - the four newest activity messages;
 - camera position, orbit target, and bounded zoom;
 - player roads, non-available tree state, and cleared scenery keys;
-- building records: type, position, rotation, priority, pause/upgrade state, construction materials, progress, production cycles, worksite stock, grain planting time, Inn bread stock, and School training state.
+- building records: type, position, rotation, pause/upgrade state, construction materials, progress, production cycles, worksite stock, grain planting time, Inn bread stock, and School training state.
 
 Worker routes, assignments, generated scenery meshes, Three.js objects, and transient visual effects are reconstructed rather than serialized; persisted worker needs and trades are reapplied after the population is rebuilt.
 

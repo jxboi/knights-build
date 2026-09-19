@@ -1595,7 +1595,6 @@ export class Village {
             rotation,
             progress,
             cycles,
-            b.priority,
             b.upgrade,
             b.materials,
             b.plantedAt,
@@ -1990,7 +1989,6 @@ export class Village {
     rotation = 0,
     progress = 1,
     cycles = 0,
-    priority = "normal",
     upgrade = null,
     materials = null,
     plantedAt = null,
@@ -2012,7 +2010,6 @@ export class Village {
       m,
       sails: type === "windmill" ? m.getObjectByName?.("Sails") || null : null,
       cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
-      priority: priority === "priority" ? "priority" : "normal",
       upgrade: upgrade ? String(upgrade) : null,
       materials: normalizedConstructionMaterials(type, materials, progress),
       plantedAt:
@@ -3466,16 +3463,6 @@ export class Village {
     const message = `${CATALOG[building.type].name} cancelled. ${refundMessage}`;
     this.announce(message);
     this.notify(message);
-    this.save();
-    this.emit();
-    return true;
-  }
-  setPriority(id, priority) {
-    if (this.blockedByStorageConflict()) return false;
-    const building = this.buildings.find((candidate) => candidate.id === id);
-    if (!building || building.progress === 1 && !CATALOG[building.type]?.resource) return false;
-    building.priority = priority === "priority" ? "priority" : "normal";
-    this.announce(`${CATALOG[building.type].name} set to ${building.priority === "priority" ? "priority" : "normal"}.`);
     this.save();
     this.emit();
     return true;
@@ -5225,7 +5212,6 @@ export class Village {
       return distance;
     };
     const compareJobs = (a, b) =>
-      (a.priority === "priority" ? 0 : 1) - (b.priority === "priority" ? 0 : 1) ||
       workerLoad(a) - workerLoad(b) ||
       distanceToJob(a) - distanceToJob(b);
     const construction = this.buildings
@@ -5757,9 +5743,7 @@ export class Village {
     }
     if (shouldResolveDeadlocks) this.resolveWorkerDeadlocks();
     // With no congestion, the stable worker array already matches the final
-    // comparator tie-breaker. Avoid allocating and sorting a copy every frame;
-    // only pay for priority ordering while a worker is actually waiting or
-    // yielding around another worker.
+    // comparator tie-breaker. Avoid allocating and sorting a copy every frame.
     const movementOrder = hasMovementPressure
       ? [...this.workers].sort(
           (a, b) =>
@@ -6538,7 +6522,6 @@ export class Village {
                 ? Math.ceil((1 - nextFarmGrowth) * GRAIN_GROW_SECONDS)
                 : work.remaining,
           status,
-          priority: b.priority,
           upgrade: b.upgrade,
           fieldStage,
           ...(b.type === "inn"
@@ -6656,14 +6639,13 @@ export class Village {
         })),
       clearedScenery: [...(this.clearedScenery || [])],
       buildings: this.buildings.map(
-        ({ type, x, z, rotation, progress, cycles, priority, upgrade, materials, plantedAt, breadStock, training, stock }) => ({
+        ({ type, x, z, rotation, progress, cycles, upgrade, materials, plantedAt, breadStock, training, stock }) => ({
           type,
           x,
           z,
           rotation,
           progress,
           cycles: Math.max(0, Math.floor(finiteNumber(cycles, 0))),
-          priority: priority === "priority" ? "priority" : "normal",
           upgrade: upgrade ? String(upgrade) : null,
           materials: { ...materials },
           ...(type === "grainfield"
