@@ -123,6 +123,28 @@ h1 span {
   color: #988b73;
   margin-top: 7px;
 }
+.resource-strip {
+  display: flex;
+  align-items: center;
+  gap: 21px;
+  min-width: 0;
+}
+.resource-strip .resource {
+  min-width: 68px;
+}
+.resource-strip .resource-icon {
+  opacity: 0.9;
+}
+.resource-strip .resource strong {
+  font-size: 16px;
+}
+.resource-strip .resource small {
+  font-size: 7px;
+  letter-spacing: 1.15px;
+}
+.resource-strip .resource-trend {
+  font-size: 7px;
+}
 .resource {
   display: flex;
   gap: 11px;
@@ -248,10 +270,23 @@ h1 span {
   border-radius: 6px;
 }
 .menu-button {
-  width: 26px;
-  transition: transform 0.2s ease;
+  width: auto;
+  min-width: 52px;
+  gap: 4px;
+  padding: 0 5px;
+  color: #796b54;
+  font-size: 9px;
+  letter-spacing: 0.25px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .menu-button.open {
+  color: #695239;
+  background: #e7dcc4;
+}
+.menu-button svg {
+  transition: transform 0.2s ease;
+}
+.menu-button.open svg {
   transform: rotate(180deg);
 }
 .icon-button:hover {
@@ -314,6 +349,46 @@ h1 span {
     0 4px 16px #34351a13,
     0 0 0 1px #d7d8af66,
     0 1px 2px #34351a10;
+}
+.goals-tab {
+  width: 100%;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  color: #705f45;
+  text-align: left;
+  box-shadow: 0 3px 12px #34351a16;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.goals-tab:hover,
+.goals-tab:focus-visible {
+  border-color: #bba27a;
+  background: #f5ecd9;
+  transform: translateY(-1px);
+}
+.goals-tab > svg:first-child {
+  color: #8a7957;
+}
+.goals-tab > span {
+  color: #9a896d;
+  font-size: 8px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.goals-tab strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #6f5d42;
+  font: 500 11px/1.2 "Lora", Georgia, serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.goals-tab > svg:last-child {
+  color: #9f8c6c;
+  transform: rotate(-90deg);
 }
 .objective-heading {
   width: 100%;
@@ -386,6 +461,48 @@ h1 span {
   background: #805d3d;
   transform: translateY(-1px);
 }
+.goal-details {
+  margin: 0 -3px;
+  border-top: 1px solid #e2d8c5;
+}
+.goal-details summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  color: #8b7d65;
+  cursor: pointer;
+  font-size: 9px;
+  list-style: none;
+}
+.goal-details summary::-webkit-details-marker {
+  display: none;
+}
+.goal-details summary strong {
+  margin-left: auto;
+  color: #a19783;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.goal-details summary svg {
+  color: #a39272;
+  transition: transform 0.2s ease;
+}
+.goal-details[open] summary svg {
+  transform: rotate(180deg);
+}
+.goal-details summary:hover,
+.goal-details summary:focus-visible {
+  color: #6f6048;
+}
+.goal-details summary:focus-visible {
+  outline: 2px solid #aab681;
+  outline-offset: 3px;
+}
+.goal-details-body {
+  padding-bottom: 1px;
+}
 .goal {
   display: flex;
   align-items: center;
@@ -428,19 +545,6 @@ h1 span {
   background: #8f9d70;
   transition: width 1s cubic-bezier(0.22, 1, 0.36, 1);
   box-shadow: 0 0 8px #9baa6d88;
-}
-.objective-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 14px;
-  padding: 11px 0 13px;
-  border-top: 1px solid #dfd5c1;
-  color: #a4997e;
-}
-.objective-footer span {
-  font-size: 7px;
-  letter-spacing: 1.4px;
 }
 .settlement-status {
   display: flex;
@@ -555,6 +659,33 @@ h1 span {
   overflow: hidden;
   animation: advisor-enter 0.2s ease both;
 }
+/* On the first visit, put the invitation to ask above secondary village signals.
+   Once a conversation exists, preserve the chronological reading order. */
+.advisor-panel:not(.has-history) .advisor-lenses {
+  order: 5;
+}
+.advisor-panel:not(.has-history) .advisor-form {
+  order: 6;
+}
+.advisor-panel:not(.has-history) .advisor-prompts {
+  order: 7;
+}
+.advisor-panel:not(.has-history) .advisor-route,
+.advisor-panel:not(.has-history) .advisor-watch-log,
+.advisor-panel:not(.has-history) .advisor-saved,
+.advisor-panel:not(.has-history) .advisor-brief {
+  order: 8;
+}
+.advisor-panel:not(.has-history) .advisor-conversation-heading {
+  order: 9;
+}
+.advisor-panel:not(.has-history) .advisor-messages,
+.advisor-panel:not(.has-history) .advisor-error {
+  order: 10;
+}
+.advisor-panel:not(.has-history) .advisor-note {
+  order: 11;
+}
 .advisor-heading {
   display: flex;
   align-items: flex-start;
@@ -637,6 +768,18 @@ h1 span {
 }
 .advisor-toolbar .advisor-new svg {
   color: #a28e6f;
+}
+.advisor-toolbar .advisor-toolbar-more {
+  margin-left: auto;
+  border-style: dashed;
+  color: #9a8768;
+}
+.advisor-toolbar .advisor-toolbar-more svg {
+  color: #a28e6f;
+  transition: transform 0.15s ease;
+}
+.advisor-toolbar .advisor-toolbar-more.active svg {
+  transform: rotate(180deg);
 }
 .advisor-lenses {
   display: flex;
@@ -1223,6 +1366,10 @@ h1 span {
 .advisor-brief-list {
   display: grid;
   gap: 5px;
+  max-height: 82px;
+  overflow-y: auto;
+  scrollbar-color: #c7b999 transparent;
+  scrollbar-width: thin;
 }
 .advisor-brief-item {
   width: 100%;
@@ -1278,7 +1425,7 @@ h1 span {
 }
 .advisor-panel.has-history .advisor-messages {
   min-height: 72px;
-  max-height: 160px;
+  max-height: 126px;
 }
 .advisor-panel.has-history .advisor-prompts {
   display: none;
@@ -1290,7 +1437,8 @@ h1 span {
   margin-top: 8px;
 }
 .advisor-panel.has-history .advisor-error.local {
-  padding-block: 6px;
+  margin-bottom: 5px;
+  padding-block: 4px;
 }
 .advisor-panel.has-history .advisor-intro {
   display: none;
@@ -1300,17 +1448,17 @@ h1 span {
   padding-block: 7px;
 }
 .advisor-panel.has-history .advisor-brief-list {
-  max-height: 94px;
+  max-height: 62px;
   overflow-y: auto;
   scrollbar-color: #c7b999 transparent;
   scrollbar-width: thin;
 }
 .advisor-panel.has-history .advisor-messages {
   min-height: 64px;
-  max-height: 148px;
+  max-height: 126px;
 }
 .advisor-panel.has-history .advisor-note {
-  margin-top: 5px;
+  display: none;
 }
 .advisor-panel.has-history:has(.advisor-watch-log.is-expanded) {
   overflow-y: auto;
@@ -1357,8 +1505,8 @@ h1 span {
   background: #dfe7b6;
 }
 .advisor-messages {
-  min-height: 120px;
-  max-height: 280px;
+  min-height: 84px;
+  max-height: 220px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -2029,6 +2177,43 @@ h1 span {
   background: #f9ebd7;
   animation: selection-pip 1.6s ease-in-out infinite;
 }
+.build-more {
+  position: relative;
+  flex: 0 0 76px;
+  width: 76px;
+  height: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 5px;
+  border: 1px dashed #cdbd9e;
+  border-radius: 5px;
+  color: #8f7b5b;
+  font-size: 8px;
+  line-height: 1.2;
+  text-align: center;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.build-more:hover,
+.build-more:focus-visible,
+.build-more[aria-expanded="true"] {
+  border-color: #a8835e;
+  background: #eee3cf;
+  color: #6e573d;
+}
+.build-more-icon {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+}
 .bottom-caption {
   display: flex;
   align-items: center;
@@ -2643,6 +2828,58 @@ h1 span {
   background: #8f9d70;
   transition: width 0.4s ease;
 }
+.overview-details {
+  margin: 0 -2px 20px;
+  border-top: 1px solid #ded5c3;
+  border-bottom: 1px solid #ded5c3;
+}
+.overview-details summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 2px;
+  color: #766a54;
+  cursor: pointer;
+  list-style: none;
+}
+.overview-details summary::-webkit-details-marker {
+  display: none;
+}
+.overview-details summary::marker {
+  display: none;
+}
+.overview-details summary span {
+  font-size: 10px;
+  font-weight: 600;
+}
+.overview-details summary small {
+  color: #a09580;
+  font-size: 7px;
+  white-space: nowrap;
+}
+.overview-details summary svg {
+  color: #a28e6f;
+  transition: transform 0.15s ease;
+}
+.overview-details[open] summary svg {
+  transform: rotate(180deg);
+}
+.overview-details summary:hover span,
+.overview-details summary:focus-visible span {
+  color: #5f5038;
+}
+.overview-details summary:focus-visible {
+  outline: 2px solid #aab681;
+  outline-offset: 3px;
+}
+.overview-details-body {
+  padding: 0 2px 2px;
+}
+.overview-details-body > :first-child {
+  margin-top: 0;
+}
 .overview-activity {
   min-width: 0;
   margin: -2px 0 20px;
@@ -2700,7 +2937,7 @@ h1 span {
 }
 .economy-strip {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 5px;
   margin: -4px 0 17px;
 }
@@ -3238,6 +3475,12 @@ h1 span {
   .brand {
     min-width: 260px;
   }
+  .resource-strip {
+    gap: 12px;
+  }
+  .resource-strip .resource {
+    min-width: 56px;
+  }
   h1 {
     font-size: 22px;
   }
@@ -3305,6 +3548,15 @@ h1 span {
     letter-spacing: 1.6px;
     margin-top: 5px;
   }
+  .resource-strip {
+    gap: 7px;
+  }
+  .resource-strip .resource {
+    min-width: 50px;
+  }
+  .resource-strip .resource strong {
+    font-size: 14px;
+  }
   .resource {
     min-width: 58px;
     gap: 5px;
@@ -3365,6 +3617,18 @@ h1 span {
     left: max(17px, env(safe-area-inset-left));
     right: auto;
     bottom: calc(6px + env(safe-area-inset-bottom));
+  }
+  /* Keep the side-opening rail inside a short landscape viewport. The base
+     center alignment is comfortable on desktop but leaves its lower edge
+     hanging below compact tablet screens. */
+  .build-palette {
+    top: auto;
+    bottom: -6px;
+    transform: none;
+    transform-origin: left bottom;
+  }
+  .build-palette.is-collapsed {
+    transform: translateY(6px) scaleX(0.94);
   }
   .bottom-right {
     right: max(17px, env(safe-area-inset-right));
@@ -3436,44 +3700,45 @@ h1 span {
     letter-spacing: 1.8px;
     margin-top: 4px;
   }
-  .resources {
+  .resource-strip {
     grid-row: 2;
     grid-column: 1/4;
-    flex-direction: column;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: center;
+    gap: 7px;
     border-top: 1px solid #e4dbc7;
     padding-top: 9px;
     margin-top: 9px;
-    gap: 8px;
   }
-  .resource {
+  .resource-strip .resource {
     min-width: 0;
     gap: 4px;
   }
-  .resource small {
+  .resource-strip .resource small {
     font-size: 6px;
     letter-spacing: 0.15px;
     margin-bottom: 0;
     white-space: nowrap;
   }
-  .resource strong {
+  .resource-strip .resource strong {
     font-size: 12px;
     white-space: nowrap;
   }
-  .resource em {
+  .resource-strip .resource em {
     font-size: 9px;
   }
-  .resource-icon svg {
+  .resource-strip .resource-icon svg {
     width: 18px;
   }
-  .resource > div:last-child {
+  .resource-strip .resource > div:last-child {
     /* Keep short-value cards just wide enough for their labels. The previous
        40px floor made Wheat and Villagers' icon/value group wider than its
        flex slot at 390px, clipping the right edge even though the page itself
        did not overflow. */
     min-width: 22px;
   }
-  .resource-trend {
+  .resource-strip .resource-trend {
     display: none;
   }
   .day {
@@ -3492,7 +3757,12 @@ h1 span {
   }
   .menu-button {
     width: 17px;
+    min-width: 17px;
     height: 25px;
+    padding: 0;
+  }
+  .menu-button-label {
+    display: none;
   }
   .left-stack {
     top: calc(119px + env(safe-area-inset-top));
@@ -3534,14 +3804,6 @@ h1 span {
     width: 12px;
     height: 12px;
   }
-  .objective-footer span {
-    font-size: 6px;
-    letter-spacing: 0.6px;
-  }
-  .objective-footer {
-    padding: 8px 0 10px;
-    margin-top: 10px;
-  }
   .goal-progress {
     margin-top: 12px;
   }
@@ -3566,10 +3828,27 @@ h1 span {
     width: calc(100% - 24px);
   }
   .build-palette {
+    top: auto;
+    bottom: calc(100% + 10px);
     max-width: calc(100vw - 90px);
     padding: 5px;
     gap: 3px;
     border-radius: 6px;
+    transform: none;
+    transform-origin: left bottom;
+  }
+  /* Keep the escape hatch to additional tools visible while the starter tools
+     continue to scroll underneath it. Without this, a phone user can open
+     the drawer and reasonably assume the first few tools are the whole game. */
+  .build-more {
+    position: sticky;
+    right: 0;
+    z-index: 3;
+    background: #f9f3e5;
+    box-shadow: -8px 0 8px #f9f3e5;
+  }
+  .build-palette.is-collapsed {
+    transform: translateY(6px) scaleX(0.94);
   }
   .building-name {
     font-size: 7px;
@@ -3776,25 +4055,25 @@ h1 span {
   }
 }
 @media (max-width: 360px) {
-  .resource strong {
+  .resource-strip .resource strong {
     font-size: 10px;
     letter-spacing: -0.15px;
     white-space: nowrap;
   }
-  .resource {
+  .resource-strip .resource {
     gap: 2px;
   }
-  .resource small {
+  .resource-strip .resource small {
     font-size: 5px;
     letter-spacing: 0.1px;
   }
-  .resource em {
+  .resource-strip .resource em {
     font-size: 8px;
   }
-  .resource-icon svg {
+  .resource-strip .resource-icon svg {
     width: 16px;
   }
-  .resource > div:last-child {
+  .resource-strip .resource > div:last-child {
     min-width: 0;
   }
   .brand {
@@ -3849,10 +4128,12 @@ h1 span {
     bottom: calc(126px + env(safe-area-inset-bottom));
   }
   /* This side sits near the right edge, so the carousel unrolls toward the
-     screen's center instead of running off the right edge. */
+     screen's center instead of running off the right edge. Keep its right
+     edge aligned with the launcher so short phones do not clip the first
+     starter tool. */
   .build-palette {
     left: auto;
-    right: calc(100% + 10px);
+    right: 0;
     transform-origin: right bottom;
   }
   .build-palette.is-collapsed {
@@ -3888,6 +4169,19 @@ h1 span {
   }
   .advisor-note {
     margin-top: 6px;
+  }
+}
+@media (max-width: 360px) and (max-height: 620px) {
+  /* Give the shortest phones nearly the full width while the drawer is open;
+     the launcher still keeps the collapsed state out of the way. */
+  .build-palette {
+    right: -62px;
+    max-width: calc(100vw - 18px);
+  }
+  .game-shell:has(.build-palette.is-open) .objectives,
+  .game-shell:has(.build-palette.is-open) .goals-tab {
+    visibility: hidden;
+    pointer-events: none;
   }
 }
 @media (max-width: 760px) and (max-height: 420px) {
@@ -3933,6 +4227,13 @@ h1 span {
 .game-shell:has(.advisor-panel) .build-tooltip {
   visibility: hidden;
 }
+.game-shell:has(.world.is-building) .objectives,
+.game-shell:has(.inspector) .objectives,
+.game-shell:has(.world.is-building) .goals-tab,
+.game-shell:has(.inspector) .goals-tab {
+  visibility: hidden;
+  pointer-events: none;
+}
 @media (max-width: 760px) {
   .toast {
     top: 160px;
@@ -3946,7 +4247,6 @@ h1 span {
     font-size: 7px;
     line-height: 1.25;
   }
-  .game-shell:has(.inspector) .objectives,
   .game-shell:has(.inspector) .settlement-status {
     visibility: hidden;
   }

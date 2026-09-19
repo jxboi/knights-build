@@ -358,7 +358,7 @@ function buildAdvisorGrounding(content, context = {}) {
 const DEFAULT_ADVISOR_MESSAGE = {
   role: "assistant",
   content:
-    "Welcome, steward. I can read the state of your settlement and suggest what to do next.",
+    "Welcome. I can read the state of your settlement and suggest what to do next.",
 };
 const ADVISOR_STORAGE_PREFIX = "hearth-advisor-v1:";
 const ADVISOR_COMMANDS = Object.freeze({
@@ -373,19 +373,19 @@ const ADVISOR_COMMANDS = Object.freeze({
 });
 const ADVISOR_LENSES = Object.freeze({
   steward: {
-    label: "Steward",
+    label: "Guide",
     icon: Compass,
     instruction:
       "Answer as a calm village steward. Put the most useful next action first, explain the tradeoff, and keep the advice practical.",
   },
   quartermaster: {
-    label: "Quartermaster",
+    label: "Resources",
     icon: Gauge,
     instruction:
       "Answer as a sharp quartermaster. Think in bottlenecks, exact resources, storage, worker time, and opportunity cost. Be concise and decisive.",
   },
   chronicler: {
-    label: "Chronicler",
+    label: "Story",
     icon: Sparkles,
     instruction:
       "Answer as a playful village chronicler. Keep the advice actionable, but add a little story, character, or memorable phrase grounded in the current village.",
@@ -561,7 +561,7 @@ function writeAdvisorPulse(villageName, snapshot) {
 function buildLocalAdvisorPulseReply(snapshot) {
   const previous = snapshot?.previousPulse;
   if (!previous || typeof previous !== "object") {
-    return "Pulse: this is the Keeper's first check-in for this village. Ask again later and I will tell you what changed.";
+    return "Pulse: this is the advisor's first check-in for this village. Ask again later and I will tell you what changed.";
   }
   const changes = [];
   const previousResources = previous.resources || {};
@@ -938,9 +938,12 @@ function buildAdvisorBrief(snapshot, nextGoal) {
       .map(([resource, amount]) => `${Math.max(0, Math.ceil(amount - Number(resources[resource] || 0)))} ${resource}`);
     items.push({
       title: nextGoal.label,
-      detail: missing.length
-        ? `Gather ${missing.join(" and ")} before placing it.`
-        : "The materials are ready. Find a clear patch and make it the next chapter.",
+      detail:
+        nextGoal.action === "focus"
+          ? "Keep the existing lumberyard moving until the milestone fills."
+          : missing.length
+            ? `Gather ${missing.join(" and ")} before placing it.`
+            : "The materials are ready. Find a clear patch and make it the next chapter.",
       question: "How close am I to my next chapter, and what should I do first?",
       icon: Sparkles,
       tone: "goal",
@@ -1460,17 +1463,18 @@ const AdvisorResourcePulse = React.memo(function AdvisorResourcePulse({
   resources = {},
   storage = {},
   trends = {},
+  visibleResources = ADVISOR_RESOURCE_KEYS,
   onAsk,
   disabled = false,
 }) {
   return (
-    <section className="advisor-resource-pulse" aria-label="Advisor resource pulse">
+    <section className="advisor-resource-pulse" aria-label="Advisor resource check">
       <div className="advisor-resource-pulse-heading">
-        <span>RESOURCE PULSE</span>
-        <em>tap a store for a reading</em>
+        <span>RESOURCE CHECK</span>
+        <em>ask about a resource</em>
       </div>
       <div className="advisor-resource-pulse-grid">
-        {ADVISOR_RESOURCE_KEYS.map((resource) => {
+        {visibleResources.map((resource) => {
           const Icon = resourceIcons[resource] || Package;
           const held = Math.max(0, Math.floor(Number(resources[resource]) || 0));
           const cap = Math.max(0, Math.floor(Number(storage[resource]) || 0));
@@ -1507,6 +1511,9 @@ const AdvisorResourcePulse = React.memo(function AdvisorResourcePulse({
   );
 });
 const paletteResourceKeys = ["wood", "stone", "food", "wheat", "wine"];
+const STARTER_TOOL_TYPES = ["house", "farm", "grainfield", "lumberyard", "mine", "road"];
+const goalsDismissedStorageKey = (villageName) =>
+  `hearth-ui-goals-dismissed-v1:${String(villageName || "Willowbrook")}`;
 const BuildPalette = React.memo(function BuildPalette({
   resources,
   thumbs,
@@ -1517,15 +1524,19 @@ const BuildPalette = React.memo(function BuildPalette({
   onChoose,
   onHover,
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const visibleEntries = showAll
+    ? CATALOG_ENTRIES
+    : CATALOG_ENTRIES.filter(({ type }) => STARTER_TOOL_TYPES.includes(type) || type === selected);
   return (
     <nav
       id="building-palette"
       className={`build-palette parchment ${paletteOpen ? "is-open" : "is-collapsed"}`}
       aria-hidden={!paletteOpen}
       inert={!paletteOpen}
-      aria-label="Village building and path tools. On small screens, scroll horizontally to see every tool."
+      aria-label="Village building and path tools"
     >
-      {CATALOG_ENTRIES.map(({ type, catalog: c, costs, costSummary }) => {
+      {visibleEntries.map(({ type, catalog: c, costs, costSummary }) => {
         const missing = costs
           .filter(([resource, amount]) => (resources[resource] || 0) < amount)
           .map(
@@ -1566,6 +1577,17 @@ const BuildPalette = React.memo(function BuildPalette({
           </button>
         );
       })}
+      <button
+        type="button"
+        className="build-more"
+        aria-expanded={showAll}
+        aria-label={showAll ? "Show starter building tools" : "Show more building tools"}
+        onClick={() => setShowAll((open) => !open)}
+        disabled={!loaded || !!error}
+      >
+        <span className="build-more-icon">{showAll ? "−" : "+"}</span>
+        <span>{showAll ? "Starter tools" : "More buildings"}</span>
+      </button>
     </nav>
   );
 }, (previous, next) =>
@@ -1595,7 +1617,11 @@ function App() {
     advisorSpeechRef = useRef(),
     importFileRef = useRef(),
     advisorAbortRef = useRef(),
-    previousSpeed = useRef(1);
+    previousSpeed = useRef(1),
+    goalsTabRef = useRef(),
+    paletteOpenRef = useRef(true),
+    paletteBeforeDetailRef = useRef(true),
+    detailOpenRef = useRef(false);
   const [state, setState] = useState({
     name: "Willowbrook",
     resources: { wood: 140, stone: 95, food: 80, wheat: 0, wine: 0 },
@@ -1636,7 +1662,7 @@ function App() {
     [detail, setDetail] = useState(null),
     [toast, setToast] = useState(null),
     [help, setHelp] = useState(false),
-    [goals, setGoals] = useState(false),
+    [goals, setGoals] = useState(true),
     [grid, setGrid] = useState(false),
     [paletteOpen, setPaletteOpen] = useState(() => {
       if (typeof window === "undefined") return true;
@@ -1657,6 +1683,7 @@ function App() {
     [advisorWatchEvents, setAdvisorWatchEvents] = useState(() => readAdvisorWatchEvents("Willowbrook")),
     [advisorWatchLogOpen, setAdvisorWatchLogOpen] = useState(false),
     [advisorSavedOpen, setAdvisorSavedOpen] = useState(false),
+    [advisorToolsOpen, setAdvisorToolsOpen] = useState(false),
     [advisorCopied, setAdvisorCopied] = useState(false),
     [advisorSpeaking, setAdvisorSpeaking] = useState(false),
     [advisorLoading, setAdvisorLoading] = useState(false),
@@ -1664,9 +1691,16 @@ function App() {
     [advisorAtLatest, setAdvisorAtLatest] = useState(true);
   const [importOpen, setImportOpen] = useState(false),
     [importPreview, setImportPreview] = useState(null);
+  paletteOpenRef.current = paletteOpen;
+  detailOpenRef.current = Boolean(detail);
   const toastTimer = useRef();
-  const goalSnapshot = useRef({ ready: false, complete: false });
-  const goalsOpenRef = useRef(false);
+  const goalSnapshot = useRef({
+    ready: false,
+    complete: false,
+    builtHouse: false,
+    builtFarm: false,
+    gatheredTimber: false,
+  });
   const modalReturnRef = useRef();
   const placementFocusReturn = useRef(null);
   const inspectorFocusReturn = useRef(null);
@@ -1680,6 +1714,7 @@ function App() {
   const openModal = (setter, returnTarget) => {
     modalReturnRef.current = returnTarget || document.activeElement;
     setAdvisorOpen(false);
+    setAdvisorToolsOpen(false);
     setter(true);
   };
   const closeMenu = (restoreFocus = false) => {
@@ -1688,21 +1723,36 @@ function App() {
     if (restoreFocus)
       requestAnimationFrame(() => menuButtonRef.current?.focus());
   };
-  const showGoals = () => {
+  const openGoals = () => {
     setGoals(true);
+    try {
+      window.localStorage.removeItem(goalsDismissedStorageKey(state.name));
+    } catch {
+      // The menu can always reopen the goals card without storage.
+    }
+  };
+  const showGoals = () => {
+    openGoals();
     closeMenu();
     requestAnimationFrame(() => goalsButtonRef.current?.focus());
   };
   useEffect(() => {
-    if (!goals && goalsOpenRef.current)
-      window.setTimeout(() => document.querySelector(".menu-button")?.focus(), 0);
-    goalsOpenRef.current = goals;
-  }, [goals]);
+    if (!loaded) return;
+    try {
+      setGoals(window.localStorage.getItem(goalsDismissedStorageKey(state.name)) !== "1");
+    } catch {
+      setGoals(true);
+    }
+  }, [loaded, state.name]);
   const closeDetail = (restoreFocus = false) => {
     const returnTarget = inspectorFocusReturn.current;
     inspectorFocusReturn.current = null;
+    const reopenPalette = paletteBeforeDetailRef.current;
+    paletteBeforeDetailRef.current = true;
+    detailOpenRef.current = false;
     game.current?.clearHighlight();
     setDetail(null);
+    setPaletteOpen(reopenPalette);
     if (restoreFocus) {
       requestAnimationFrame(() => {
         const target =
@@ -1724,10 +1774,18 @@ function App() {
           ? active
           : null;
       // The inspector panel sits over the same bottom-left corner as the
-      // carousel, so tuck it away while a building or worker is inspected.
+      // carousel, so tuck it away while a building or worker is inspected,
+      // then restore the player's previous drawer choice when it closes.
+      if (!detailOpenRef.current) paletteBeforeDetailRef.current = paletteOpenRef.current;
+      detailOpenRef.current = true;
       setPaletteOpen(false);
     } else {
       inspectorFocusReturn.current = null;
+      if (detailOpenRef.current) {
+        setPaletteOpen(paletteBeforeDetailRef.current);
+        paletteBeforeDetailRef.current = true;
+      }
+      detailOpenRef.current = false;
     }
     setDetail(nextDetail);
   };
@@ -1736,6 +1794,7 @@ function App() {
     setBuildDetailsOpen(false);
     setHover(null);
     setGrid(false);
+    setPaletteOpen(true);
   };
   useEffect(() => {
     const healthCheck = new URLSearchParams(window.location.search).has("healthcheck");
@@ -1852,6 +1911,7 @@ function App() {
     setHover(null);
     setDetail(null);
     setAdvisorOpen(false);
+    setAdvisorToolsOpen(false);
     game.current.clearHighlight();
     game.current.select(next);
     game.current.emit();
@@ -1880,6 +1940,7 @@ function App() {
     if (!preserveHighlight) game.current?.clearHighlight();
     game.current?.select(null);
     setGrid(false);
+    setPaletteOpen(true);
   };
   const cancel = (restoreFocus = false) => {
     const returnTarget = placementFocusReturn.current;
@@ -1917,6 +1978,7 @@ function App() {
           setRename(false);
           setOverview(false);
           setAdvisorOpen(false);
+          setAdvisorToolsOpen(false);
           setImportOpen(false);
           setImportPreview(null);
           return;
@@ -1927,6 +1989,11 @@ function App() {
         }
         if (goals) {
           setGoals(false);
+          try {
+            window.localStorage.setItem(goalsDismissedStorageKey(state.name), "1");
+          } catch {
+            // Keyboard dismissal still works when storage is unavailable.
+          }
           window.setTimeout(() => document.querySelector(".menu-button")?.focus(), 0);
           return;
         }
@@ -2119,12 +2186,20 @@ function App() {
       ? "Click or drag to lay a path · Esc to cancel"
       : grainPlacement
         ? "Click or drag beside a farmhouse to plant grain · Esc to cancel"
-      : pathRemoval
-        ? "Choose one of your path tiles to remove · Esc to cancel"
-        : "Choose a clear patch of land to build");
+        : pathRemoval
+          ? "Choose one of your path tiles to remove · Esc to cancel"
+          : "Choose a clear patch of land to build");
+  const touchLayout =
+    typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
+  const displayedPlacementHint = touchLayout
+    ? placementHint
+        .replace(/^Click/, "Tap")
+        .replace(/ · R to rotate/g, "")
+        .replace(/ · Esc to cancel/g, "")
+    : placementHint;
   const activeEffect =
     activeType === "house"
-      ? `+2 housing capacity · houses ${Math.min(2, Math.max(0, 24 - state.population))} workers (simulation limit 24)`
+      ? "+2 room in the village · makes space for new villagers"
       : active?.effect;
   const builtHouse = completedPlayerMilestone(
     state.buildings,
@@ -2146,18 +2221,36 @@ function App() {
             type: "lumberyard",
             label: "Gather 100 timber",
             detail: "Keep a lumberyard moving so the village can expand.",
+            action: "focus",
           }
         : null
       : {
           type: "farm",
-          label: "Establish a farm",
+          label: "Build a new farmhouse",
           detail: "A steady food supply keeps every new home thriving.",
         }
     : {
         type: "house",
-        label: "Build a cottage",
+        label: "Build a new cottage",
         detail: "Make room for two more workers at the edge of town.",
       };
+  const nextGoalBuilding =
+    nextGoal?.action === "focus"
+      ? state.buildings.find(
+          (building) => building.type === nextGoal.type && Number(building.progress) >= 1,
+        )
+      : null;
+  const chooseNextGoal = (event) => {
+    if (
+      nextGoal?.action === "focus" &&
+      nextGoalBuilding &&
+      game.current?.focusBuilding(nextGoalBuilding.id)
+    ) {
+      notify(`Showing ${CATALOG[nextGoal.type]?.name || "the worksite"}.`);
+      return;
+    }
+    if (nextGoal) choose(nextGoal.type, event.currentTarget);
+  };
   const advisorBrief = useMemo(
     () => buildAdvisorBrief(state, nextGoal),
     [state, nextGoal],
@@ -2165,8 +2258,8 @@ function App() {
   const advisorPrompts = [
     {
       title: "Catch me up",
-      detail: "See what changed since your last Keeper check.",
-      question: "What changed since my last Keeper check?",
+      detail: "See what changed since your last advisor check.",
+      question: "What changed since my last advisor check?",
       icon: History,
     },
     ...(advisorBrief.items.length ? advisorBrief.items : advisorPromptFallbacks),
@@ -2214,7 +2307,7 @@ function App() {
   const pinAdvisorRoute = (content) => {
     const route = buildAdvisorRoute(content);
     if (!route) {
-      notify("That Keeper note does not contain a three-step route yet.");
+      notify("That advisor note does not contain a three-step route yet.");
       return;
     }
     const pinnedRoute = {
@@ -2263,7 +2356,7 @@ function App() {
         textarea.remove();
       }
       setAdvisorCopied(true);
-      notify("Keeper advice copied to your clipboard.");
+      notify("Advisor note copied to your clipboard.");
       window.setTimeout(() => setAdvisorCopied(false), 1800);
     } catch {
       notify("The browser did not allow copying this advice.");
@@ -2271,7 +2364,7 @@ function App() {
   };
   const speakAdvisorAnswer = (content) => {
     if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
-      notify("This browser does not offer spoken Keeper notes.");
+      notify("This browser does not offer spoken advisor notes.");
       return;
     }
     if (advisorSpeaking) {
@@ -2304,7 +2397,7 @@ function App() {
     const syncHiddenSurfaces = () => {
       document
         .querySelectorAll(
-          ".game-shell .objectives, .game-shell .advisor-panel, .game-shell .inspector, .game-shell .build-tooltip",
+          ".game-shell .objectives, .game-shell .goals-tab, .game-shell .advisor-panel, .game-shell .inspector, .game-shell .build-tooltip",
         )
         .forEach((element) => {
           const styles = window.getComputedStyle(element);
@@ -2349,7 +2442,7 @@ function App() {
       window.removeEventListener("resize", syncHiddenSurfaces);
       observer?.disconnect();
     };
-  }, [advisorOpen, buildDetailsOpen, detail, menu, modalOpen, selected]);
+  }, [advisorOpen, buildDetailsOpen, detail, menu, modalOpen, paletteOpen, selected]);
   const availableFood = Math.max(
     0,
     Number.isFinite(Number(state.resources.food))
@@ -2361,6 +2454,24 @@ function App() {
   const showWine =
     (state.resources.wine || 0) > 0 ||
     state.buildings.some((building) => building.type === "vineyard");
+  const showWheat =
+    (state.resources.wheat || 0) > 0 ||
+    (state.trends.wheat || 0) !== 0 ||
+    state.buildings.some((building) => {
+      const catalog = CATALOG[building.type];
+      return catalog?.resource === "wheat" || catalog?.inputResource === "wheat";
+    });
+  const advisorPulseResources = ADVISOR_RESOURCE_KEYS.filter((resource) => {
+    if (resource === "wood" || resource === "stone" || resource === "food") return true;
+    return (
+      (state.resources[resource] || 0) > 0 ||
+      (state.trends[resource] || 0) !== 0 ||
+      state.buildings.some((building) => {
+        const catalog = CATALOG[building.type];
+        return catalog?.resource === resource || catalog?.inputResource === resource;
+      })
+    );
+  });
   const overviewStats = useMemo(() => {
     if (!overview) return null;
     let completedBuildings = 0;
@@ -2383,24 +2494,18 @@ function App() {
       counts[label] = (counts[label] || 0) + 1;
       return counts;
     }, {});
-    const savedPathCount = Number(state.created?.road);
-    const pathCount = Number.isFinite(savedPathCount)
-      ? Math.max(0, Math.floor(savedPathCount))
-      : 0;
     return {
       completedBuildings,
       activeJobs,
       deliveries,
       workerTypeCounts,
-      pathCount,
       activeWorksites,
     };
-  }, [overview, state.buildings, state.created, state.workers]);
+  }, [overview, state.buildings, state.workers]);
   const completedBuildings = overviewStats?.completedBuildings || 0;
   const activeJobs = overviewStats?.activeJobs || 0;
   const deliveries = overviewStats?.deliveries || 0;
   const workerTypeCounts = overviewStats?.workerTypeCounts || {};
-  const pathCount = overviewStats?.pathCount || 0;
   const activeWorksites = overviewStats?.activeWorksites || [];
   const recentActivity = Array.isArray(state.activityLog)
     ? state.activityLog.slice(0, 4)
@@ -2570,7 +2675,7 @@ function App() {
     try {
       window.localStorage.setItem(advisorWatchStorageKey(state.name), advisorWatch ? "on" : "off");
     } catch {
-      // The watch preference is optional; the field notes still work without storage.
+      // The watch preference is optional; village signals still work without storage.
     }
   }, [advisorWatch, loaded, state.name]);
   useEffect(() => {
@@ -2599,7 +2704,7 @@ function App() {
       },
       ...current.filter((event) => event.title !== newest.title),
     ].slice(0, 4));
-    notify(`Keeper's watch: ${newest.title}.`);
+    notify(`Advisor watch: ${newest.title}.`);
   }, [advisorBrief, advisorWatch, loaded, notify, period, state.day]);
   useEffect(() => {
     if (!loaded || !advisorRoute) return;
@@ -2634,7 +2739,7 @@ function App() {
     setAdvisorRoute(nextRoute);
     writeAdvisorRoute(state.name, nextRoute, state.day);
     if (nextSteps.every((step) => step.done)) {
-      notify("Pinned route complete. The village has carried out the Keeper's plan.");
+      notify("Pinned route complete. The village has carried out the advisor's plan.");
     }
   }, [advisorRoute, loaded, notify, state.buildings, state.day, state.name]);
   useEffect(
@@ -2676,17 +2781,37 @@ function App() {
     : "Browser storage is unavailable; changes may not persist.";
   useEffect(() => {
     if (!loaded) return;
-    if (goalSnapshot.current.ready && allGoals && !goalSnapshot.current.complete) {
+    const previous = goalSnapshot.current;
+    if (previous.ready && allGoals && !previous.complete) {
       notify(`${state.name} is flourishing. All three goals are complete!`);
+    } else if (previous.ready && builtHouse && !previous.builtHouse) {
+      notify("Cottage complete — your village has more room to grow.");
+    } else if (previous.ready && builtFarm && !previous.builtFarm) {
+      notify("Farmhouse complete — a steadier food supply is on its way.");
+    } else if (previous.ready && state.gathered >= 100 && !previous.gatheredTimber) {
+      notify("100 timber gathered — the village is ready for its next build.");
     }
-    goalSnapshot.current = { ready: true, complete: allGoals };
-  }, [allGoals, loaded, state.name]);
+    goalSnapshot.current = {
+      ready: true,
+      complete: allGoals,
+      builtHouse,
+      builtFarm,
+      gatheredTimber: state.gathered >= 100,
+    };
+  }, [allGoals, builtFarm, builtHouse, loaded, state.gathered, state.name]);
   const saveName = (event) => {
     event.preventDefault();
     const next = nameDraft.trim().replace(/\s+/g, " ").slice(0, 24);
     if (!next) {
       notify("Give your village a name.");
       return;
+    }
+    let goalsWereDismissed = false;
+    try {
+      goalsWereDismissed =
+        window.localStorage.getItem(goalsDismissedStorageKey(state.name)) === "1";
+    } catch {
+      // The village name can still change when browser storage is unavailable.
     }
     if (game.current?.storageConflict) {
       setRename(false);
@@ -2698,6 +2823,13 @@ function App() {
       setRename(false);
       notify("Reload this tab before changing the village name.");
       return;
+    }
+    try {
+      const nextGoalsKey = goalsDismissedStorageKey(savedName);
+      if (goalsWereDismissed) window.localStorage.setItem(nextGoalsKey, "1");
+      else window.localStorage.removeItem(nextGoalsKey);
+    } catch {
+      // The goals card remains usable when its convenience preference cannot persist.
     }
     setRename(false);
     notify(`${savedName} is ready for a new chapter.`);
@@ -2769,14 +2901,14 @@ function App() {
   };
   const applyVillageImport = () => {
     if (game.current?.storageConflict) {
-      notify("Reload this tab before importing a village backup.");
+      notify("Reload this tab before restoring the village backup.");
       return;
     }
     if (!importPreview || !game.current?.importVillage(importPreview.raw)) {
       notify(
         game.current?.storageConflict
-          ? "This tab is out of date. Reload to import the village backup."
-          : "This village could not be imported.",
+          ? "This tab is out of date. Reload to restore the village backup."
+          : "This village could not be restored.",
       );
       return;
     }
@@ -2858,7 +2990,7 @@ function App() {
       if (local) {
         setAdvisorError(
           data.notice ||
-            "The remote Keeper is unavailable. Showing a local field note from your current village state.",
+            "The advisor service is optional. Showing a local field note from your current village state.",
         );
       }
     } catch (requestError) {
@@ -2896,7 +3028,7 @@ function App() {
         ].slice(-12),
       );
       setAdvisorInput("");
-      setAdvisorError("The remote Keeper is unavailable. Showing a local field note from your current village state.");
+      setAdvisorError("The advisor service is optional. Showing a local field note from your current village state.");
     } finally {
       if (advisorAbortRef.current === controller) {
         advisorAbortRef.current = null;
@@ -2911,7 +3043,7 @@ function App() {
     const missing = missingAdvisorBuildCosts(type, state.resources)
       .map(([resource, amount]) => `${amount} ${resource}`);
     if (missing.length) {
-      notify(`The Keeper suggested ${entry.catalog.name}, but you still need ${missing.join(" and ")}.`);
+      notify(`The advisor suggested ${entry.catalog.name}, but you still need ${missing.join(" and ")}.`);
       return;
     }
     choose(type);
@@ -2983,6 +3115,7 @@ function App() {
       return;
     }
     setAdvisorOpen(false);
+    setAdvisorToolsOpen(false);
     notify(`Showing ${name}.`);
   };
   const focusAdvisorWorker = (workerType) => {
@@ -2992,6 +3125,7 @@ function App() {
       return;
     }
     setAdvisorOpen(false);
+    setAdvisorToolsOpen(false);
     notify(`Showing your ${workerType.toLowerCase()}.`);
   };
   const prepareAdvisorTraining = (workerTypeLabel) => {
@@ -3023,9 +3157,9 @@ function App() {
     setAdvisorLoading(false);
     setAdvisorInput(latestUserMessage?.content || "");
     setAdvisorError("Request stopped. Edit the question or send it again when you are ready.");
-    requestAnimationFrame(() => advisorInputRef.current?.focus());
+    requestAnimationFrame(() => advisorInputRef.current?.focus({ preventScroll: true }));
   };
-  const askKeeperAboutFocus = () => {
+  const askAdvisorAboutFocus = () => {
     const subject = detail?.type === "worker"
       ? `${inspectedWorker?.workerTypeLabel || "villager"} currently ${inspectedWorkerStatus.toLowerCase()}`
       : inspected
@@ -3060,13 +3194,13 @@ function App() {
     const next = !advisorWatch;
     setAdvisorWatch(next);
     if (!next) advisorWatchSignatureRef.current = "";
-    notify(next ? "Keeper's watch is on." : "Keeper's watch is quiet.");
+      notify(next ? "Advisor watch is on." : "Advisor watch is quiet.");
   };
   const clearAdvisorWatchEvents = () => {
     setAdvisorWatchLogOpen(false);
     setAdvisorWatchEvents([]);
     writeAdvisorWatchEvents(state.name, []);
-    notify("Keeper's watch log cleared.");
+    notify("Advisor watch log cleared.");
   };
   const toggleAdvisorWatchLog = () => {
     const next = !advisorWatchLogOpen;
@@ -3088,6 +3222,7 @@ function App() {
   };
   const closeAdvisor = () => {
     setAdvisorOpen(false);
+    setAdvisorToolsOpen(false);
     requestAnimationFrame(() => advisorButtonRef.current?.focus());
   };
   const toggleAdvisor = () => {
@@ -3105,7 +3240,7 @@ function App() {
   }, [detail, selected]);
   useEffect(() => {
     if (!advisorOpen) return;
-    requestAnimationFrame(() => advisorInputRef.current?.focus());
+    requestAnimationFrame(() => advisorInputRef.current?.focus({ preventScroll: true }));
   }, [advisorOpen]);
   useEffect(() => {
     if (!advisorOpen || !advisorMessagesRef.current) return;
@@ -3164,6 +3299,24 @@ function App() {
             <p>A LITTLE WORLD OF YOUR OWN</p>
           </div>
         </div>
+        <div className="resource-strip" aria-label="Village resources">
+          <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} storage={state.storage.wood} />
+          <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} storage={state.storage.stone} />
+          <Resource type="food" value={state.resources.food} trend={state.trends.food} storage={state.storage.food} />
+          <div
+            className={`resource population ${state.population >= state.capacity ? "at-capacity" : ""}`}
+          title={`${formatCount(state.population)} of ${formatCount(state.capacity)} villagers${state.population >= state.capacity ? ". Build a new cottage for more room." : ""}`}
+          >
+            <span className="resource-icon"><Users size={23} strokeWidth={1.7} /></span>
+            <div>
+              <small>villagers</small>
+              <strong className="resource-value">{formatCount(state.population)}<em> / {formatCount(state.capacity)}</em></strong>
+              {state.population >= state.capacity && (
+                <span className="resource-trend negative">· room full</span>
+              )}
+            </div>
+          </div>
+        </div>
         <div className="day">
           <DayIcon
             className={`day-icon ${period.toLowerCase()}`}
@@ -3194,10 +3347,22 @@ function App() {
             }
           }}
         >
+          <span className="menu-button-label">Menu</span>
           <ChevronDown size={19} />
         </button>
       </header>
       <section className="left-stack">
+        <div className="village-heading">
+          <span>YOUR SETTLEMENT</span>
+          <h2>{state.name}</h2>
+          <p>
+            {allGoals
+              ? "Your village is ready to grow."
+              : goals
+                ? "Start with the next step below."
+                : "Your village is growing. Choose a build below."}
+          </p>
+        </div>
         {goals && (
           <div className={`objectives parchment ${allGoals ? "complete" : ""}`}>
             <button
@@ -3206,74 +3371,100 @@ function App() {
               className="objective-heading"
               aria-controls="settlement-goals"
               aria-expanded={goals}
-              onClick={() => setGoals(!goals)}
+              onClick={(event) => {
+                const next = !goals;
+                setGoals(next);
+                if (!next) {
+                  try {
+                    window.localStorage.setItem(goalsDismissedStorageKey(state.name), "1");
+                  } catch {
+                    // The goals card is still dismissible when storage is unavailable.
+                  }
+                  if (event.detail === 0) {
+                    window.setTimeout(() => goalsTabRef.current?.focus(), 0);
+                  }
+                }
+              }}
             >
               <span>
-                <Leaf size={17} /> A place to call home
+                <Leaf size={17} /> Getting started
               </span>
               <ChevronDown size={16} className={goals ? "" : "collapsed"} />
             </button>
             <div id="settlement-goals">
               <p>
                 {allGoals
-                  ? "Your little hamlet is flourishing. All three goals are complete."
-                  : "Every great village starts with a few small things."}
+                  ? "All three starter goals are complete."
+                  : "One small step at a time."}
               </p>
               {nextGoal && (
                 <div className="goal-next">
-                  <span className="goal-next-kicker">NEXT CHAPTER</span>
+                  <span className="goal-next-kicker">YOUR NEXT STEP</span>
                   <strong>{nextGoal.label}</strong>
                   <span>{nextGoal.detail}</span>
                   <button
                     type="button"
-                    onClick={(event) => {
-                      choose(nextGoal.type, event.currentTarget);
-                    }}
+                    aria-label={
+                      nextGoal.action === "focus" && nextGoalBuilding
+                        ? `Show ${CATALOG[nextGoal.type]?.name || "the worksite"}`
+                        : `Choose a spot for ${CATALOG[nextGoal.type]?.name || "the next build"}`
+                    }
+                    onClick={chooseNextGoal}
                   >
-                    Plan it <ArrowUpRight size={12} />
+                    {nextGoal.action === "focus" && nextGoalBuilding
+                      ? "Check the lumberyard"
+                      : "Choose a spot"}{" "}
+                    {nextGoal.action === "focus" && nextGoalBuilding ? (
+                      <Compass size={12} />
+                    ) : (
+                      <ArrowUpRight size={12} />
+                    )}
                   </button>
                 </div>
               )}
-              <div className={`goal ${builtHouse ? "done" : ""}`}>
-                <span className="checkbox">
-                  {builtHouse && <Check size={12} />}
-                </span>
-                <span>Build a cottage</span>
-                <span className="goal-count">{builtHouse ? "1" : "0"}/1</span>
-              </div>
-              <div className={`goal ${builtFarm ? "done" : ""}`}>
-                <span className="checkbox">
-                  {builtFarm && <Check size={12} />}
-                </span>
-                <span>Establish a farm</span>
-                <span className="goal-count">{builtFarm ? "1" : "0"}/1</span>
-              </div>
-              <div className={`goal ${state.gathered >= 100 ? "done" : ""}`}>
-                <span className="checkbox">
-                  {state.gathered >= 100 && <Check size={12} />}
-                </span>
-                <span>Gather timber</span>
-                <span className="goal-count">
-                  {formatCount(Math.min(state.gathered, 100))}/100
-                </span>
-              </div>
-              <div
-                className="goal-progress"
-                role="progressbar"
-                aria-label="Settlement goal progress"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow={goalProgressPercent}
-                aria-valuetext={`${goalProgressPercent}% complete`}
-              >
-                <i
-                  style={{ width: `${goalProgressPercent}%` }}
-                />
-              </div>
-              <div className="objective-footer">
-                <span>GROW AT YOUR OWN PACE</span>
-                <Wheat size={15} />
-              </div>
+              <details className="goal-details">
+                <summary>
+                  <span>Milestones</span>
+                  <strong>{completedGoals} / 3</strong>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </summary>
+                <div className="goal-details-body">
+                  <div className={`goal ${builtHouse ? "done" : ""}`}>
+                    <span className="checkbox">
+                      {builtHouse && <Check size={12} />}
+                    </span>
+                    <span>Build a new cottage</span>
+                    <span className="goal-count">{builtHouse ? "1" : "0"}/1</span>
+                  </div>
+                  <div className={`goal ${builtFarm ? "done" : ""}`}>
+                    <span className="checkbox">
+                      {builtFarm && <Check size={12} />}
+                    </span>
+                    <span>Build a new farmhouse</span>
+                    <span className="goal-count">{builtFarm ? "1" : "0"}/1</span>
+                  </div>
+                  <div className={`goal ${state.gathered >= 100 ? "done" : ""}`}>
+                    <span className="checkbox">
+                      {state.gathered >= 100 && <Check size={12} />}
+                    </span>
+                    <span>Gather timber</span>
+                    <span className="goal-count">
+                      {formatCount(Math.min(state.gathered, 100))}/100
+                    </span>
+                  </div>
+                  <div
+                    className="goal-progress"
+                    role="progressbar"
+                    aria-label="Settlement goal progress"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow={goalProgressPercent}
+                    aria-valuetext={`${goalProgressPercent}% complete`}
+                  >
+                    <i style={{ width: `${goalProgressPercent}%` }} />
+                  </div>
+                </div>
+              </details>
               {allGoals && state.chapterGoals.length > 0 && (
                 <div className="chapter-mini">
                   <strong>Next chapters unlocked</strong>
@@ -3285,6 +3476,29 @@ function App() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+        {!goals && (
+          <button
+            type="button"
+            ref={goalsTabRef}
+            className="goals-tab parchment"
+            aria-expanded="false"
+            onClick={() => {
+              openGoals();
+              requestAnimationFrame(() => goalsButtonRef.current?.focus());
+            }}
+          >
+            <Leaf size={14} aria-hidden="true" />
+            <span>Goals</span>
+            <strong>{nextGoal ? nextGoal.label : "All goals complete"}</strong>
+            <ChevronDown size={14} aria-hidden="true" />
+          </button>
+        )}
+        {state.activity && (
+          <div className="settlement-status activity" role="status" aria-live="polite">
+            <span className="live-dot" />
+            <span>{state.activity}</span>
           </div>
         )}
       </section>
@@ -3357,7 +3571,7 @@ function App() {
             advisorOpen
               ? "Close village advisor"
               : advisorBrief.attentionCount
-                ? `${advisorBrief.attentionCount} Keeper note${advisorBrief.attentionCount === 1 ? "" : "s"} need attention`
+                ? `${advisorBrief.attentionCount} advisor note${advisorBrief.attentionCount === 1 ? "" : "s"} need attention`
                 : "Open village advisor"
           }
           onClick={toggleAdvisor}
@@ -3408,15 +3622,15 @@ function App() {
               type="button"
               onClick={() => askAdvisor(ADVISOR_COMMANDS.dispatch, "Read today's village dispatch.")}
               disabled={advisorLoading}
-              title="Ask the Keeper for a lively read of the current village state."
+              title="Ask the advisor for a lively read of the current village state."
             >
-              <Sparkles size={12} aria-hidden="true" /> Dispatch
+              <Sparkles size={12} aria-hidden="true" /> Daily note
             </button>
             <button
               type="button"
               onClick={() => askAdvisor(ADVISOR_COMMANDS.plan, "Make me a three-step plan.")}
               disabled={advisorLoading}
-              title="Ask the Keeper for a grounded three-step plan."
+              title="Ask the advisor for a grounded three-step plan."
             >
               <Route size={12} aria-hidden="true" /> Make a plan
             </button>
@@ -3424,70 +3638,98 @@ function App() {
               type="button"
               onClick={() => askAdvisor(ADVISOR_COMMANDS.compare, "Compare my best options.")}
               disabled={advisorLoading}
-              title="Ask the Keeper to compare the strongest affordable choices."
+              title="Ask the advisor to compare the strongest affordable choices."
             >
               <BarChart3 size={12} aria-hidden="true" /> Compare
             </button>
+            {advisorWatch && (
+              <button
+                type="button"
+                className="active advisor-watch"
+                onClick={toggleAdvisorWatch}
+                aria-pressed="true"
+                title="Quiet the advisor's watch when a new bottleneck appears"
+              >
+                <Bell size={12} aria-hidden="true" /> Watching
+              </button>
+            )}
+            {advisorToolsOpen && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => askAdvisor(ADVISOR_COMMANDS.council, "Convene the village council.")}
+                  disabled={advisorLoading}
+                  title="Ask three village voices for a shared recommendation."
+                >
+                  <Users size={12} aria-hidden="true" /> Council
+                </button>
+                {!advisorWatch && (
+                  <button
+                    type="button"
+                    className="advisor-watch"
+                    onClick={toggleAdvisorWatch}
+                    aria-pressed="false"
+                    title="Ask the advisor to watch for new bottlenecks"
+                  >
+                    <Bell size={12} aria-hidden="true" /> Watch
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={advisorSavedOpen ? "active" : ""}
+                  onClick={() => setAdvisorSavedOpen((open) => !open)}
+                  aria-pressed={advisorSavedOpen}
+                  title="Show advice you saved for later"
+                >
+                  <Bookmark size={12} aria-hidden="true" /> Saved {savedAdvisorMessages.length}
+                </button>
+                <button
+                  type="button"
+                  className="advisor-new"
+                  onClick={startFreshAdvisor}
+                  title="Start a new advisor conversation"
+                  aria-label="Start a new advisor conversation"
+                >
+                  <RotateCw size={12} aria-hidden="true" />
+                </button>
+              </>
+            )}
             <button
               type="button"
-              onClick={() => askAdvisor(ADVISOR_COMMANDS.council, "Convene the village council.")}
-              disabled={advisorLoading}
-              title="Ask three village voices for a shared recommendation."
+              className={`advisor-toolbar-more ${advisorToolsOpen ? "active" : ""}`}
+              onClick={() => setAdvisorToolsOpen((open) => !open)}
+              aria-expanded={advisorToolsOpen}
+              aria-label={advisorToolsOpen ? "Hide more advisor tools" : "Show more advisor tools"}
             >
-              <Users size={12} aria-hidden="true" /> Council
-            </button>
-            <button
-              type="button"
-              className={advisorWatch ? "active advisor-watch" : "advisor-watch"}
-              onClick={toggleAdvisorWatch}
-              aria-pressed={advisorWatch}
-              title={advisorWatch ? "Quiet Keeper's watch when a new bottleneck appears" : "Ask the Keeper to watch for new bottlenecks"}
-            >
-              <Bell size={12} aria-hidden="true" /> {advisorWatch ? "Watching" : "Watch"}
-            </button>
-            <button
-              type="button"
-              className={advisorSavedOpen ? "active" : ""}
-              onClick={() => setAdvisorSavedOpen((open) => !open)}
-              aria-pressed={advisorSavedOpen}
-              title="Show advice you saved for later"
-            >
-              <Bookmark size={12} aria-hidden="true" /> Saved {savedAdvisorMessages.length}
-            </button>
-            <button
-              type="button"
-              className="advisor-new"
-              onClick={startFreshAdvisor}
-              title="Start a new advisor conversation"
-              aria-label="Start a new advisor conversation"
-            >
-              <RotateCw size={12} aria-hidden="true" />
+              <ChevronDown size={12} aria-hidden="true" />
+              {advisorToolsOpen ? "Less" : "More"}
             </button>
           </div>
           <p className="advisor-intro">
-            Ask about the village, or let the Keeper turn its current mood into a plan.
+            Ask about the village, or ask for a plan based on what is happening now.
           </p>
           <div className="advisor-status-strip" aria-label="Current village status">
             <span>
               <Users size={11} aria-hidden="true" />
               <strong>{Math.floor(state.population || 0)}/{Math.floor(state.capacity || 0)}</strong>
-              <em>people</em>
+              <em>villagers</em>
             </span>
             <span>
               <Package size={11} aria-hidden="true" />
               <strong>{Math.floor(state.inTransit || 0)}</strong>
-              <em>in transit</em>
+              <em>on the way</em>
             </span>
             <span>
               <Gauge size={11} aria-hidden="true" />
               <strong>{state.speed === 0 ? "Paused" : `${state.speed}×`}</strong>
-              <em>clock</em>
+              <em>speed</em>
             </span>
           </div>
           <AdvisorResourcePulse
             resources={state.resources}
             storage={state.storage}
             trends={state.trends}
+            visibleResources={advisorPulseResources}
             disabled={advisorLoading}
             onAsk={(resource) => askAdvisor(ADVISOR_RESOURCE_QUESTIONS[resource])}
           />
@@ -3579,29 +3821,31 @@ function App() {
               </ol>
             </section>
           )}
-          <div className="advisor-lenses" role="group" aria-label="Advisor voice">
-            <span>ASK AS</span>
-            {Object.entries(ADVISOR_LENSES).map(([key, lens]) => {
-              const LensIcon = lens.icon;
-              return (
-                <button
-                  type="button"
-                  key={key}
-                  className={advisorLens === key ? "active" : ""}
-                  aria-pressed={advisorLens === key}
-                  onClick={() => setAdvisorLens(key)}
-                  disabled={advisorLoading}
-                  title={`Use the ${lens.label.toLowerCase()} voice`}
-                >
-                  <LensIcon size={11} aria-hidden="true" /> {lens.label}
-                </button>
-              );
-            })}
-          </div>
+          {advisorToolsOpen && (
+            <div className="advisor-lenses" role="group" aria-label="Advisor voice">
+              <span>ADVICE STYLE</span>
+              {Object.entries(ADVISOR_LENSES).map(([key, lens]) => {
+                const LensIcon = lens.icon;
+                return (
+                  <button
+                    type="button"
+                    key={key}
+                    className={advisorLens === key ? "active" : ""}
+                    aria-pressed={advisorLens === key}
+                    onClick={() => setAdvisorLens(key)}
+                    disabled={advisorLoading}
+                    title={`Use the ${lens.label.toLowerCase()} voice`}
+                  >
+                    <LensIcon size={11} aria-hidden="true" /> {lens.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {advisorWatch && advisorWatchEvents.length > 0 && (
             <section
               className={`advisor-watch-log ${advisorWatchLogOpen ? "is-expanded" : "is-collapsed"}`}
-              aria-label="Keeper's watch log"
+              aria-label="Advisor watch log"
               aria-live="polite"
             >
               <div className="advisor-watch-log-heading">
@@ -3613,16 +3857,16 @@ function App() {
                     onClick={toggleAdvisorWatchLog}
                     aria-expanded={advisorWatchLogOpen}
                     aria-controls="advisor-watch-events"
-                    aria-label={advisorWatchLogOpen ? "Collapse Keeper's watch log" : "Expand Keeper's watch log"}
-                    title={advisorWatchLogOpen ? "Collapse Keeper's watch log" : "Expand Keeper's watch log"}
+                    aria-label={advisorWatchLogOpen ? "Collapse advisor watch log" : "Expand advisor watch log"}
+                    title={advisorWatchLogOpen ? "Collapse advisor watch log" : "Expand advisor watch log"}
                   >
                     <ChevronDown size={11} aria-hidden="true" />
                   </button>
                   <button
                     type="button"
                     onClick={clearAdvisorWatchEvents}
-                    aria-label="Clear Keeper's watch log"
-                    title="Clear Keeper's watch log"
+                    aria-label="Clear advisor watch log"
+                    title="Clear advisor watch log"
                   >
                     <X size={11} aria-hidden="true" />
                   </button>
@@ -3641,7 +3885,7 @@ function App() {
                         )
                       }
                       disabled={advisorLoading}
-                      title="Ask the Keeper about this missed signal using the current village state"
+                      title="Ask the advisor about this missed signal using the current village state"
                     >
                       <span><strong>{event.title}</strong><em>{event.detail}</em></span>
                       <small>Day {event.day} · {event.period}</small>
@@ -3686,9 +3930,9 @@ function App() {
                         className="advisor-saved-reask"
                         onClick={() => {
                           const replayPrompt = advisorReplayPrompt(message);
-                          const visibleQuestion = message.question || "Ask the Keeper again";
+                          const visibleQuestion = message.question || "Ask the advisor again";
                           const groundedReplay = replayPrompt === visibleQuestion && message.content
-                            ? `${replayPrompt}\n\nSaved Keeper context: ${message.content}`
+                            ? `${replayPrompt}\n\nSaved advisor context: ${message.content}`
                             : replayPrompt;
                           askAdvisor(groundedReplay, visibleQuestion);
                         }}
@@ -3716,13 +3960,13 @@ function App() {
                   ))}
                 </div>
               ) : (
-                <p className="advisor-saved-empty">Save a Keeper answer to keep it close.</p>
+                <p className="advisor-saved-empty">Save an advisor answer to keep it close.</p>
               )}
             </section>
           )}
-          <section className="advisor-brief" aria-label="Keeper's field notes">
+          <section className="advisor-brief" aria-label="Things worth a look">
             <div className="advisor-brief-heading">
-              <span><Sparkles size={12} /> KEEPER&apos;S FIELD NOTES</span>
+              <span><Sparkles size={12} /> WORTH A LOOK</span>
               <em className={advisorBrief.attentionCount ? "attention" : "calm"}>
                 {advisorBrief.label}
               </em>
@@ -3758,8 +4002,8 @@ function App() {
               <button
                 type="button"
                 onClick={() => scrollAdvisorToLatest()}
-                aria-label="Jump to the newest Keeper answer"
-                title="Jump to the newest Keeper answer"
+                aria-label="Jump to the newest advisor answer"
+                title="Jump to the newest advisor answer"
               >
                 <ArrowDown size={11} aria-hidden="true" /> Latest
               </button>
@@ -3775,7 +4019,7 @@ function App() {
               <React.Fragment key={`${message.role}-${index}`}>
                 <div className={`advisor-message ${message.role}`}>
                   <div className="advisor-message-head">
-                    <span>{message.role === "assistant" ? (message.local ? "LOCAL FIELD NOTE" : "KEEPER") : "YOU"}</span>
+                    <span>{message.role === "assistant" ? (message.local ? "LOCAL FIELD NOTE" : "ADVISOR") : "YOU"}</span>
                     {message.role === "assistant" && message.snapshot && (
                       <em
                         className={
@@ -4044,7 +4288,7 @@ function App() {
                       );
                     })()
                   )}
-                {message.role === "assistant" && index === latestAssistantIndex && !advisorLoading && (
+                {message.role === "assistant" && index === latestAssistantIndex && !advisorLoading && advisorMessages.length > 1 && (
                   <div className="advisor-message-actions">
                     {message.snapshot &&
                       (message.snapshot.day !== state.day || message.snapshot.period !== period) &&
@@ -4053,7 +4297,7 @@ function App() {
                           type="button"
                           className="advisor-refresh-action"
                           onClick={refreshLatestAdvisor}
-                          title="Ask the Keeper again using the village's current state"
+                          title="Ask the advisor again using the village's current state"
                         >
                           <RotateCw size={11} aria-hidden="true" /> Refresh advice
                         </button>
@@ -4061,14 +4305,14 @@ function App() {
                     <button
                       type="button"
                       onClick={() => copyAdvisorAnswer(message.content)}
-                      title="Copy this Keeper answer"
+                      title="Copy this advisor answer"
                     >
                       <Copy size={11} aria-hidden="true" /> {advisorCopied ? "Copied" : "Copy"}
                     </button>
                     <button
                       type="button"
                       onClick={() => speakAdvisorAnswer(message.content)}
-                      title={advisorSpeaking ? "Stop reading this Keeper answer" : "Read this Keeper answer aloud"}
+                      title={advisorSpeaking ? "Stop reading this advisor answer" : "Read this advisor answer aloud"}
                     >
                       <Volume2 size={11} aria-hidden="true" /> {advisorSpeaking ? "Stop" : "Read"}
                     </button>
@@ -4116,7 +4360,7 @@ function App() {
             ))}
             {advisorLoading && (
               <div className="advisor-message assistant advisor-thinking">
-                <span>KEEPER</span>
+                <span>ADVISOR</span>
                 <p><i /><i /><i /> Reading the village…</p>
               </div>
             )}
@@ -4128,7 +4372,7 @@ function App() {
               title={advisorError}
             >
               {advisorMessages[latestAssistantIndex]?.local
-                ? "Remote Keeper unavailable; local field note shown."
+                ? "Local field note shown · the advisor service is optional."
                 : advisorError}
             </div>
           )}
@@ -4184,7 +4428,7 @@ function App() {
               <Send size={16} />
             </button>
           </form>
-          <div className="advisor-note">Remote Keeper when configured · local field notes always available</div>
+          <div className="advisor-note">Local guidance always available · richer advisor optional</div>
         </aside>
       )}
       {detail && !selected && (
@@ -4288,10 +4532,10 @@ function App() {
             <button
               type="button"
               className="inspector-advisor-action"
-              onClick={askKeeperAboutFocus}
-              title="Ask the Keeper for advice about this building or villager."
+              onClick={askAdvisorAboutFocus}
+              title="Ask the advisor for advice about this building or villager."
             >
-              <Sparkles size={14} aria-hidden="true" /> Ask the Keeper about this
+              <Sparkles size={14} aria-hidden="true" /> Ask the advisor about this
             </button>
           ) : null}
           {detail.type === "worker" && inspectedWorker && (
@@ -4431,7 +4675,9 @@ function App() {
               <div className="storage-breakdown">
                 <Resource type="wood" value={inspected.stored.wood} storage={inspected.storedCaps?.wood} />
                 <Resource type="stone" value={inspected.stored.stone} storage={inspected.storedCaps?.stone} />
-                <Resource type="wheat" value={inspected.stored.wheat} storage={inspected.storedCaps?.wheat} />
+                {showWheat && (
+                  <Resource type="wheat" value={inspected.stored.wheat} storage={inspected.storedCaps?.wheat} />
+                )}
                 <Resource type="food" value={inspected.stored.food} storage={inspected.storedCaps?.food} />
                 {showWine && (
                   <Resource type="wine" value={inspected.stored.wine} storage={inspected.storedCaps?.wine} />
@@ -4448,7 +4694,7 @@ function App() {
                 {state.population}/{state.capacity} villagers housed
                 {state.capacity - state.population > 0
                   ? ` · room for ${state.capacity - state.population} more`
-                  : " · build a cottage for more room"}
+                  : " · build a new cottage for more room"}
               </p>
               {inspected.trainingSession && (
                 <div className="training-session" role="status" aria-live="polite">
@@ -4624,9 +4870,9 @@ function App() {
             <div>
               <span className="tooltip-category">
                 {pathRemoval
-                  ? "REVISE YOUR LAYOUT"
+                  ? "TIDY UP YOUR VILLAGE"
                   : selected
-                    ? "PLAN YOUR NEXT BUILDING"
+                    ? "PLACE SOMETHING NEW"
                     : "GROW YOUR VILLAGE"}
               </span>
               <h3>{active.name}</h3>
@@ -4638,9 +4884,13 @@ function App() {
             <div className="tooltip-cost">
               {pathRemoval ? (
                 <>
-                  <span>RECOVERED</span>
-                  <strong className="recovery-note">1 stone per path tile</strong>
-                  <small>Click a player-laid path to clear it.</small>
+              <span>YOU'LL GET BACK</span>
+              <strong className="recovery-note">1 stone per path tile</strong>
+              <small>
+                {touchLayout
+                  ? "Tap a player-laid path to clear it."
+                  : "Click a player-laid path to clear it."}
+              </small>
                 </>
               ) : (
                 <>
@@ -4685,7 +4935,7 @@ function App() {
             aria-atomic="true"
           >
             <MousePointer2 size={14} />
-            <span>{placementHint}</span>
+            <span>{displayedPlacementHint}</span>
             <button
               className="placement-details-toggle"
               type="button"
@@ -4701,10 +4951,10 @@ function App() {
               type="button"
               aria-label="Rotate building"
                 onClick={() => game.current?.rotate()}
-                title="Rotate building (R)"
+                title={touchLayout ? "Rotate building" : "Rotate building (R)"}
               >
                 <RotateCw size={14} />
-                <kbd>R</kbd>
+                {!touchLayout && <kbd>R</kbd>}
               </button>
             )}
             {!tileMode && (
@@ -4718,7 +4968,7 @@ function App() {
                   }
                 }}
               >
-                <Check size={14} /> <span>Place</span> <kbd>ENTER</kbd>
+                <Check size={14} /> <span>Place</span> {!touchLayout && <kbd>ENTER</kbd>}
               </button>
             )}
             <button
@@ -4727,7 +4977,7 @@ function App() {
               onClick={cancel}
             >
               <X size={14} />
-              <kbd>ESC</kbd>
+              {!touchLayout && <kbd>ESC</kbd>}
             </button>
           </div>
         )}
@@ -4752,23 +5002,25 @@ function App() {
           )}
         </div>
       </div>
-      <div className="bottom-right">
-        <button
-          type="button"
-          className={`icon-button parchment ${grid ? "active" : ""}`}
-          aria-keyshortcuts="G"
-          aria-pressed={grid}
-          onClick={() => {
-            if (!game.current) return;
-            game.current.grid.visible = !game.current.grid.visible;
-            setGrid(game.current.grid.visible);
-          }}
-          title="Toggle grid (G)"
-          aria-label="Toggle building grid"
-        >
-          <Grid2X2 size={19} />
-        </button>
-      </div>
+      {(selected || grid) && (
+        <div className="bottom-right">
+          <button
+            type="button"
+            className={`icon-button parchment ${grid ? "active" : ""}`}
+            aria-keyshortcuts="G"
+            aria-pressed={grid}
+            onClick={() => {
+              if (!game.current) return;
+              game.current.grid.visible = !game.current.grid.visible;
+              setGrid(game.current.grid.visible);
+            }}
+            title="Toggle grid (G)"
+            aria-label="Toggle building grid"
+          >
+            <Grid2X2 size={19} />
+          </button>
+        </div>
+      )}
       {menu && (
         <div
           ref={menuRef}
@@ -4798,7 +5050,7 @@ function App() {
           </button>
           <button type="button" role="menuitem" onClick={downloadVillage}>
             <FileDown size={16} />
-            Export village backup
+            Download a backup
           </button>
           <button
             type="button"
@@ -4809,7 +5061,7 @@ function App() {
             }}
           >
             <FileUp size={16} />
-            Import village backup
+            Restore a backup
           </button>
           <button
             type="button"
@@ -4822,14 +5074,12 @@ function App() {
             <BarChart3 size={16} />
             Village overview
           </button>
-          <a role="menuitem" href="/health-check" target="_blank" rel="noreferrer">
-            <Gauge size={16} />
-            Performance health check
-          </a>
-          <button type="button" role="menuitem" onClick={showGoals}>
-            <Leaf size={16} />
-            A place to call home
-          </button>
+          {!goals && (
+            <button type="button" role="menuitem" onClick={showGoals}>
+              <Leaf size={16} />
+              Show goals
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -4893,7 +5143,7 @@ function App() {
             aria-modal="true"
             aria-label={
               importOpen
-                ? "Import village"
+                ? "Restore a backup"
                 : rename
                 ? "Name your village"
                 : overview
@@ -4949,10 +5199,9 @@ function App() {
             ) : overview ? (
               <>
                 <span className="overview-kicker">AT A GLANCE</span>
-                <h2>{state.name}, in motion.</h2>
+                <h2>{state.name} overview</h2>
                 <p>
-                  A quick read on the people, work, and milestones shaping your
-                  settlement right now.
+                  A quick look at your people, work, and progress.
                 </p>
                 <div className="overview-grid">
                   <div className="overview-stat">
@@ -4965,31 +5214,47 @@ function App() {
                   <div className="overview-stat">
                     <House size={18} />
                     <strong>{formatCount(completedBuildings)}</strong>
-                    <span>Structures</span>
+                    <span>Buildings</span>
                   </div>
                   <div className="overview-stat">
                     <Hammer size={18} />
                     <strong>{formatCount(activeJobs)}</strong>
-                    <span>Active jobs</span>
+                    <span>Work underway</span>
                   </div>
                   <div className="overview-stat">
                     <Wheat size={18} />
                     <strong>{formatCount(deliveries)}</strong>
-                    <span>Deliveries</span>
-                  </div>
-                  <div className="overview-stat">
-                    <Route size={18} />
-                    <strong>{formatCount(pathCount)}</strong>
-                    <span>Built paths</span>
+                    <span>Goods delivered</span>
                   </div>
                 </div>
                 <div className="economy-strip" aria-label="Resource trends">
                   <div><span>Wood / min</span><strong className={state.trends.wood < 0 ? "negative" : ""}>{state.trends.wood > 0 ? "+" : ""}{state.trends.wood || 0}</strong></div>
                   <div><span>Stone / min</span><strong className={state.trends.stone < 0 ? "negative" : ""}>{state.trends.stone > 0 ? "+" : ""}{state.trends.stone || 0}</strong></div>
                   <div><span>Food / min</span><strong className={state.trends.food < 0 ? "negative" : ""}>{state.trends.food > 0 ? "+" : ""}{state.trends.food || 0}</strong></div>
-                  <div><span>In transit</span><strong>{formatCount(state.inTransit)}</strong></div>
-                  <div><span>Blocked sites</span><strong className={state.blockedSites ? "negative" : ""}>{formatCount(state.blockedSites)}</strong></div>
                 </div>
+                <div className="overview-progress">
+                  <div>
+                    <span>Settlement milestones</span>
+                    <strong>{completedGoals} / 3</strong>
+                  </div>
+                  <i
+                    role="progressbar"
+                    aria-label="Settlement milestones"
+                    aria-valuemin="0"
+                    aria-valuemax="3"
+                    aria-valuenow={completedGoals}
+                    aria-valuetext={`${completedGoals} of 3 milestones complete`}
+                  >
+                    <b style={{ width: `${(completedGoals / 3) * 100}%` }} />
+                  </i>
+                </div>
+                <details className="overview-details">
+                  <summary>
+                    <span>More village details</span>
+                    <small>Workers, feast, focus &amp; settings</small>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </summary>
+                  <div className="overview-details-body">
                 <div className="workforce-strip" aria-label="Worker types">
                   <span className="workforce-heading">Workforce</span>
                   {workerTypeOrder.map((type) => (
@@ -5027,13 +5292,13 @@ function App() {
                   </div>
                 )}
                 <div className="overview-sites" aria-label="Focus a building or villager">
-                  <div className="overview-activity-heading"><span>Focus a worksite</span><small>KEYBOARD READY</small></div>
+                  <div className="overview-activity-heading"><span>Visit a building</span><small>QUICK FOCUS</small></div>
                   <div className="focus-list">
                     {activeWorksites.map((building) => (
                       <button
                         type="button"
                         key={building.id}
-                        aria-label={"Focus " + (CATALOG[building.type]?.name || building.type) + " worksite. Status: " + (building.status || "Complete")}
+                        aria-label={"Focus " + (CATALOG[building.type]?.name || building.type) + " building. Status: " + (building.status || "Complete")}
                         onClick={() => { setOverview(false); game.current?.focusBuilding(building.id); }}
                       >
                         <span>{CATALOG[building.type]?.name || building.type}</span><em>{building.status}</em>
@@ -5066,22 +5331,6 @@ function App() {
                   <label><input type="checkbox" checked={state.audioSettings.effects} onChange={(event) => game.current?.setAudioSetting("effects", event.target.checked)} /> Action cues</label>
                   <label><input type="checkbox" checked={state.audioSettings.ambience} onChange={(event) => game.current?.setAudioSetting("ambience", event.target.checked)} /> Ambient tone</label>
                 </div>
-                <div className="overview-progress">
-                  <div>
-                    <span>Settlement milestones</span>
-                    <strong>{completedGoals} / 3</strong>
-                  </div>
-                  <i
-                    role="progressbar"
-                    aria-label="Settlement milestones"
-                    aria-valuemin="0"
-                    aria-valuemax="3"
-                    aria-valuenow={completedGoals}
-                    aria-valuetext={`${completedGoals} of 3 milestones complete`}
-                  >
-                    <b style={{ width: `${(completedGoals / 3) * 100}%` }} />
-                  </i>
-                </div>
                 <div
                   className="overview-activity"
                   aria-label="Recent village activity"
@@ -5103,6 +5352,8 @@ function App() {
                     <p>Your villagers are settling in. New work will appear here.</p>
                   )}
                 </div>
+                  </div>
+                </details>
                 <button
                   type="button"
                   className="primary full"
@@ -5177,61 +5428,44 @@ function App() {
               </>
             ) : (
               <>
-                <h2>A little world, in your hands.</h2>
+                <h2>How your village works</h2>
                 <p>
-                  Build slowly. Watch your people work. Make {state.name} a place
-                  to call home.
+                  Build a few things, then let your villagers handle the work.
                 </p>
                 <div className="help-row">
                   <MousePointer2 />
                   <div>
-                    <strong>Explore your village</strong>
+                    <strong>Explore</strong>
                     <span>
-                      Drag to pan, scroll or pinch to zoom, and use right-drag
-                      or two fingers to orbit. The compass brings you home.
+                      Drag to look around. Scroll or pinch to zoom. Click or tap
+                      a building or villager when you want to know more.
                     </span>
                   </div>
                 </div>
                 <div className="help-row">
                   <Hammer />
                   <div>
-                    <strong>Make room for something new</strong>
+                    <strong>Build something</strong>
                     <span>
-                      Choose a building below. A green preview means it fits.
-                      Click or press Enter to place, drag to lay paths, R to
-                      rotate, and Esc to cancel. Buildings are fixed once
-                      placed, so choose their site carefully. Arrow keys move
-                      the placement cursor.
+                      Choose one of the starter tools below, then click or tap a
+                      clear patch of land. A green preview means it fits. Use
+                      the cancel control any time to change your mind.
                     </span>
                   </div>
                 </div>
                 <div className="help-row">
                   <Users />
                   <div>
-                    <strong>Let your villagers take care of it</strong>
+                    <strong>Villagers do the work</strong>
                     <span>
-                      Workers travel to jobs, build new structures, and deliver
-                      wood, stone, and food. You start with two builders:
-                      cottages add room, and a School trains everyone else.
-                    </span>
-                  </div>
-                </div>
-                <div className="help-row">
-                  <Wheat />
-                  <div>
-                    <strong>Grow a thriving settlement</strong>
-                    <span>
-                      Vineyards press grapes into wine. Farms produce wheat,
-                      bakeries turn 3 wheat into 5 bread, lumberyards supply
-                      wood, and mines gather stone. Windmills turn 2 food into
-                      8 food per cycle. Paths speed up travel.
+                      Workers find jobs, build, gather, and deliver on their
+                      own. Build cottages to give the village room to grow.
                     </span>
                   </div>
                 </div>
                 <div className="help-note">
-                  Arrow keys pan · 1–9 choose a building · Space to pause · G
-                  for grid · Enter to place · ? for help · Your village saves
-                  automatically. Use the menu for backup export/import.
+                  Your village saves automatically. Pause whenever you like, and
+                  use More buildings whenever you want to try additional tools.
                 </div>
                 <button
                   type="button"

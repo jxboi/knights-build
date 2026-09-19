@@ -180,7 +180,7 @@ function cleanContext(input) {
 function buildLocalAdvisorPulseReply(context) {
   const previous = context.previousPulse;
   if (!previous) {
-    return "Pulse: this is the Keeper's first check-in for this village. Ask again later and I will tell you what changed.";
+    return "Pulse: this is the advisor's first check-in for this village. Ask again later and I will tell you what changed.";
   }
   const changes = [];
   for (const resource of ADVISOR_RESOURCE_KEYS) {
@@ -689,13 +689,13 @@ export async function createAdvisorReply(body, options = {}) {
       body: {
         message: buildLocalAdvisorReply(context, latestQuestion?.content || latestQuestion?.displayContent || ""),
         local: true,
-        notice: "No remote Keeper is configured. Showing a local field note from your current village state.",
+        notice: "The remote advisor is optional. Showing a local field note from your current village state.",
       },
     };
   }
   const system = [
     "You are the Village Advisor in Hearth & Hamlet, a warm and practical guide for a small medieval village builder.",
-    "Use a warm, lightly playful steward voice, like a sharp-eyed keeper who wants the hamlet to thrive.",
+    "Use a warm, lightly playful advisor voice, like a sharp-eyed guide who wants the hamlet to thrive.",
     "Answer in plain text with concise, actionable advice grounded in the current village state below.",
     "Mention the best next action first, then explain why it fits this village. Prefer exact resource counts, costs, worker statuses, and building names from the state.",
     "Only recommend a build from buildOptions. Do not invent buildings, resources, mechanics, or numbers that are not in the state.",
@@ -730,7 +730,7 @@ export async function createAdvisorReply(body, options = {}) {
     JSON.stringify(context, null, 2),
   ].join("\n");
 
-  const primaryModel = options.model || "deepseek/deepseek-v4-flash-0731";
+  const primaryModel = options.model || "nvidia/nemotron-3-ultra-550b-a55b:free";
   const fallbackModel = options.fallbackModel || "deepseek/deepseek-v4-flash-0731";
   const attempts = [primaryModel, primaryModel, fallbackModel].filter(
     (model, index, list) => model && (index < 2 || model !== list[0]),
@@ -761,7 +761,7 @@ export async function createAdvisorReply(body, options = {}) {
         })(),
       ),
       local: true,
-      notice: "The remote Keeper is unavailable. Showing a local field note from your current village state.",
+      notice: "The remote advisor is optional right now. Showing a local field note from your current village state.",
     },
   };
 }

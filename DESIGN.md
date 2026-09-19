@@ -61,7 +61,7 @@ The current implementation uses these CSS values as its primary visual vocabular
     "focus-outline": "2px solid #8d613f"
   },
   "layout": {
-    "desktop-topbar": "78px",
+    "desktop-topbar": "66px",
     "wide-topbar": "86px",
     "mobile-topbar": "99px plus safe-area inset",
     "desktop-gutter": "27px",
@@ -147,7 +147,7 @@ The game is a full-viewport composition. The Three.js world occupies the backgro
 
 - Keep the world visible underneath the chrome; do not add opaque full-screen panels for ordinary interaction.
 - Desktop UI anchors use approximately `27px` side gutters, expanding to `38px` on very wide displays.
-- The topbar is `78px` tall by default and `86px` on wide displays. It separates from the world with a fine bottom border and low shadow.
+- The topbar is `66px` tall by default and `86px` on wide displays. It separates from the world with a fine bottom border and low shadow.
 - The objective stack is left-aligned; time controls, advisor, inspector, and menu are right-aligned.
 - The build palette is centered at the bottom and acts as the primary action rail.
 - Use a 4px foundation with the practical working rhythm clustered around `4, 8, 12, 16, 20, 24, 27, 34` pixels. The larger 27/38px values are composition gutters, not component padding.
@@ -159,6 +159,7 @@ The game is a full-viewport composition. The Three.js world occupies the backgro
 - At `max-width: 760px`, the topbar becomes a two-row grid: brand/day/menu above, resources below. Preserve `env(safe-area-inset-*)` insets.
 - Mobile keeps the world full-screen and compresses the palette, controls, objectives, and inspector rather than introducing a separate mobile page.
 - At very narrow widths (`max-width: 360px`), truncate long build labels and remove nonessential persistent status text while preserving accessible names and live state elsewhere.
+- At short tablet heights, keep the side-opening build rail anchored inside the viewport instead of relying on the desktop center alignment.
 - At short mobile heights, move auxiliary controls away from the palette and reduce card/image heights so the primary build rail remains contained.
 - Do not change the information architecture between desktop and mobile; change density and placement.
 
@@ -205,6 +206,9 @@ The topbar is a light parchment band with the brand on the left, evenly spaced r
 The left objective card explains the early-game path and reports progress.
 
 - Use a parchment card with a compact Lora title and small descriptive copy.
+- Keep one next action prominent; tuck the full milestone checklist behind a compact disclosure so the early game feels guided rather than graded.
+- Phrase that action as the immediate interaction (`Choose a spot`); when the timber goal is active, point to the existing lumberyard instead of suggesting a duplicate build.
+- Use a direct `Getting started` title and one brief, non-technical reassurance line so the card feels welcoming without adding another instruction.
 - Goals use a 14px desktop checkbox, count aligned right, and a thin green progress bar.
 - Completed goals use green text/check fill and a restrained completed-card border treatment.
 - The card can collapse; preserve the heading and expand/collapse affordance.
@@ -213,7 +217,10 @@ The left objective card explains the early-game path and reports progress.
 
 The centered bottom palette is the primary navigation for building actions.
 
-- Keep the palette as a single readable rail with equal action cards on desktop and mobile; the first nine cards have keyboard shortcuts and the remaining build/path tools remain directly available in the palette.
+- Keep the palette as a single readable rail with equal action cards on desktop and mobile; show the early-game tools first and reveal the deeper catalog through a clearly labeled `More buildings` control.
+- On narrow screens, keep `More buildings` pinned to the visible edge of the horizontal rail so the deeper catalog remains discoverable without adding another permanent toolbar.
+- On short phones, anchor the opened rail fully inside the viewport and let it temporarily take priority over the goals card; the collapsed state may reduce to its hammer launcher to preserve the world view.
+- Keep number shortcuts stable for experienced players, but let the visible rail stay focused on beginner tools; keyboard-only placement hints should disappear on touch layouts.
 - Show the actual model thumbnail from the GLB asset; do not replace it with a generic icon.
 - Use a transparent/default card, warm hover tint, and wood-colored selected state.
 - Selected cards use cream text and a darker wood border. Add a small animated selection pip only as a subtle confirmation.
@@ -229,6 +236,7 @@ Inspectors and build tooltips are focused, contextual panels.
 - Use compact progress bars with a green-to-wood gradient for construction/work progress.
 - Use status colors consistently: green for active work, muted brown for idle/complete, terracotta for waiting-for-food or blocked conditions.
 - Keep the inspector clear of the persistent zoom rail and hide competing objectives on narrow screens.
+- If inspection temporarily hides the build palette, restore the player's previous palette choice on close instead of reopening a drawer they had left hidden.
 
 ### Buttons and controls
 
@@ -245,6 +253,10 @@ The advisor is a utility panel, not a competing chat product.
 
 - Launch from the top-right overlay; on mobile it reduces to the icon button.
 - Keep the panel narrow (`330px` desktop, up to `340px` mobile), with a Lora title and muted intro.
+- Keep the first advisor view focused: primary questions stay visible while council, watch, saved advice, and fresh-conversation tools live behind a compact disclosure.
+- Keep advice-style choices behind that same disclosure; the welcome message should not expose answer-management actions before the player has asked a question.
+- On a fresh open, show the question box and quick prompts before village signals; once history exists, return to chronological conversation order.
+- Only show late-game resource readings once the village has stock, movement, or a worksite that uses that resource.
 - User messages align right with a warmer parchment; assistant messages align left with a cooler translucent surface.
 - Use compact message typography and a thin scrollbar; keep the latest interaction visible.
 - The send control uses the primary wood accent. Error messages use a soft terracotta surface and border.
@@ -256,6 +268,7 @@ The advisor is a utility panel, not a competing chat product.
 - Modal card: parchment, centered, `27–34px` padding, Lora heading, clear action row.
 - Toast: compact centered feedback with a warm surface, small shadow, and one semantic icon. Keep it out of the inspector and topbar.
 - Use toasts for transient world feedback; use persistent status text or live regions for conditions the player must not miss.
+- Keep the grid control contextual: show it during placement, or while the grid is already enabled, instead of adding a permanent world button to the resting view.
 
 ## Motion and atmosphere
 
