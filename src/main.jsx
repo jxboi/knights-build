@@ -10,7 +10,6 @@ import Users from "lucide-react/dist/esm/icons/users.js";
 import Sun from "lucide-react/dist/esm/icons/sun.js";
 import Moon from "lucide-react/dist/esm/icons/moon.js";
 import HelpCircle from "lucide-react/dist/esm/icons/circle-help.js";
-import AlertCircle from "lucide-react/dist/esm/icons/circle-alert.js";
 import Save from "lucide-react/dist/esm/icons/save.js";
 import X from "lucide-react/dist/esm/icons/x.js";
 import Check from "lucide-react/dist/esm/icons/check.js";
@@ -72,13 +71,6 @@ const CATALOG_ENTRIES = Object.entries(CATALOG).map(([type, catalog]) => {
 });
 const CATALOG_TYPES = CATALOG_ENTRIES.map(({ type }) => type);
 const ADVISOR_RESOURCE_KEYS = ["wood", "stone", "food", "wheat", "wine"];
-const ADVISOR_RESOURCE_QUESTIONS = Object.freeze({
-  wood: "How is my wood supply doing, and what should I watch next?",
-  stone: "How is my stone supply doing, and what should I watch next?",
-  food: "How is my food supply doing, and what should I fix or protect next?",
-  wheat: "How is my wheat supply doing, and which worksite depends on it?",
-  wine: "How is my wine supply doing, and is it worth protecting right now?",
-});
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function advisorResourceRunway(resources = {}, trends = {}) {
   return Object.fromEntries(
@@ -1365,11 +1357,7 @@ const Resource = React.memo(function Resource({ type, value, trend = 0, storage 
           {formatCount(value)}
           {tight && <em className="resource-cap"> / {capacity}</em>}
         </strong>
-        {full ? (
-          <span className="resource-trend negative" title={`${type} storage is full`}>
-            <AlertCircle size={10} strokeWidth={2} aria-hidden="true" /> storage full
-          </span>
-        ) : trendValue !== 0 ? (
+        {trendValue !== 0 ? (
           <span
             className={`resource-trend ${trendValue > 0 ? "positive" : "negative"}`}
             title={`${type} change over the last simulation window`}
@@ -1379,57 +1367,6 @@ const Resource = React.memo(function Resource({ type, value, trend = 0, storage 
         ) : null}
       </div>
     </div>
-  );
-});
-const AdvisorResourcePulse = React.memo(function AdvisorResourcePulse({
-  resources = {},
-  storage = {},
-  trends = {},
-  visibleResources = ADVISOR_RESOURCE_KEYS,
-  onAsk,
-  disabled = false,
-}) {
-  return (
-    <section className="advisor-resource-pulse" aria-label="Advisor resource check">
-      <div className="advisor-resource-pulse-heading">
-        <span>RESOURCE CHECK</span>
-        <em>ask about a resource</em>
-      </div>
-      <div className="advisor-resource-pulse-grid">
-        {visibleResources.map((resource) => {
-          const Icon = resourceIcons[resource] || Package;
-          const held = Math.max(0, Math.floor(Number(resources[resource]) || 0));
-          const cap = Math.max(0, Math.floor(Number(storage[resource]) || 0));
-          const trend = Math.round((Number(trends[resource]) || 0) * 10) / 10;
-          const ratio = cap > 0 ? Math.min(1, held / cap) : 0;
-          const full = cap > 0 && held >= cap;
-          const low = cap > 0 && held <= Math.max(12, cap * 0.3);
-          const trendLabel = trend > 0 ? `+${trend}/m` : trend < 0 ? `${trend}/m` : "steady";
-          return (
-            <button
-              type="button"
-              className={`advisor-resource-pulse-item ${full ? "full" : ""} ${low ? "low" : ""}`}
-              key={resource}
-              onClick={() => onAsk(resource)}
-              disabled={disabled}
-              title={`Ask about ${resource} supply, storage, and trend`}
-            >
-              <span className="advisor-resource-pulse-topline">
-                <Icon size={11} aria-hidden="true" />
-                <strong>{resource}</strong>
-                <em>{trendLabel}</em>
-              </span>
-              <span className="advisor-resource-pulse-value">
-                {held}<small>{cap ? ` / ${cap}` : ""}</small>
-              </span>
-              <span className="advisor-resource-pulse-track" aria-hidden="true">
-                <i style={{ width: `${Math.round(ratio * 100)}%` }} />
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </section>
   );
 });
 const paletteResourceKeys = ["wood", "stone", "food", "wheat", "wine"];
@@ -2406,17 +2343,6 @@ function App() {
       const catalog = CATALOG[building.type];
       return catalog?.resource === "wheat" || catalog?.inputResource === "wheat";
     });
-  const advisorPulseResources = ADVISOR_RESOURCE_KEYS.filter((resource) => {
-    if (resource === "wood" || resource === "stone" || resource === "food") return true;
-    return (
-      (state.resources[resource] || 0) > 0 ||
-      (state.trends[resource] || 0) !== 0 ||
-      state.buildings.some((building) => {
-        const catalog = CATALOG[building.type];
-        return catalog?.resource === resource || catalog?.inputResource === resource;
-      })
-    );
-  });
   const overviewStats = useMemo(() => {
     if (!overview) return null;
     let completedBuildings = 0;
@@ -3237,11 +3163,6 @@ function App() {
             <div>
               <small>villagers</small>
               <strong className="resource-value">{formatCount(state.population)}<em> / {formatCount(state.capacity)}</em></strong>
-              {state.population >= state.capacity && (
-                <span className="resource-trend negative" title="Population at housing limit — build a cottage">
-                  <AlertCircle size={10} strokeWidth={2} aria-hidden="true" /> room full
-                </span>
-              )}
             </div>
           </div>
         </div>
@@ -3637,14 +3558,6 @@ function App() {
               <em>speed</em>
             </span>
           </div>
-          <AdvisorResourcePulse
-            resources={state.resources}
-            storage={state.storage}
-            trends={state.trends}
-            visibleResources={advisorPulseResources}
-            disabled={advisorLoading}
-            onAsk={(resource) => askAdvisor(ADVISOR_RESOURCE_QUESTIONS[resource])}
-          />
           {advisorRoute && (
             <section className="advisor-route" aria-label="Pinned advisor route">
               <div className="advisor-route-heading">
