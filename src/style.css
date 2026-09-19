@@ -3920,6 +3920,18 @@ h1 span {
     right: 14px;
     width: 190px;
     padding: 13px;
+    box-sizing: border-box;
+    max-height: calc(100dvh - 184px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .inspector-top {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding-bottom: 8px;
+    background: linear-gradient(135deg, #fbf7ebf8, #f0e8d7f5);
   }
   .inspector > img {
     height: 80px;
