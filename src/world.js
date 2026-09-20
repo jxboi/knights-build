@@ -5847,6 +5847,9 @@ export class Village {
           // before hauling anything out.
           w.materialSourceBuilding = null;
           w.pickupSource = storehouse;
+          // Set before routing (not just on arrival) so a mid-walk repath via
+          // workerRouteIgnore still treats the Storehouse footprint as open.
+          w.doorBuilding = storehouse;
           w.phase = "storehouse_enter";
           const [doorX, doorZ] = this.storehouseDoorPoint(storehouse);
           w.deliveryRetry = this.route(w, doorX, doorZ, storehouse) ? 0 : 1.5;
