@@ -86,7 +86,7 @@ export const CATALOG = {
     name: "Stone mine",
     size: 4,
     cost: { wood: 35, stone: 15 },
-    effect: "+6 stone per cycle · holds 12 until a carrier collects them",
+    effect: "Miners chip +6 stone from nearby deposits · holds 12 until a carrier collects them",
     resource: "stone",
     amount: 6,
     outputCap: 12,
