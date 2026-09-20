@@ -2632,9 +2632,7 @@ function App() {
     ? "Reload to sync"
     : !state.saveAvailable
     ? "Save unavailable"
-    : state.hasSaved
-      ? "Saved locally"
-      : "Autosave ready";
+    : "Autosave ready";
   const saveTitle = state.healthCheck
     ? "This embedded performance sample uses an in-memory village and never changes your saved village."
     : !loaded
@@ -3201,17 +3199,6 @@ function App() {
         </button>
       </header>
       <section className="left-stack">
-        <div className="village-heading">
-          <span>YOUR SETTLEMENT</span>
-          <h2>{state.name}</h2>
-          <p>
-            {allGoals
-              ? "Your village is ready to grow."
-              : goals
-                ? "Start with the next step below."
-                : "Your village is growing. Choose a build below."}
-          </p>
-        </div>
         {goals && (
           <div className={`objectives parchment ${allGoals ? "complete" : ""}`}>
             <button
@@ -3538,9 +3525,6 @@ function App() {
               {advisorToolsOpen ? "Less" : "More"}
             </button>
           </div>
-          <p className="advisor-intro">
-            Ask about the village, or ask for a plan based on what is happening now.
-          </p>
           {advisorRoute && (
             <section className="advisor-route" aria-label="Pinned advisor route">
               <div className="advisor-route-heading">
