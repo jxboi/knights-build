@@ -27,6 +27,9 @@ import {
   TREE_VISUAL_UPDATE_INTERVAL,
   TREE_LOG_AMOUNT,
   LUMBERYARD_PROCESS_SECONDS,
+  MINE_SECONDS,
+  STONE_DEPOSIT_MIN_SCALE,
+  stoneDepositReserve,
   HUNGRY_THRESHOLD,
   EAT_SECONDS,
   MEAL_SATIETY,
@@ -914,6 +917,179 @@ test("tree selection skips unavailable nodes without reordering the forest", () 
   assert.equal(v.availableTreeFor(lumberyard, worker), nearest);
   nearest.claimedBy = "worker-lumber";
   assert.equal(v.availableTreeFor(lumberyard, worker), tieByYard);
+});
+
+test("a stone deposit's reserve scales with its outcrop size", () => {
+  const small = stoneDepositReserve(0.35);
+  const large = stoneDepositReserve(1);
+  assert.ok(small > 0 && large > small);
+  assert.equal(stoneDepositReserve(0), 30);
+});
+
+test("deposit selection skips unavailable nodes without reordering the quarry", () => {
+  const v = village();
+  const mine = { type: "mine", x: 0, z: 0 };
+  const worker = { m: new THREE.Object3D() };
+  worker.m.position.set(0, 0, 0);
+  const claimed = {
+    type: "rock",
+    state: "available",
+    claimedBy: "other-worker",
+    x: 1,
+    z: 0,
+  };
+  const depleted = {
+    type: "rock",
+    state: "depleted",
+    claimedBy: null,
+    x: 0,
+    z: 1,
+  };
+  const nearest = {
+    type: "rock",
+    state: "available",
+    claimedBy: null,
+    x: 0,
+    z: 1.5,
+  };
+  const tieByMine = {
+    type: "rock",
+    state: "available",
+    claimedBy: null,
+    x: 2,
+    z: 0,
+  };
+  v.decor = [claimed, depleted, nearest, tieByMine];
+  assert.equal(v.availableDepositFor(mine, worker), nearest);
+  nearest.claimedBy = "worker-mine";
+  assert.equal(v.availableDepositFor(mine, worker), tieByMine);
+});
+
+test("a deposit's mesh shrinks toward a low remnant as it is mined out", () => {
+  const v = village();
+  const deposit = {
+    type: "rock",
+    maxReserve: 100,
+    reserve: 100,
+    baseScale: 1,
+    m: new THREE.Object3D(),
+  };
+  v.updateStoneDepositVisual(deposit);
+  assert.equal(deposit.m.scale.x, 1);
+  deposit.reserve = 0;
+  v.updateStoneDepositVisual(deposit);
+  assert.ok(Math.abs(deposit.m.scale.x - STONE_DEPOSIT_MIN_SCALE) < 1e-9);
+});
+
+test("miners chip stone from a deposit, deplete it, and carry the load to the mine", () => {
+  const v = village();
+  const mine = {
+    type: "mine",
+    progress: 1,
+    x: 0,
+    z: 0,
+    cycles: 0,
+    stock: 0,
+    m: new THREE.Object3D(),
+  };
+  const hall = {
+    type: "townhall",
+    progress: 1,
+    x: -3,
+    z: -3,
+    m: new THREE.Object3D(),
+  };
+  const deposit = {
+    type: "rock",
+    state: "available",
+    claimedBy: null,
+    maxReserve: CATALOG.mine.amount,
+    reserve: CATALOG.mine.amount,
+    baseScale: 1,
+    m: new THREE.Object3D(),
+    x: 2,
+    z: 0,
+    r: 0.6,
+  };
+  const worker = {
+    id: "worker-mine",
+    m: new THREE.Object3D(),
+    path: [],
+    phase: "idle",
+    timer: 0,
+    building: null,
+    carry: null,
+  };
+  v.decor = [deposit];
+  v.buildings = [hall, mine];
+  v.workers = [worker];
+  v.route = () => true;
+  v.jobPoint = () => [0, 0];
+  v.showCarry = () => {};
+  v.clearCarry = () => {};
+  v.deliveryBurst = () => {};
+
+  v.simulate(0.1);
+  assert.equal(worker.building, mine);
+  assert.equal(worker.deposit, deposit);
+  assert.equal(worker.phase, "travel");
+  v.simulate(0.1);
+  assert.equal(worker.phase, "mine");
+  v.simulate(MINE_SECONDS);
+  // The whole reserve was chipped away in one visit, so the deposit is spent
+  // and no longer blocks movement or new placement.
+  assert.equal(deposit.reserve, 0);
+  assert.equal(deposit.state, "depleted");
+  assert.equal(worker.phase, "stock_delivery");
+  assert.deepEqual(worker.carry, {
+    resource: "stone",
+    amount: CATALOG.mine.amount,
+    toStock: true,
+  });
+  v.simulate(0.1);
+  assert.equal(worker.phase, "idle");
+  assert.equal(worker.carry, null);
+  assert.equal(mine.stock, CATALOG.mine.amount);
+  assert.equal(v.resources.stone, 100);
+  // A second visit finds nothing left and the miner idles rather than
+  // conjuring more stone from the exhausted outcrop.
+  worker.timer = 0;
+  v.simulate(0.1);
+  assert.notEqual(worker.deposit, deposit);
+});
+
+test("saving only records a deposit once it has been touched", () => {
+  const v = village();
+  const untouched = {
+    type: "rock",
+    x: 1,
+    z: 1,
+    maxReserve: 80,
+    reserve: 80,
+    state: "available",
+  };
+  const partial = {
+    type: "rock",
+    x: 2,
+    z: 2,
+    maxReserve: 80,
+    reserve: 42,
+    state: "available",
+  };
+  const spent = {
+    type: "rock",
+    x: 3,
+    z: 3,
+    maxReserve: 80,
+    reserve: 0,
+    state: "depleted",
+  };
+  v.decor = [untouched, partial, spent];
+  const record = v.saveRecord();
+  assert.deepEqual(record.rocks, [
+    { x: 2, z: 2, reserve: 42, state: "available" },
+    { x: 3, z: 3, reserve: 0, state: "depleted" },
+  ]);
 });
 
 test("grain fields grow through readable stages and cap at ripe", () => {
@@ -2808,6 +2984,28 @@ test("building inspector reports the worker's current phase", () => {
   v.emit();
   assert.equal(state.buildings[0].workers, 1);
   assert.equal(state.buildings[0].status, "A carrier is collecting");
+});
+
+test("mine status reports a live chip, a wait for a free deposit, or exhaustion", () => {
+  const v = village();
+  let state;
+  v.onUpdate = (next) => (state = next);
+  const mine = { id: "mine-1", type: "mine", progress: 1, cycles: 0 };
+  v.buildings = [mine];
+
+  v.decor = [{ type: "rock", state: "available", claimedBy: null }];
+  v.workers = [{ building: mine, phase: "mine", timer: 1, workDuration: MINE_SECONDS }];
+  v.emit();
+  assert.equal(state.buildings[0].status, "Chipping stone");
+
+  v.decor = [{ type: "rock", state: "available", claimedBy: "someone-else" }];
+  v.workers = [];
+  v.emit();
+  assert.equal(state.buildings[0].status, "Waiting for a deposit");
+
+  v.decor = [{ type: "rock", state: "depleted", claimedBy: null }];
+  v.emit();
+  assert.equal(state.buildings[0].status, "No stone deposits left");
 });
 
 test("building snapshots flag whether a building type is staffed by workers", () => {

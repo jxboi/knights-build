@@ -95,7 +95,9 @@ export const sceneryCandidates = (count = SCENERY_COUNT, seedValue = WORLD_SEED)
   const next = createRandom(seedValue);
   return Array.from({ length: count }, () => {
     const draw = drawBlock(next, SCENERY_DRAWS);
-    const type = draw[2] > 0.16 ? "tree" : "rock";
+    // Rocks are functional stone deposits a miner can actually work, not
+    // ambient clutter, so they are seeded far more sparingly than trees.
+    const type = draw[2] > 0.05 ? "tree" : "rock";
     return {
       x: draw[0] * 65 - 32,
       z: draw[1] * 60 - 30,
@@ -320,6 +322,11 @@ export const TREE_REGROW_SECONDS = 90;
 export const TREE_VISUAL_UPDATE_INTERVAL = 1 / 30;
 export const TREE_LOG_AMOUNT = 8;
 export const LUMBERYARD_PROCESS_SECONDS = 5;
+// A miner chips at one deposit per visit rather than conjuring stone from
+// nothing; the deposit's mesh shrinks toward this floor as it depletes so an
+// exhausted outcrop still reads as a low remnant rather than popping away.
+export const MINE_SECONDS = 4;
+export const STONE_DEPOSIT_MIN_SCALE = 0.22;
 export const HUNGER_SECONDS = 75;
 export const HUNGRY_THRESHOLD = 0.82;
 export const EAT_SECONDS = 8;
@@ -383,6 +390,11 @@ export const treeGrowthStage = (progress) => {
   if (value < 0.58) return "sapling";
   return "full";
 };
+// A larger outcrop holds more stone. Unlike a tree, a mined-out deposit never
+// regrows, so the total is generous enough to outlast several mines' worth of
+// visits before a player has to look for another one.
+export const stoneDepositReserve = (scale) =>
+  Math.round(30 + Math.max(0, finiteNumber(scale, 0.5)) * 70);
 export const sanitizeVillageName = (value, fallback = DEFAULT_VILLAGE_NAME) => {
   if (typeof value !== "string") return fallback;
   const name = value.trim().replace(/\s+/g, " ").slice(0, 24);
@@ -1664,6 +1676,11 @@ export class Village {
           .filter((tree) => tree && Number.isFinite(Number(tree.x)) && Number.isFinite(Number(tree.z)))
           .map((tree) => [sceneryKey(tree.x, tree.z), tree]),
       );
+      const savedRocks = new Map(
+        (Array.isArray(this.saved?.rocks) ? this.saved.rocks : [])
+          .filter((rock) => rock && Number.isFinite(Number(rock.x)) && Number.isFinite(Number(rock.z)))
+          .map((rock) => [sceneryKey(rock.x, rock.z), rock]),
+      );
       this.clearedScenery = new Set(
         (Array.isArray(this.saved?.clearedScenery) ? this.saved.clearedScenery : [])
           .filter((key) => typeof key === "string")
@@ -1711,6 +1728,9 @@ export class Village {
         const savedTree = tree
           ? savedTrees.get(candidateKey)
           : null;
+        const isRock = type === "rock";
+        const savedRock = isRock ? savedRocks.get(candidateKey) : null;
+        const maxReserve = isRock ? stoneDepositReserve(s) : null;
         this.decor.push({
           m,
           x,
@@ -1718,9 +1738,19 @@ export class Village {
           r: tree ? 0.5 * s : 0.6 * s,
           type,
           sceneryKey: candidateKey,
-          state: tree ? savedTree?.state || "available" : null,
+          state: tree
+            ? savedTree?.state || "available"
+            : isRock
+              ? savedRock?.state === "depleted"
+                ? "depleted"
+                : "available"
+              : null,
           claimedBy: null,
           regrowAt: tree ? finiteNumber(savedTree?.regrowAt, null) : null,
+          maxReserve,
+          reserve: isRock
+            ? Math.max(0, Math.min(maxReserve, finiteNumber(savedRock?.reserve, maxReserve)))
+            : null,
           baseScale: s,
           baseRotation: m.rotation.z,
           trunkMeshes: tree
@@ -1738,6 +1768,7 @@ export class Village {
           placedTree.canopyMeshes = treeMeshes.slice(1);
         }
         if (tree) this.updateTreeVisual(this.decor[this.decor.length - 1]);
+        if (isRock) this.updateStoneDepositVisual(this.decor[this.decor.length - 1]);
       }
       const grass = [];
       for (const blade of grassCandidates()) {
@@ -2245,6 +2276,44 @@ export class Village {
       }
       this.updateTreeVisual(tree);
     }
+  }
+  updateStoneDepositVisual(deposit) {
+    if (!deposit?.m || deposit.type !== "rock") return;
+    const ratio = deposit.maxReserve > 0
+      ? Math.max(0, Math.min(1, finiteNumber(deposit.reserve, 0) / deposit.maxReserve))
+      : 0;
+    const scale =
+      (deposit.baseScale || 1) *
+      (STONE_DEPOSIT_MIN_SCALE + (1 - STONE_DEPOSIT_MIN_SCALE) * ratio);
+    deposit.m.scale.setScalar(scale);
+  }
+  availableDepositFor(mine, worker) {
+    if (!mine || !worker?.m?.position) return null;
+    let best = null;
+    let bestWorkerDistance = Infinity;
+    let bestMineDistance = Infinity;
+    for (const deposit of this.decor || []) {
+      if (
+        deposit.type !== "rock" ||
+        deposit.state === "depleted" ||
+        deposit.claimedBy
+      )
+        continue;
+      const workerDistance = Math.hypot(
+        worker.m.position.x - deposit.x,
+        worker.m.position.z - deposit.z,
+      );
+      const mineDistance = Math.hypot(mine.x - deposit.x, mine.z - deposit.z);
+      if (
+        workerDistance < bestWorkerDistance ||
+        (workerDistance === bestWorkerDistance && mineDistance < bestMineDistance)
+      ) {
+        best = deposit;
+        bestWorkerDistance = workerDistance;
+        bestMineDistance = mineDistance;
+      }
+    }
+    return best;
   }
   availableTreeFor(lumberyard, worker) {
     if (!lumberyard || !worker?.m?.position) return null;
@@ -5311,6 +5380,9 @@ export class Village {
       .filter((building) => workerTypeForBuilding(building.type) === w.workerType)
       .sort(compareJobs);
     const forestTrees = (this.decor || []).filter((decor) => decor.type === "tree");
+    const stoneDeposits = (this.decor || []).filter(
+      (decor) => decor.type === "rock" && decor.state !== "depleted",
+    );
     const tryJobs = (list) => {
       for (const b of list) {
         const productionType = workerTypeForBuilding(b.type);
@@ -5331,8 +5403,15 @@ export class Village {
         const tree = !material && b.type === "lumberyard" && forestTrees.length
           ? this.availableTreeFor(b, w)
           : null;
+        const deposit = !material && b.type === "mine" && stoneDeposits.length
+          ? this.availableDepositFor(b, w)
+          : null;
         const destination = material ? this.materialSource(material) : b;
         if (!material && b.type === "lumberyard" && forestTrees.length && !tree) {
+          b.lastRouteBlocked = false;
+          continue;
+        }
+        if (!material && b.type === "mine" && stoneDeposits.length && !deposit) {
           b.lastRouteBlocked = false;
           continue;
         }
@@ -5348,12 +5427,14 @@ export class Village {
         w.workInside = workInside;
         const [x, z] = tree
           ? [tree.x, tree.z]
-          : workInside
-            ? [b.x, b.z]
-            : field
-            ? [field.x, field.z]
-            : this.jobPoint(destination, w);
-        if (!this.route(w, x, z, workInside ? b : field, tree)) {
+          : deposit
+            ? [deposit.x, deposit.z]
+            : workInside
+              ? [b.x, b.z]
+              : field
+              ? [field.x, field.z]
+              : this.jobPoint(destination, w);
+        if (!this.route(w, x, z, workInside ? b : field, tree || deposit)) {
           w.workInside = false;
           b.lastRouteBlocked = true;
           continue;
@@ -5362,8 +5443,10 @@ export class Village {
         w.building = b;
         w.field = field || null;
         w.tree = tree || null;
+        w.deposit = deposit || null;
         if (field) field.claimedBy = w.id;
         if (tree) tree.claimedBy = w.id;
+        if (deposit) deposit.claimedBy = w.id;
         w.materialResource = material;
         w.materialSourceBuilding =
           material && destination?.type === "storehouse" ? destination : null;
@@ -5484,7 +5567,7 @@ export class Village {
         candidate.x,
         candidate.z,
         this.workerRouteIgnore(worker),
-        worker.tree || null,
+        worker.tree || worker.deposit || null,
       ) &&
       !this.workerMoveBlocker(worker, candidate)
     );
@@ -5665,7 +5748,7 @@ export class Village {
       target.x,
       target.z,
       this.workerRouteIgnore(worker),
-      worker.tree || null,
+      worker.tree || worker.deposit || null,
     );
     if (!routed) worker.path = previousPath;
     worker.routeTarget = target;
@@ -5688,7 +5771,7 @@ export class Village {
         w.routeTarget.x,
         w.routeTarget.z,
         this.workerRouteIgnore(w),
-        w.tree || null,
+        w.tree || w.deposit || null,
       )
     ) {
       w.path = [];
@@ -5699,8 +5782,10 @@ export class Village {
       else {
         if (w.field) w.field.claimedBy = null;
         if (w.tree) this.releaseTree(w.tree);
+        if (w.deposit) w.deposit.claimedBy = null;
         w.field = null;
         w.tree = null;
+        w.deposit = null;
         w.phase = "idle";
         w.building = null;
         w.workInside = false;
@@ -6012,6 +6097,11 @@ export class Village {
           w.workDuration = 4.5;
           w.timer = w.workDuration;
           this.announce("A worker is chopping down a tree for the lumberyard.");
+        } else if (w.deposit) {
+          this.setWorkerInside(w, false);
+          w.phase = "mine";
+          w.workDuration = MINE_SECONDS;
+          w.timer = w.workDuration;
         } else if (w.field) {
           this.setWorkerInside(w, false);
           w.phase = "harvest";
@@ -6214,6 +6304,43 @@ export class Village {
           w.deliveryRetry = this.route(w, farmX, farmZ) ? 0 : 1.5;
           this.announce("A farmer has gathered a ripe grain field.");
         }
+      } else if (w.phase === "mine") {
+        w.timer -= dt;
+        if (w.timer <= 0) {
+          const deposit = w.deposit;
+          const mineBuilding = w.building;
+          if (!deposit || !mineBuilding) {
+            w.phase = "idle";
+            w.building = null;
+            w.deposit = null;
+            continue;
+          }
+          const available = Math.max(0, Math.floor(finiteNumber(deposit.reserve, 0)));
+          const amount = Math.min(CATALOG.mine.amount, available);
+          deposit.reserve = Math.max(0, available - amount);
+          deposit.claimedBy = null;
+          if (deposit.reserve <= 0) deposit.state = "depleted";
+          this.updateStoneDepositVisual(deposit);
+          w.deposit = null;
+          w.workDuration = 0;
+          if (amount <= 0) {
+            w.phase = "idle";
+            w.building = null;
+            w.timer = 0.5;
+            continue;
+          }
+          w.carry = { resource: "stone", amount, toStock: true };
+          this.showCarry(w, "stone");
+          this.setWorkerInside(w, false);
+          w.phase = "stock_delivery";
+          const [mineX, mineZ] = this.jobPoint(mineBuilding, w);
+          w.deliveryRetry = this.route(w, mineX, mineZ) ? 0 : 1.5;
+          this.announce(
+            deposit.reserve <= 0
+              ? "A miner has exhausted a stone deposit."
+              : "A miner has chipped stone from a deposit.",
+          );
+        }
       } else if (w.phase === "work") {
         w.timer -= dt;
         if (w.timer <= 0) {
@@ -6300,7 +6427,9 @@ export class Village {
           w.waitingForStock = true;
           w.deliveryRetry = 1.5;
           if (!wasWaitingForStock)
-            this.announce("The Farmhouse is full. A carrier must collect the wheat.");
+            this.announce(
+              `The ${CATALOG[site.type]?.name || "store"} is full. A carrier must collect the ${w.carry.resource}.`,
+            );
           continue;
         }
         w.waitingForStock = false;
@@ -6312,6 +6441,7 @@ export class Village {
         this.setWorkerInside(w, false);
         w.field = null;
         w.tree = null;
+        w.deposit = null;
         w.building = null;
       } else if (w.phase === "haul_pickup") {
         const source = w.haulSource;
@@ -6456,13 +6586,13 @@ export class Village {
       point.x,
       point.z,
       this.workerRouteIgnore(worker),
-      worker?.tree || null,
+      worker?.tree || worker?.deposit || null,
     );
   }
   workSnapshot(w) {
     if (
       !w ||
-      !["work", "harvest", "chop", "process"].includes(w.phase) ||
+      !["work", "harvest", "chop", "process", "mine"].includes(w.phase) ||
       !(w.workDuration > 0)
     )
       return { progress: null, remaining: null };
@@ -6495,6 +6625,13 @@ export class Village {
     const availableTrees = forestTrees.some(
       (tree) => tree.state === "available" && !tree.claimedBy,
     );
+    const stoneDeposits = this.decor?.filter((rock) => rock.type === "rock") || [];
+    const availableDeposits = stoneDeposits.some(
+      (rock) => rock.state !== "depleted" && !rock.claimedBy,
+    );
+    const depositsExhausted =
+      stoneDeposits.length > 0 &&
+      stoneDeposits.every((rock) => rock.state === "depleted");
     // Farm connectivity is a small graph walk, and the same farm can be
     // queried several times while projecting one HUD snapshot. Cache it for
     // this emit; simulation mutations invalidate it naturally on the next
@@ -6568,7 +6705,7 @@ export class Village {
         const work = this.workSnapshot(
           assigned.find(
             (w) =>
-              ["work", "harvest", "chop", "process"].includes(w.phase) &&
+              ["work", "harvest", "chop", "process", "mine"].includes(w.phase) &&
               w.workDuration > 0,
           ),
         );
@@ -6638,8 +6775,14 @@ export class Village {
               ? "Waiting for route"
             : b.type === "lumberyard" && forestTrees.length && !availableTrees && !assigned.length
               ? "Waiting for trees"
+            : b.type === "mine" && depositsExhausted
+              ? "No stone deposits left"
+            : b.type === "mine" && stoneDeposits.length && !availableDeposits && !assigned.length
+              ? "Waiting for a deposit"
               : assigned.some((w) => w.phase === "chop")
                 ? "Chopping trees"
+              : assigned.some((w) => w.phase === "mine")
+                ? "Chipping stone"
               : assigned.some((w) => w.phase === "lumber_delivery")
                 ? "Taking logs to Lumberyard"
               : assigned.some((w) => w.phase === "process")
@@ -6808,6 +6951,20 @@ export class Village {
           z: tree.z,
           state: tree.state === "regrowing" ? "regrowing" : "available",
           regrowAt: tree.regrowAt,
+        })),
+      // Only a partially or fully mined deposit needs saving; an untouched
+      // one restores to its deterministic full reserve for free.
+      rocks: (this.decor || [])
+        .filter(
+          (rock) =>
+            rock.type === "rock" &&
+            Math.floor(finiteNumber(rock.reserve, rock.maxReserve)) < rock.maxReserve,
+        )
+        .map((rock) => ({
+          x: rock.x,
+          z: rock.z,
+          reserve: Math.max(0, Math.floor(finiteNumber(rock.reserve, 0))),
+          state: rock.state === "depleted" ? "depleted" : "available",
         })),
       clearedScenery: [...(this.clearedScenery || [])],
       buildings: this.buildings.map(
@@ -7118,7 +7275,7 @@ export class Village {
           w.phase === "work" &&
           w.insideBuilding;
         const mining =
-          w.workerType === WORKER_TYPES.MINER && w.phase === "work";
+          w.workerType === WORKER_TYPES.MINER && w.phase === "mine";
         const workBeat =
           actorMotion * Math.sin(t * (baking ? 5.5 : 7) + (w.walkPhase || 0));
         w.rig.leftArm.rotation.x +=
