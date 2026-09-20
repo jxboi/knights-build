@@ -23,6 +23,7 @@ import Info from "lucide-react/dist/esm/icons/info.js";
 import House from "lucide-react/dist/esm/icons/house.js";
 import Hammer from "lucide-react/dist/esm/icons/hammer.js";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down.js";
+import MenuIcon from "lucide-react/dist/esm/icons/menu.js";
 import BarChart3 from "lucide-react/dist/esm/icons/bar-chart-3.js";
 import Gauge from "lucide-react/dist/esm/icons/gauge.js";
 import Route from "lucide-react/dist/esm/icons/route.js";
@@ -250,6 +251,9 @@ const workerPhaseStatus = {
   process: "Sawing wooden planks",
   material_pickup: "Collecting materials",
   material_delivery: "Delivering materials",
+  storehouse_enter: "Heading into the Storehouse",
+  storehouse_inside: "Gathering materials",
+  storehouse_exit: "Leaving the Storehouse",
   construct: "Building",
   work: "Working",
   harvest: "Cutting grain in the field",
@@ -1330,10 +1334,8 @@ function buildLocalAdvisorReply(question, snapshot, brief) {
   }
   return `${bestMove} Watch for: ${attention?.detail || `resources are ${Object.entries(resources).map(([resource, amount]) => `${amount} ${resource}`).slice(0, 3).join(", ")}.`}`;
 }
-const Resource = React.memo(function Resource({ type, value, trend = 0, storage = 0 }) {
+const Resource = React.memo(function Resource({ type, value, storage = 0 }) {
   const Icon = resourceIcons[type];
-  const trendValue = Math.round(Number(trend || 0) * 10) / 10;
-  const TrendIcon = trendValue > 0 ? ArrowUpRight : ArrowDownRight;
   const held = Math.floor(Number(value) || 0);
   const capacity = Math.floor(Number(storage) || 0);
   const full = capacity > 0 && held >= capacity;
@@ -1357,22 +1359,12 @@ const Resource = React.memo(function Resource({ type, value, trend = 0, storage 
           {formatCount(value)}
           {tight && <em className="resource-cap"> / {capacity}</em>}
         </strong>
-        {trendValue !== 0 ? (
-          <span
-            className={`resource-trend ${trendValue > 0 ? "positive" : "negative"}`}
-            title={`${type} change over the last simulation window`}
-          >
-            <TrendIcon size={10} /> {trendValue > 0 ? "+" : ""}{trendValue}/m
-          </span>
-        ) : null}
       </div>
     </div>
   );
 });
 const paletteResourceKeys = ["wood", "stone", "food", "wheat", "wine"];
 const STARTER_TOOL_TYPES = ["house", "farm", "grainfield", "lumberyard", "mine", "road"];
-const goalsDismissedStorageKey = (villageName) =>
-  `hearth-ui-goals-dismissed-v1:${String(villageName || "Willowbrook")}`;
 const BuildPalette = React.memo(function BuildPalette({
   resources,
   thumbs,
@@ -1438,15 +1430,17 @@ const BuildPalette = React.memo(function BuildPalette({
       })}
       <button
         type="button"
-        className="build-more"
+        className="build-card build-more"
         aria-expanded={showAll}
         aria-controls="building-palette"
         aria-label={showAll ? "Show starter building tools" : "Show more building tools"}
         onClick={() => setShowAll((open) => !open)}
         disabled={!loaded || !!error}
       >
-        <span className="build-more-icon">{showAll ? "−" : "+"}</span>
-        <span>{showAll ? "Starter tools" : "More buildings"}</span>
+        <span className="build-more-icon">
+          <span>{showAll ? "−" : "+"}</span>
+        </span>
+        <span className="building-name">{showAll ? "Starter tools" : "More buildings"}</span>
       </button>
     </nav>
   );
@@ -1469,15 +1463,15 @@ function App() {
     menuButtonRef = useRef(),
     menuStateRef = useRef(false),
     advisorButtonRef = useRef(),
+    speedMenuRef = useRef(),
+    speedButtonRef = useRef(),
     inspectorCloseRef = useRef(),
-    goalsButtonRef = useRef(),
     modalRef = useRef(),
     advisorInputRef = useRef(),
     advisorMessagesRef = useRef(),
     advisorSpeechRef = useRef(),
     importFileRef = useRef(),
     advisorAbortRef = useRef(),
-    goalsTabRef = useRef(),
     paletteOpenRef = useRef(true),
     paletteBeforeDetailRef = useRef(true),
     paletteBeforePlacementRef = useRef(
@@ -1524,7 +1518,6 @@ function App() {
     [detail, setDetail] = useState(null),
     [toast, setToast] = useState(null),
     [help, setHelp] = useState(false),
-    [goals, setGoals] = useState(true),
     [grid, setGrid] = useState(false),
     [paletteOpen, setPaletteOpen] = useState(() => {
       if (typeof window === "undefined") return true;
@@ -1535,6 +1528,7 @@ function App() {
       return window.matchMedia("(max-width: 760px)").matches;
     }),
     [menu, setMenu] = useState(false),
+    [speedMenu, setSpeedMenu] = useState(false),
     [overview, setOverview] = useState(false),
     [reset, setReset] = useState(false),
     [rename, setRename] = useState(false),
@@ -1607,27 +1601,6 @@ function App() {
     if (restoreFocus)
       requestAnimationFrame(() => menuButtonRef.current?.focus());
   };
-  const openGoals = () => {
-    setGoals(true);
-    try {
-      window.localStorage.removeItem(goalsDismissedStorageKey(state.name));
-    } catch {
-      // The menu can always reopen the goals card without storage.
-    }
-  };
-  const showGoals = () => {
-    openGoals();
-    closeMenu();
-    requestAnimationFrame(() => goalsButtonRef.current?.focus());
-  };
-  useEffect(() => {
-    if (!loaded) return;
-    try {
-      setGoals(window.localStorage.getItem(goalsDismissedStorageKey(state.name)) !== "1");
-    } catch {
-      setGoals(true);
-    }
-  }, [loaded, state.name]);
   const closeDetail = (restoreFocus = false) => {
     const returnTarget = inspectorFocusReturn.current;
     inspectorFocusReturn.current = null;
@@ -1848,9 +1821,7 @@ function App() {
     const key = (e) => {
       if (e.code === "Escape") {
         if (selected) {
-          const returnTarget =
-            placementFocusReturn.current ||
-            document.querySelector(".goal-next button");
+          const returnTarget = placementFocusReturn.current;
           cancel();
           requestAnimationFrame(() => returnTarget?.focus());
           return;
@@ -1875,11 +1846,6 @@ function App() {
         }
         if (detail || document.querySelector(".inspector")) {
           closeDetail(true);
-          return;
-        }
-        if (goals) {
-          setGoals(false);
-          window.setTimeout(() => document.querySelector(".menu-button")?.focus(), 0);
           return;
         }
         return;
@@ -1951,7 +1917,7 @@ function App() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [selected, loaded, detail, help, reset, rename, overview, menu, goals, advisorOpen, importOpen]);
+  }, [selected, loaded, detail, help, reset, rename, overview, menu, advisorOpen, importOpen]);
   const menuKeyDown = (event) => {
     const items = menuRef.current?.querySelectorAll('[role="menuitem"]');
     if (!items?.length) return;
@@ -1987,6 +1953,20 @@ function App() {
   useEffect(() => {
     menuStateRef.current = menu;
   }, [menu]);
+  useEffect(() => {
+    if (!speedMenu) return;
+    const dismiss = (event) => {
+      const target = event.target;
+      if (
+        speedMenuRef.current?.contains(target) ||
+        speedButtonRef.current?.contains(target)
+      )
+        return;
+      setSpeedMenu(false);
+    };
+    document.addEventListener("click", dismiss);
+    return () => document.removeEventListener("click", dismiss);
+  }, [speedMenu]);
   const modalOpen = help || reset || rename || overview || importOpen;
   useEffect(() => {
     if (!modalOpen) return;
@@ -2116,23 +2096,6 @@ function App() {
         label: "Build a new cottage",
         detail: "Make room for two more workers at the edge of town.",
       };
-  const nextGoalBuilding =
-    nextGoal?.action === "focus"
-      ? state.buildings.find(
-          (building) => building.type === nextGoal.type && Number(building.progress) >= 1,
-        )
-      : null;
-  const chooseNextGoal = (event) => {
-    if (
-      nextGoal?.action === "focus" &&
-      nextGoalBuilding &&
-      game.current?.focusBuilding(nextGoalBuilding.id)
-    ) {
-      notify(`Showing ${CATALOG[nextGoal.type]?.name || "the worksite"}.`);
-      return;
-    }
-    if (nextGoal) choose(nextGoal.type, event.currentTarget);
-  };
   const advisorBrief = useMemo(
     () => buildAdvisorBrief(state, nextGoal),
     [state, nextGoal],
@@ -2279,7 +2242,7 @@ function App() {
     const syncHiddenSurfaces = () => {
       document
         .querySelectorAll(
-          ".game-shell .objectives, .game-shell .goals-tab, .game-shell .advisor-panel, .game-shell .inspector, .game-shell .build-tooltip",
+          ".game-shell .advisor-panel, .game-shell .inspector, .game-shell .build-tooltip",
         )
         .forEach((element) => {
           const styles = window.getComputedStyle(element);
@@ -2617,13 +2580,6 @@ function App() {
   const completedGoals = [builtHouse, builtFarm, state.gathered >= 100].filter(
     Boolean,
   ).length;
-  const goalProgressPercent = Math.round(
-    ((Number(builtHouse) +
-      Number(builtFarm) +
-      Math.min(state.gathered / 100, 1)) /
-      3) *
-      100,
-  );
   const saveLabel = state.healthCheck
     ? "Performance sample"
     : !loaded
@@ -2669,13 +2625,6 @@ function App() {
       notify("Give your village a name.");
       return;
     }
-    let goalsWereDismissed = false;
-    try {
-      goalsWereDismissed =
-        window.localStorage.getItem(goalsDismissedStorageKey(state.name)) === "1";
-    } catch {
-      // The village name can still change when browser storage is unavailable.
-    }
     if (game.current?.storageConflict) {
       setRename(false);
       notify("Reload this tab before changing the village name.");
@@ -2686,13 +2635,6 @@ function App() {
       setRename(false);
       notify("Reload this tab before changing the village name.");
       return;
-    }
-    try {
-      const nextGoalsKey = goalsDismissedStorageKey(savedName);
-      if (goalsWereDismissed) window.localStorage.setItem(nextGoalsKey, "1");
-      else window.localStorage.removeItem(nextGoalsKey);
-    } catch {
-      // The goals card remains usable when its convenience preference cannot persist.
     }
     setRename(false);
     notify(`${savedName} is ready for a new chapter.`);
@@ -3123,7 +3065,7 @@ function App() {
   const DayIcon = period === "Night" ? Moon : Sun;
   return (
     <main
-      className={`game-shell ${goals ? "goals-open" : ""}`}
+      className="game-shell"
       aria-busy={!loaded && !error}
     >
       <div
@@ -3144,14 +3086,14 @@ function App() {
           </div>
         </div>
         <div className="resource-strip" aria-label="Village resources">
-          <Resource type="wood" value={state.resources.wood} trend={state.trends.wood} storage={state.storage.wood} />
-          <Resource type="stone" value={state.resources.stone} trend={state.trends.stone} storage={state.storage.stone} />
-          <Resource type="food" value={state.resources.food} trend={state.trends.food} storage={state.storage.food} />
+          <Resource type="wood" value={state.resources.wood} storage={state.storage.wood} />
+          <Resource type="stone" value={state.resources.stone} storage={state.storage.stone} />
+          <Resource type="food" value={state.resources.food} storage={state.storage.food} />
           {showWheat && (
-            <Resource type="wheat" value={state.resources.wheat} trend={state.trends.wheat} storage={state.storage.wheat} />
+            <Resource type="wheat" value={state.resources.wheat} storage={state.storage.wheat} />
           )}
           {showWine && (
-            <Resource type="wine" value={state.resources.wine} trend={state.trends.wine} storage={state.storage.wine} />
+            <Resource type="wine" value={state.resources.wine} storage={state.storage.wine} />
           )}
           <div
             className={`resource population ${state.population >= state.capacity ? "at-capacity" : ""}`}
@@ -3177,6 +3119,45 @@ function App() {
             </small>
           </div>
         </div>
+        <div className="speed-control">
+          <button
+            type="button"
+            ref={speedButtonRef}
+            className={`icon-button speed-button ${speedMenu ? "open" : ""}`}
+            aria-label={`Simulation speed ${state.speed}×. Change speed`}
+            aria-haspopup="menu"
+            aria-expanded={speedMenu}
+            title="Change simulation speed"
+            onClick={() => setSpeedMenu((open) => !open)}
+          >
+            {state.speed}×
+          </button>
+          {speedMenu && (
+            <div
+              className="speed-menu parchment"
+              ref={speedMenuRef}
+              role="menu"
+              aria-label="Simulation speed options"
+            >
+              {[1, 2, 4]
+                .filter((option) => option !== state.speed)
+                .map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="menuitem"
+                    aria-label={`Set simulation speed to ${option}x`}
+                    onClick={() => {
+                      speed(option);
+                      setSpeedMenu(false);
+                    }}
+                  >
+                    {option}×
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           ref={menuButtonRef}
@@ -3194,143 +3175,10 @@ function App() {
             }
           }}
         >
-          <span className="menu-button-label">Menu</span>
-          <ChevronDown size={19} />
+          {menu ? <X size={20} /> : <MenuIcon size={20} />}
         </button>
       </header>
       <section className="left-stack">
-        {goals && (
-          <div className={`objectives parchment ${allGoals ? "complete" : ""}`}>
-            <button
-              type="button"
-              ref={goalsButtonRef}
-              className="objective-heading"
-              aria-controls="settlement-goals"
-              aria-expanded={goals}
-              onClick={(event) => {
-                const next = !goals;
-                setGoals(next);
-                if (!next) {
-                  try {
-                    window.localStorage.setItem(goalsDismissedStorageKey(state.name), "1");
-                  } catch {
-                    // The goals card is still dismissible when storage is unavailable.
-                  }
-                  if (event.detail === 0) {
-                    window.setTimeout(() => goalsTabRef.current?.focus(), 0);
-                  }
-                }
-              }}
-            >
-              <span>
-                <Leaf size={17} /> Getting started
-              </span>
-              <ChevronDown size={16} className={goals ? "" : "collapsed"} />
-            </button>
-            <div id="settlement-goals">
-              <p>
-                {allGoals
-                  ? "All three starter goals are complete."
-                  : "One small step at a time."}
-              </p>
-              {nextGoal && (
-                <div className="goal-next">
-                  <span className="goal-next-kicker">YOUR NEXT STEP</span>
-                  <strong>{nextGoal.label}</strong>
-                  <span>{nextGoal.detail}</span>
-                  <button
-                    type="button"
-                    aria-label={
-                      nextGoal.action === "focus" && nextGoalBuilding
-                        ? `Show ${CATALOG[nextGoal.type]?.name || "the worksite"}`
-                        : `Choose a spot for ${CATALOG[nextGoal.type]?.name || "the next build"}`
-                    }
-                    onClick={chooseNextGoal}
-                  >
-                    {nextGoal.action === "focus" && nextGoalBuilding
-                      ? "Check the lumberyard"
-                      : "Choose a spot"}{" "}
-                    {nextGoal.action === "focus" && nextGoalBuilding ? (
-                      <Compass size={12} />
-                    ) : (
-                      <ArrowUpRight size={12} />
-                    )}
-                  </button>
-                </div>
-              )}
-              <details className="goal-details">
-                <summary>
-                  <span>Milestones</span>
-                  <strong>{completedGoals} / 3</strong>
-                  <ChevronDown size={14} aria-hidden="true" />
-                </summary>
-                <div className="goal-details-body">
-                  <div className={`goal ${builtHouse ? "done" : ""}`}>
-                    <span className="checkbox">
-                      {builtHouse && <Check size={12} />}
-                    </span>
-                    <span>Build a new cottage</span>
-                    <span className="goal-count">{builtHouse ? "1" : "0"}/1</span>
-                  </div>
-                  <div className={`goal ${builtFarm ? "done" : ""}`}>
-                    <span className="checkbox">
-                      {builtFarm && <Check size={12} />}
-                    </span>
-                    <span>Build a new farmhouse</span>
-                    <span className="goal-count">{builtFarm ? "1" : "0"}/1</span>
-                  </div>
-                  <div className={`goal ${state.gathered >= 100 ? "done" : ""}`}>
-                    <span className="checkbox">
-                      {state.gathered >= 100 && <Check size={12} />}
-                    </span>
-                    <span>Gather timber</span>
-                    <span className="goal-count">
-                      {formatCount(Math.min(state.gathered, 100))}/100
-                    </span>
-                  </div>
-                  <div
-                    className="goal-progress"
-                    role="progressbar"
-                    aria-label="Settlement goal progress"
-                    aria-valuemin="0"
-                    aria-valuemax="100"
-                    aria-valuenow={goalProgressPercent}
-                    aria-valuetext={`${goalProgressPercent}% complete`}
-                  >
-                    <i style={{ width: `${goalProgressPercent}%` }} />
-                  </div>
-                </div>
-              </details>
-              {allGoals && state.chapterGoals.length > 0 && (
-                <div className="chapter-mini">
-                  <strong>Next chapters unlocked</strong>
-                  {state.chapterGoals.map((goal) => (
-                    <span className={goal.completed ? "done" : ""} key={goal.id}>
-                      {goal.completed ? <Check size={11} /> : <i />}{goal.title}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        {!goals && (
-          <button
-            type="button"
-            ref={goalsTabRef}
-            className="goals-tab parchment"
-            aria-expanded="false"
-            onClick={() => {
-              openGoals();
-              requestAnimationFrame(() => goalsButtonRef.current?.focus());
-            }}
-          >
-            <Leaf size={14} aria-hidden="true" />
-            <span>Goals</span>
-            <strong>{nextGoal ? nextGoal.label : "All goals complete"}</strong>
-            <ChevronDown size={14} aria-hidden="true" />
-          </button>
-        )}
         {state.activity && (
           <div className="settlement-status activity" role="status" aria-live="polite">
             <span className="live-dot" />
@@ -3339,42 +3187,6 @@ function App() {
         )}
       </section>
       <div className="top-right">
-        <div
-          className="time-controls parchment"
-          role="group"
-          aria-label="Simulation speed controls"
-        >
-          <button
-            type="button"
-            className={state.speed === 1 ? "active" : ""}
-            aria-label="Set simulation speed to 1x"
-            aria-pressed={state.speed === 1}
-            title="Set simulation speed to 1×"
-            onClick={() => speed(1)}
-          >
-            1×
-          </button>
-          <button
-            type="button"
-            className={state.speed === 2 ? "active" : ""}
-            aria-label="Set simulation speed to 2x"
-            aria-pressed={state.speed === 2}
-            title="Set simulation speed to 2×"
-            onClick={() => speed(2)}
-          >
-            2×
-          </button>
-          <button
-            type="button"
-            className={state.speed === 4 ? "active" : ""}
-            aria-label="Set simulation speed to 4x"
-            aria-pressed={state.speed === 4}
-            title="Set simulation speed to 4×"
-            onClick={() => speed(4)}
-          >
-            4×
-          </button>
-        </div>
         {state.feast && (
           <div className="feast-pill parchment" role="status">
             <Sparkles size={14} /> Feast · {Math.ceil(state.feast.remaining)}s
@@ -4794,12 +4606,6 @@ function App() {
             <BarChart3 size={16} />
             Village overview
           </button>
-          {!goals && (
-            <button type="button" role="menuitem" onClick={showGoals}>
-              <Leaf size={16} />
-              Show goals
-            </button>
-          )}
           <button
             type="button"
             role="menuitem"

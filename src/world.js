@@ -334,6 +334,7 @@ export const CARRYING_PHASES = Object.freeze([
   "stock_delivery",
   "haul_pickup",
   "haul_deliver",
+  "storehouse_exit",
 ]);
 export const MEAL_SATIETY = 0.12;
 // Every lantern-lit building used to own two real PointLights, so a village at
@@ -3468,6 +3469,14 @@ export class Village {
       worker.building = null;
       worker.workInside = false;
       this.setWorkerInside(worker, false);
+      worker.materialSourceBuilding = null;
+      worker.pickupSource = null;
+      worker.doorBuilding = null;
+      if (!worker.m.visible) {
+        worker.m.visible = true;
+        worker.shadowVisible = true;
+        this.updateWorkerShadow(worker);
+      }
       worker.phase = "idle";
       worker.waitingForInput = false;
       worker.waitingForStock = false;
@@ -4583,6 +4592,10 @@ export class Village {
     return best || fallback;
   }
   workerRouteIgnore(worker) {
+    // A worker fetching goods from a Storehouse steps into its footprint
+    // while `building` still points at the construction site they are
+    // hauling for, so that takes priority over the usual workInside check.
+    if (worker?.doorBuilding) return worker.doorBuilding;
     return worker?.workInside ? worker.building || null : worker?.field || null;
   }
   setWorkerInside(worker, inside) {
@@ -4792,7 +4805,13 @@ export class Village {
       stone: "mine",
       food: "farm",
     }[resource];
+    // A finished Storehouse is where the village keeps its goods, so a
+    // builder fetches materials there when one exists rather than walking
+    // straight to the producer.
     return (
+      this.buildings.find(
+        (building) => building.type === "storehouse" && building.progress === 1,
+      ) ||
       this.buildings.find(
         (building) =>
           building.type === sourceType && building.progress === 1,
@@ -4801,6 +4820,13 @@ export class Village {
         (building) => building.type === "townhall" && building.progress === 1,
       )
     );
+  }
+  // Blender's negative-Y frontage becomes positive Z in the exported GLB;
+  // the Storehouse's archway sits just inside that face.
+  storehouseDoorPoint(building) {
+    const local = new THREE.Vector3(0, 0, 0.78);
+    local.applyAxisAngle(new THREE.Vector3(0, 1, 0), building?.rotation || 0);
+    return [(building?.x || 0) + local.x, (building?.z || 0) + local.z];
   }
   completedInns() {
     return this.buildings.filter(
@@ -5160,9 +5186,17 @@ export class Village {
     w.repathCooldown = 0;
     w.workDuration = 0;
     w.materialResource = null;
+    w.materialSourceBuilding = null;
+    w.pickupSource = null;
+    w.doorBuilding = null;
     w.announcedFullStores = false;
     w.workInside = false;
     this.setWorkerInside(w, false);
+    if (!w.m.visible) {
+      w.m.visible = true;
+      w.shadowVisible = true;
+      this.updateWorkerShadow(w);
+    }
     w.waitingForSpace = false;
     w.waitingFor = null;
     w.spaceWait = 0;
@@ -5331,6 +5365,8 @@ export class Village {
         if (field) field.claimedBy = w.id;
         if (tree) tree.claimedBy = w.id;
         w.materialResource = material;
+        w.materialSourceBuilding =
+          material && destination?.type === "storehouse" ? destination : null;
         this.setWorkerType(
           w,
           material || b.progress < 1
@@ -5678,6 +5714,9 @@ export class Village {
         w.waitingForInn = false;
         w.deliveryRetry = 0;
         w.materialResource = null;
+        w.materialSourceBuilding = null;
+        w.pickupSource = null;
+        w.doorBuilding = null;
         w.waitingForSpace = false;
         w.waitingFor = null;
         w.spaceWait = 0;
@@ -5802,6 +5841,17 @@ export class Village {
         w.timer -= dt;
         if (w.timer <= 0) this.assign(w);
       } else if (w.phase === "material_pickup") {
+        const storehouse = w.materialSourceBuilding;
+        if (storehouse) {
+          // The goods are kept behind the Storehouse door; walk up to it
+          // before hauling anything out.
+          w.materialSourceBuilding = null;
+          w.pickupSource = storehouse;
+          w.phase = "storehouse_enter";
+          const [doorX, doorZ] = this.storehouseDoorPoint(storehouse);
+          w.deliveryRetry = this.route(w, doorX, doorZ, storehouse) ? 0 : 1.5;
+          continue;
+        }
         const b = w.building;
         const resource = w.materialResource || this.nextConstructionMaterial(b);
         const required = CATALOG[b?.type]?.cost?.[resource] || 0;
@@ -5822,6 +5872,83 @@ export class Village {
         this.spendResource(resource, amount);
         w.carry = { resource, amount, construction: true };
         this.showCarry(w, resource);
+        w.phase = "material_delivery";
+        const [siteX, siteZ] = this.jobPoint(b, w);
+        w.deliveryRetry = this.route(w, siteX, siteZ) ? 0 : 1.5;
+      } else if (w.phase === "storehouse_enter") {
+        const storehouse = w.pickupSource;
+        if (!storehouse) {
+          w.phase = "idle";
+          w.building = null;
+          w.materialResource = null;
+          continue;
+        }
+        if (w.deliveryRetry > 0) {
+          w.deliveryRetry -= dt;
+          if (w.deliveryRetry <= 0) {
+            const [doorX, doorZ] = this.storehouseDoorPoint(storehouse);
+            w.deliveryRetry = this.route(w, doorX, doorZ, storehouse) ? 0 : 1.5;
+          }
+          continue;
+        }
+        // At the doorway. Step inside out of sight to gather the goods.
+        w.doorBuilding = storehouse;
+        w.m.visible = false;
+        w.shadowVisible = false;
+        this.updateWorkerShadow(w);
+        w.phase = "storehouse_inside";
+        w.workDuration = 0.6;
+      } else if (w.phase === "storehouse_inside") {
+        w.workDuration -= dt;
+        if (w.workDuration > 0) continue;
+        const storehouse = w.pickupSource;
+        const b = w.building;
+        const resource = w.materialResource || this.nextConstructionMaterial(b);
+        const required = CATALOG[b?.type]?.cost?.[resource] || 0;
+        const delivered = finiteNumber(b?.materials?.[resource], 0);
+        const wanted = Math.min(10, Math.max(0, required - delivered));
+        const amount = Math.min(wanted, this.resourceAmount(resource));
+        w.m.visible = true;
+        w.shadowVisible = true;
+        this.updateWorkerShadow(w);
+        if (!b || !resource || amount <= 0 || !storehouse) {
+          w.doorBuilding = null;
+          w.pickupSource = null;
+          w.phase = "idle";
+          w.building = null;
+          w.materialResource = null;
+          w.timer = 0.35;
+          continue;
+        }
+        this.spendResource(resource, amount);
+        w.carry = { resource, amount, construction: true };
+        this.showCarry(w, resource);
+        w.phase = "storehouse_exit";
+        const [outX, outZ] = this.jobPoint(storehouse, w);
+        w.deliveryRetry = this.route(w, outX, outZ, storehouse) ? 0 : 1.5;
+      } else if (w.phase === "storehouse_exit") {
+        const storehouse = w.pickupSource;
+        if (w.deliveryRetry > 0) {
+          w.deliveryRetry -= dt;
+          if (w.deliveryRetry <= 0) {
+            const [outX, outZ] = storehouse
+              ? this.jobPoint(storehouse, w)
+              : this.jobPoint(w.building, w);
+            w.deliveryRetry = this.route(w, outX, outZ, storehouse) ? 0 : 1.5;
+          }
+          continue;
+        }
+        // Back outside with the goods; carry on to the site like a normal
+        // material pickup.
+        w.doorBuilding = null;
+        w.pickupSource = null;
+        const b = w.building;
+        if (!b || !w.carry) {
+          this.clearCarry(w);
+          w.carry = null;
+          w.phase = "idle";
+          continue;
+        }
         w.phase = "material_delivery";
         const [siteX, siteZ] = this.jobPoint(b, w);
         w.deliveryRetry = this.route(w, siteX, siteZ) ? 0 : 1.5;
